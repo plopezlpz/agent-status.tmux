@@ -22,5 +22,3 @@ printf '%s pane=%s %s->cleared\n' "$(date -u +%FT%TZ)" "$TMUX_PANE" "${prev:-non
 
 window_id=$(tmux display -t "$TMUX_PANE" -p '#{window_id}' 2>/dev/null || true)
 [ -n "$window_id" ] && "$SCRIPT_DIR/update-window-icon.sh" "$window_id"
-
-tmux refresh-client -S 2>/dev/null || true

@@ -35,12 +35,35 @@ tmux set-option -gqo @claude-agent-terminal-app ''
 state_dir=$(tmux show-option -gqv @claude-agent-state-dir)
 mkdir -p "$state_dir"
 
+# ----- prerequisites ---------------------------------------------------
+# pane-focus-in only fires when the server has focus-events on -- tmux's
+# default is off, so users without it set would see icons stick on
+# "finished" forever. Required, set unconditionally.
+tmux set-option -g focus-events on
+
 # ----- hooks -----------------------------------------------------------
+# add_hook NAME CMD MARKER: append CMD to global hook NAME exactly once.
+# `set-hook -ga` appends instead of replacing (so we coexist with user
+# hooks). MARKER is a substring that survives tmux's quote-normalization
+# (the script path is reliable); the show-hooks guard uses it to make
+# the call idempotent across config reloads.
+add_hook() {
+  local name="$1" cmd="$2" marker="$3"
+  tmux show-hooks -g "$name" 2>/dev/null | grep -qF -- "$marker" && return 0
+  tmux set-hook -ga "$name" "$cmd"
+}
+
 # Demote `finished` -> `idle` when the pane gets focus.
-tmux set-hook -g pane-focus-in "run-shell '$SCRIPTS/agent/clear-finished.sh \"#{pane_id}\"'"
+add_hook pane-focus-in \
+  "run-shell '$SCRIPTS/agent/clear-finished.sh \"#{pane_id}\"'" \
+  "$SCRIPTS/agent/clear-finished.sh"
 
 # Pane death: drop its state file and re-aggregate the window icon.
-tmux set-hook -g pane-exited "run-shell 'rm -f \"$state_dir/#{pane_id}\"; $SCRIPTS/agent/update-window-icon.sh \"#{window_id}\"'"
+# Wrapped in a helper script so the runtime path is resolved dynamically
+# and any spaces in $state_dir don't break the hook command string.
+add_hook pane-exited \
+  "run-shell '$SCRIPTS/agent/on-pane-exit.sh \"#{pane_id}\" \"#{window_id}\"'" \
+  "$SCRIPTS/agent/on-pane-exit.sh"
 
 # ----- binding ---------------------------------------------------------
 nav_key=$(tmux show-option -gqv @claude-agent-navigator-key)

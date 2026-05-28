@@ -26,11 +26,14 @@ cp "$SETTINGS" "$backup"
 #   - strip(): drop any hook entry whose command references our scripts dir
 #   - then append fresh entries for each Claude event
 new=$(jq --arg s "$SCRIPTS" '
+  # Drop only the inner hooks that point at this plugin -- keep peers
+  # belonging to other tools sharing the same entry. Then drop entries
+  # whose hooks array was emptied as a result.
   def strip:
-    map(select(
-      ((.hooks // []) | map(.command // "") | join("|") | contains($s)) | not
-    ));
-  .hooks |= (. // {}) |
+    map(.hooks |= map(select((.command // "") | contains($s) | not)))
+    | map(select((.hooks // []) | length > 0));
+  # Ensure .hooks is an object even if the file has it as null/array/other.
+  .hooks |= (if type == "object" then . else {} end) |
   .hooks.SessionStart      = ((.hooks.SessionStart      // []) | strip) + [{hooks:[{type:"command", command:"\($s)/set-state.sh idle"}]}] |
   .hooks.SessionEnd        = ((.hooks.SessionEnd        // []) | strip) + [{hooks:[{type:"command", command:"\($s)/clear-state.sh"}]}] |
   .hooks.UserPromptSubmit  = ((.hooks.UserPromptSubmit  // []) | strip) + [{hooks:[{type:"command", command:"\($s)/set-state.sh working"}]}] |

@@ -41,13 +41,19 @@ case "$state" in
     [ -z "$msg" ] && [ ! -t 0 ] && msg=$(jq -r '.message // ""' 2>/dev/null || true)
     [ -z "$msg" ] && msg=$(tmux display -t "$TMUX_PANE" -p '#S / #W' 2>/dev/null || true)
     if command -v terminal-notifier >/dev/null 2>&1; then
+      # Quote both -execute fields so spaces in $SCRIPT_DIR (e.g. plugin
+      # under "~/Library/Application Support") survive Notification
+      # Center's re-shell on click.
       terminal-notifier \
         -title "Claude • $state" \
         -message "$msg" \
-        -execute "$SCRIPT_DIR/focus-pane.sh $TMUX_PANE" \
+        -execute "\"$SCRIPT_DIR/focus-pane.sh\" \"$TMUX_PANE\"" \
         -group "claude-$TMUX_PANE" \
         >/dev/null 2>&1 &
     elif command -v notify-send >/dev/null 2>&1; then
+      # notify-send has no -execute equivalent without --action + a
+      # listener; ship a plain notification and let the user switch
+      # via `prefix A` (the navigator).
       notify-send "Claude • $state" "$msg" >/dev/null 2>&1 &
     fi
     ;;
@@ -55,7 +61,6 @@ esac
 
 # Push-model: recompute the per-window aggregate icon so the status format
 # can read it from a tmux user-option (no shell fork per render).
+# update-window-icon.sh handles the refresh-client itself.
 window_id=$(tmux display -t "$TMUX_PANE" -p '#{window_id}' 2>/dev/null || true)
 [ -n "$window_id" ] && "$SCRIPT_DIR/update-window-icon.sh" "$window_id"
-
-tmux refresh-client -S 2>/dev/null || true

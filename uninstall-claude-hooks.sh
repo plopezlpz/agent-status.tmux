@@ -18,10 +18,9 @@ cp "$SETTINGS" "$backup"
 
 new=$(jq --arg s "$SCRIPTS" '
   def strip:
-    map(select(
-      ((.hooks // []) | map(.command // "") | join("|") | contains($s)) | not
-    ));
-  if .hooks then
+    map(.hooks |= map(select((.command // "") | contains($s) | not)))
+    | map(select((.hooks // []) | length > 0));
+  if (.hooks // null) | type == "object" then
     .hooks |= with_entries(.value |= strip)
     | .hooks |= with_entries(select(.value | length > 0))
   else . end

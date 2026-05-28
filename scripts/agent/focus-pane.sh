@@ -10,7 +10,10 @@ set -eu
 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 
 pane="$1"
-read -r session window < <(tmux display -t "$pane" -p '#S #{window_id}' 2>/dev/null) || exit 0
+# Use the server-unique IDs (#{session_id} like $0, #{window_id} like @5)
+# instead of names -- names can contain spaces or any user-typed
+# character, breaking the space-split read.
+read -r session window < <(tmux display -t "$pane" -p '#{session_id} #{window_id}' 2>/dev/null) || exit 0
 [ -n "$session" ] && [ -n "$window" ] || exit 0
 
 # Optional: bring the terminal app forward. Override via tmux option.

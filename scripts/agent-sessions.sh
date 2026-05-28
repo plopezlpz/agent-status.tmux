@@ -27,13 +27,13 @@ rank_of() {
 # filesystem key, so descriptions follow user-renamed windows across
 # `renumber-windows on` shuffles. Auto-renamed windows are ephemeral by
 # nature; falling back to index is acceptable.
+# Args: <idx> <name> <auto>  -- passed as separate args so window names
+# containing spaces / pipes / any user-typed chars survive intact.
 window_key() {
-  local idx name auto
-  read -r idx name auto <<<"$1"
-  if [ "$auto" = "0" ]; then
-    printf '%s' "$name"
+  if [ "$3" = "0" ]; then
+    printf '%s' "$2"
   else
-    printf '%s' "$idx"
+    printf '%s' "$1"
   fi
 }
 
@@ -79,7 +79,11 @@ emit_agent_cards_for_session() {
   # list in a tmpfile and re-read it in the current shell).
   local tmp
   tmp=$(mktemp -t claude-agent-status.XXXXXX)
-  while IFS='|' read -r pane_id win_idx win_name auto pane_idx path; do
+  # TAB delimiter -- tmux window names can contain any user-typed char
+  # including '|' and spaces, but never a literal tab from tmux's own
+  # internal renaming. Same applies to pane_current_path on any sane
+  # filesystem.
+  while IFS=$'\t' read -r pane_id win_idx win_name auto pane_idx path; do
     local state=""
     { read -r state < "$STATE_DIR/$pane_id"; } 2>/dev/null || continue
     [ -z "$state" ] && continue
@@ -87,16 +91,16 @@ emit_agent_cards_for_session() {
     [ "$rank" -eq 0 ] && continue
     local folder
     folder=$(basename "$path")
-    printf '%s|%s|%s|%s|%s|%s|%s|%s|%s\n' \
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
       "$folder" "$rank" "$pane_id" "$win_idx" "$win_name" "$auto" "$pane_idx" "$path" "$state"
-  done < <(tmux list-panes -s -t "$sess" -F '#{pane_id}|#{window_index}|#{window_name}|#{automatic-rename}|#{pane_index}|#{pane_current_path}' 2>/dev/null) \
-    | sort -t'|' -k1,1 -k2,2nr > "$tmp"
+  done < <(tmux list-panes -s -t "$sess" -F $'#{pane_id}\t#{window_index}\t#{window_name}\t#{automatic-rename}\t#{pane_index}\t#{pane_current_path}' 2>/dev/null) \
+    | sort -t$'\t' -k1,1 -k2,2nr > "$tmp"
 
   local prev_group=""
-  while IFS='|' read -r folder rank pane_id win_idx win_name auto pane_idx path state; do
+  while IFS=$'\t' read -r folder rank pane_id win_idx win_name auto pane_idx path state; do
     [ -z "$folder" ] && continue
     local win_key icon descfile desc group
-    win_key=$(window_key "$win_idx $win_name $auto")
+    win_key=$(window_key "$win_idx" "$win_name" "$auto")
     icon=$(tmux show-option -gqv "@claude-agent-icon-$state" 2>/dev/null || true)
     descfile="$DESC_DIR/$sess/$win_key/$pane_idx"
     desc=""; [ -f "$descfile" ] && read -r desc < "$descfile" || true
@@ -201,7 +205,9 @@ win_key="${rest%%.*}"
 pane_idx="${rest#*.}"
 
 # tmux's target spec accepts either window name OR index for select-window,
-# so threading win_key through works for both sticky-name and auto-name windows.
+# so threading win_key through works for both sticky-name and auto-name
+# windows. The selected pane may have died between popup-open and Enter;
+# swallow errors so the popup closes cleanly.
 tmux switch-client -t "$sess" \; \
      select-window -t "$sess:$win_key" \; \
-     select-pane -t "$sess:$win_key.$pane_idx"
+     select-pane -t "$sess:$win_key.$pane_idx" 2>/dev/null || true

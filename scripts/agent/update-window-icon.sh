@@ -32,3 +32,7 @@ if [ -n "$best" ]; then
 else
   tmux set-option -w -t "$window_id" -u @claude-agent-icon 2>/dev/null || true
 fi
+
+# Centralized refresh: every code path that mutates state ends up here,
+# so the status line repaints regardless of how we got called.
+tmux refresh-client -S 2>/dev/null || true
