@@ -26,13 +26,23 @@ while read -r pane; do
   if [ "$r" -gt "$top" ]; then top=$r; best=$state; fi
 done < <(tmux list-panes -t "$window_id" -F '#{pane_id}' 2>/dev/null)
 
+# Compare the new icon to what the window already shows; skip the
+# set/unset and the refresh when nothing changed. Saves a server-wide
+# redraw on every non-Claude pane death (pane-exited fires for ALL
+# panes, the vast majority of which aren't ours).
+new_icon=""
 if [ -n "$best" ]; then
-  icon=$(tmux show-option -gqv "@claude-agent-icon-$best" 2>/dev/null || true)
-  tmux set-option -w -t "$window_id" @claude-agent-icon "$icon" 2>/dev/null || true
+  new_icon=$(tmux show-option -gqv "@claude-agent-icon-$best" 2>/dev/null || true)
+fi
+prev_icon=$(tmux show-option -wqv -t "$window_id" @claude-agent-icon 2>/dev/null || true)
+
+[ "$new_icon" = "$prev_icon" ] && exit 0
+
+if [ -n "$new_icon" ]; then
+  tmux set-option -w -t "$window_id" @claude-agent-icon "$new_icon" 2>/dev/null || true
 else
   tmux set-option -w -t "$window_id" -u @claude-agent-icon 2>/dev/null || true
 fi
 
-# Centralized refresh: every code path that mutates state ends up here,
-# so the status line repaints regardless of how we got called.
+# Centralized refresh: every code path that mutates state lands here.
 tmux refresh-client -S 2>/dev/null || true

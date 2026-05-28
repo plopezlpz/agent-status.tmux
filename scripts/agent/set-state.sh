@@ -59,8 +59,7 @@ case "$state" in
     ;;
 esac
 
-# Push-model: recompute the per-window aggregate icon so the status format
-# can read it from a tmux user-option (no shell fork per render).
-# update-window-icon.sh handles the refresh-client itself.
+# Push-model: aggregator computes the worst-state icon for the window,
+# stashes it in @claude-agent-icon, and triggers the status redraw.
 window_id=$(tmux display -t "$TMUX_PANE" -p '#{window_id}' 2>/dev/null || true)
-[ -n "$window_id" ] && "$SCRIPT_DIR/update-window-icon.sh" "$window_id"
+[ -n "$window_id" ] && "$SCRIPT_DIR/update-window-icon.sh" "$window_id" || true

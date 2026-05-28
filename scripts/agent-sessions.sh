@@ -85,7 +85,9 @@ emit_agent_cards_for_session() {
   # filesystem.
   while IFS=$'\t' read -r pane_id win_idx win_name auto pane_idx path; do
     local state=""
-    { read -r state < "$STATE_DIR/$pane_id"; } 2>/dev/null || continue
+    if [ -f "$STATE_DIR/$pane_id" ]; then
+      read -r state < "$STATE_DIR/$pane_id" || true
+    fi
     [ -z "$state" ] && continue
     local rank=$(rank_of "$state")
     [ "$rank" -eq 0 ] && continue

@@ -18,12 +18,11 @@ cp "$SETTINGS" "$backup"
 
 new=$(jq --arg s "$SCRIPTS" '
   def strip:
-    map(.hooks |= map(select((.command // "") | contains($s) | not)))
+    map(.hooks = ((.hooks // []) | map(select((.command // "") | contains($s) | not))))
     | map(select((.hooks // []) | length > 0));
-  if (.hooks // null) | type == "object" then
-    .hooks |= with_entries(.value |= strip)
-    | .hooks |= with_entries(select(.value | length > 0))
-  else . end
+  .hooks |= (if type == "object" then . else {} end)
+  | .hooks |= with_entries(.value |= strip)
+  | .hooks |= with_entries(select(.value | length > 0))
 ' "$SETTINGS")
 
 printf '%s\n' "$new" > "$SETTINGS"

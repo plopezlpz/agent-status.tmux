@@ -25,4 +25,4 @@ mkdir -p "$(dirname "$log_file")"
 printf '%s pane=%s finished->idle (focus)\n' "$(date -u +%FT%TZ)" "$pane" >> "$log_file"
 
 window_id=$(tmux display -t "$pane" -p '#{window_id}' 2>/dev/null || true)
-[ -n "$window_id" ] && "$SCRIPT_DIR/update-window-icon.sh" "$window_id"
+[ -n "$window_id" ] && "$SCRIPT_DIR/update-window-icon.sh" "$window_id" || true

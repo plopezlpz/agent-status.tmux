@@ -28,9 +28,10 @@ cp "$SETTINGS" "$backup"
 new=$(jq --arg s "$SCRIPTS" '
   # Drop only the inner hooks that point at this plugin -- keep peers
   # belonging to other tools sharing the same entry. Then drop entries
-  # whose hooks array was emptied as a result.
+  # whose hooks array was emptied as a result. The leading (.hooks // [])
+  # coerce handles entries where the inner hooks field is missing or null.
   def strip:
-    map(.hooks |= map(select((.command // "") | contains($s) | not)))
+    map(.hooks = ((.hooks // []) | map(select((.command // "") | contains($s) | not))))
     | map(select((.hooks // []) | length > 0));
   # Ensure .hooks is an object even if the file has it as null/array/other.
   .hooks |= (if type == "object" then . else {} end) |

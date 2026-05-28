@@ -117,7 +117,8 @@ Claude Code hooks (settings.json)
 Plus:
 - `clear-finished.sh` (tmux `pane-focus-in` hook): demotes `finished`
   → `idle` when you visit the pane.
-- `pane-exited` hook: drops the state file and re-aggregates.
+- `clear-pane.sh` (tmux `pane-exited` hook): drops the state file when
+  a pane dies and re-aggregates the window icon.
 - `focus-pane.sh`: target of `terminal-notifier -execute`, performs
   `switch-client + select-window + select-pane`.
 - `agent-sessions.sh`: the fzf navigator popup.

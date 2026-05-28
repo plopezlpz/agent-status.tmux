@@ -42,28 +42,61 @@ mkdir -p "$state_dir"
 tmux set-option -g focus-events on
 
 # ----- hooks -----------------------------------------------------------
-# add_hook NAME CMD MARKER: append CMD to global hook NAME exactly once.
-# `set-hook -ga` appends instead of replacing (so we coexist with user
-# hooks). MARKER is a substring that survives tmux's quote-normalization
-# (the script path is reliable); the show-hooks guard uses it to make
-# the call idempotent across config reloads.
+# Any hook entry whose command references this directory pattern is
+# considered "ours" and gets cleaned up on every plugin load, regardless
+# of which past plugin version installed it. New versions install fresh,
+# upgraders don't accumulate stale entries.
+PLUGIN_NEEDLE='claude-agent-status.tmux/scripts/agent'
+
+# add_hook NAME CMD: install CMD as a global hook on NAME.
+#   - Idempotent: if CMD is already present in the hook list, no-op.
+#   - Upgrade-safe: if any prior-version plugin entry exists (matched
+#     by PLUGIN_NEEDLE) but the current CMD is not present, rebuild
+#     the hook list keeping non-plugin entries (so user hooks survive)
+#     and append the current CMD.
+#   - Append-only otherwise (set-hook -ga), so we coexist with hooks
+#     installed by the user or other plugins.
 add_hook() {
-  local name="$1" cmd="$2" marker="$3"
-  tmux show-hooks -g "$name" 2>/dev/null | grep -qF -- "$marker" && return 0
+  local name="$1" cmd="$2"
+  local existing
+  existing=$(tmux show-hooks -g "$name" 2>/dev/null || true)
+
+  # Already installed at the right version? Done.
+  if [ -n "$existing" ] && printf '%s\n' "$existing" | grep -qF -- "$cmd"; then
+    return 0
+  fi
+
+  # Older plugin version present? Rebuild keeping non-plugin entries.
+  if [ -n "$existing" ] && printf '%s\n' "$existing" | grep -qF -- "$PLUGIN_NEEDLE"; then
+    local survivors line
+    survivors=""
+    while IFS= read -r line; do
+      [ -z "$line" ] && continue
+      case "$line" in *"$PLUGIN_NEEDLE"*) continue ;; esac
+      # Strip the "<name>[<idx>] " prefix; the remainder is the hook's
+      # original command, ready to feed back to set-hook.
+      survivors="$survivors${line#"$name"\[*\] }
+"
+    done <<< "$existing"
+    tmux set-hook -gu "$name"
+    while IFS= read -r line; do
+      [ -z "$line" ] && continue
+      tmux set-hook -ga "$name" "$line"
+    done <<< "$survivors"
+  fi
+
   tmux set-hook -ga "$name" "$cmd"
 }
 
 # Demote `finished` -> `idle` when the pane gets focus.
 add_hook pane-focus-in \
-  "run-shell '$SCRIPTS/agent/clear-finished.sh \"#{pane_id}\"'" \
-  "$SCRIPTS/agent/clear-finished.sh"
+  "run-shell '$SCRIPTS/agent/clear-finished.sh \"#{pane_id}\"'"
 
 # Pane death: drop its state file and re-aggregate the window icon.
 # Wrapped in a helper script so the runtime path is resolved dynamically
 # and any spaces in $state_dir don't break the hook command string.
 add_hook pane-exited \
-  "run-shell '$SCRIPTS/agent/on-pane-exit.sh \"#{pane_id}\" \"#{window_id}\"'" \
-  "$SCRIPTS/agent/on-pane-exit.sh"
+  "run-shell '$SCRIPTS/agent/clear-pane.sh \"#{pane_id}\" \"#{window_id}\"'"
 
 # ----- binding ---------------------------------------------------------
 nav_key=$(tmux show-option -gqv @claude-agent-navigator-key)
