@@ -1,0 +1,137 @@
+# claude-agent-status.tmux
+
+Live status indicators and a navigator popup for [Claude Code] panes in tmux.
+
+- Per-pane state: **working / asking / finished / idle** driven by Claude
+  Code hooks
+- Per-window aggregated icon in your tmux status line (worst state wins)
+- Clickable macOS notifications (via `terminal-notifier`) that switch
+  tmux to the pane that asked for input or finished a task — `notify-send`
+  fallback on Linux
+- `prefix A` popup: one card per live Claude pane, grouped by
+  `session · folder`, with editable per-pane descriptions
+
+## Install
+
+With [TPM]:
+
+```tmux
+set -g @plugin 'pablodaco/claude-agent-status.tmux'
+run '~/.tmux/plugins/tpm/tpm'
+```
+
+`prefix + I` to install.
+
+Then wire the plugin into Claude Code's hooks (one time, idempotent):
+
+```bash
+bash ~/.tmux/plugins/claude-agent-status.tmux/install-claude-hooks.sh
+```
+
+Finally, add the icon to your `window-status-format` (and current-format):
+
+```tmux
+setw -g window-status-format         "#[fg=...] #{?@claude-agent-icon,#{@claude-agent-icon} ,}#I:#W "
+setw -g window-status-current-format "#[fg=...] #{?@claude-agent-icon,#{@claude-agent-icon} ,}#I:#W "
+```
+
+Reload tmux (`prefix r` if your config has the binding, else
+`tmux source ~/.tmux.conf`) and start a Claude session — the icon
+should appear next to the window name when Claude is running.
+
+## Uninstall
+
+```bash
+bash ~/.tmux/plugins/claude-agent-status.tmux/uninstall-claude-hooks.sh
+```
+
+Then remove the TPM plugin line and uninstall via TPM (`prefix + alt + u`).
+
+## Requirements
+
+| Dep | Minimum | Notes |
+|---|---|---|
+| tmux | 3.3 | needs `display-popup -E` |
+| fzf | 0.45 | needs `transform` / `transform-header` actions |
+| Bash | 3.2 | macOS default, fine |
+| jq | any | required by the install script only |
+| Claude Code | 2.1.x | needs `PermissionRequest` and `SessionEnd` hooks |
+| Nerd Font | any | for the default glyphs — override via options if you don't have one |
+| terminal-notifier | macOS | optional, for clickable notifications |
+| notify-send | Linux | optional Linux fallback |
+
+## Configuration
+
+All options set before `run ~/.tmux/plugins/tpm/tpm` will override the
+defaults below. Set with `set -g @claude-agent-...`.
+
+### Icons (per state)
+
+| Option | Default | Description |
+|---|---|---|
+| `@claude-agent-icon-working`  | `󱐋` | Tool call in flight |
+| `@claude-agent-icon-asking`   | `󰘥` | Permission request waiting |
+| `@claude-agent-icon-finished` | `󰗠` | Stop hook fired, awaiting your focus |
+| `@claude-agent-icon-idle`     | `󱚣` | Session started, no activity |
+
+The aggregated worst-state icon is exposed as the **window-scoped**
+option `@claude-agent-icon`. Reference it in your status format like:
+
+```tmux
+#{?@claude-agent-icon,#{@claude-agent-icon} ,}
+```
+
+### Behavior
+
+| Option | Default | Description |
+|---|---|---|
+| `@claude-agent-navigator-key` | `A` | Suffix key after `prefix` to open the popup |
+| `@claude-agent-popup-width`   | `70%` | `display-popup -w` value |
+| `@claude-agent-popup-height`  | `70%` | `display-popup -h` value |
+| `@claude-agent-terminal-app`  | `''` | macOS app to bring forward on notification click (e.g. `Ghostty`, `iTerm`) |
+
+### Paths
+
+| Option | Default | Description |
+|---|---|---|
+| `@claude-agent-state-dir`         | `/tmp/claude-agent-state` | per-pane state files (`<state_dir>/<pane_id>`) |
+| `@claude-agent-descriptions-dir`  | `$HOME/.cache/claude-agent-status/descriptions` | navigator descriptions, keyed by `session/window-key/pane-index` |
+| `@claude-agent-log`               | `$HOME/.cache/claude-agent-status/agent.log` | append-only audit trail of state transitions |
+
+## Architecture
+
+```
+Claude Code hooks (settings.json)
+        ↓ SessionStart / UserPromptSubmit / PreToolUse / Stop /
+        ↓ PermissionRequest / SessionEnd
+    set-state.sh / clear-state.sh
+        ↓ writes /tmp/claude-agent-state/<pane_id>
+        ↓ calls update-window-icon.sh
+    update-window-icon.sh
+        ↓ aggregates worst state across all panes in window
+        ↓ sets window-scoped @claude-agent-icon option
+    tmux status format
+        ↓ reads @claude-agent-icon directly (no shell fork per render)
+```
+
+Plus:
+- `clear-finished.sh` (tmux `pane-focus-in` hook): demotes `finished`
+  → `idle` when you visit the pane.
+- `pane-exited` hook: drops the state file and re-aggregates.
+- `focus-pane.sh`: target of `terminal-notifier -execute`, performs
+  `switch-client + select-window + select-pane`.
+- `agent-sessions.sh`: the fzf navigator popup.
+
+## Why a separate state file per pane?
+
+So multiple Claude instances in the same tmux window each carry their
+own state, and the navigator can list them as distinct cards. The
+window-scoped aggregator picks the worst state for the status icon
+(asking > working > finished > idle).
+
+## License
+
+MIT — see [LICENSE](./LICENSE).
+
+[Claude Code]: https://github.com/anthropics/claude-code
+[TPM]: https://github.com/tmux-plugins/tpm
