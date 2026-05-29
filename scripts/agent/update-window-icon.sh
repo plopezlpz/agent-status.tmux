@@ -15,7 +15,11 @@ state_dir=$(tmux show-option -gqv @claude-agent-state-dir 2>/dev/null || true)
 best="" top=0
 while read -r pane; do
   state=""
-  { read -r state < "$state_dir/$pane"; } 2>/dev/null || continue
+  # `|| true` (not `|| continue`): a file without a trailing newline makes
+  # read exit non-zero but still populates $state -- keep it. Only a
+  # missing/empty file should skip the pane.
+  { read -r state < "$state_dir/$pane"; } 2>/dev/null || true
+  [ -z "$state" ] && continue
   case "$state" in
     asking)   r=4 ;;
     working)  r=3 ;;

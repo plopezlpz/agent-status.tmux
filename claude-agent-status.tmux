@@ -49,11 +49,13 @@ tmux set-option -g focus-events on
 PLUGIN_NEEDLE='claude-agent-status.tmux/scripts/agent'
 
 # add_hook NAME CMD: install CMD as a global hook on NAME.
-#   - Idempotent: if CMD is already present in the hook list, no-op.
-#   - Upgrade-safe: if any prior-version plugin entry exists (matched
-#     by PLUGIN_NEEDLE) but the current CMD is not present, rebuild
-#     the hook list keeping non-plugin entries (so user hooks survive)
-#     and append the current CMD.
+#   - Idempotent + upgrade-safe: if any plugin entry exists (matched by
+#     PLUGIN_NEEDLE), rebuild the hook list keeping non-plugin entries
+#     (so user hooks survive) and append the current CMD. Re-running with
+#     the same CMD therefore converges to a single plugin entry. We match
+#     on PLUGIN_NEEDLE rather than CMD because tmux normalizes hook
+#     quoting (single -> double quotes), so the stored form never equals
+#     the literal CMD we passed in.
 #   - Append-only otherwise (set-hook -ga), so we coexist with hooks
 #     installed by the user or other plugins.
 add_hook() {
@@ -61,12 +63,7 @@ add_hook() {
   local existing
   existing=$(tmux show-hooks -g "$name" 2>/dev/null || true)
 
-  # Already installed at the right version? Done.
-  if [ -n "$existing" ] && printf '%s\n' "$existing" | grep -qF -- "$cmd"; then
-    return 0
-  fi
-
-  # Older plugin version present? Rebuild keeping non-plugin entries.
+  # Any prior plugin entry present? Rebuild keeping non-plugin entries.
   if [ -n "$existing" ] && printf '%s\n' "$existing" | grep -qF -- "$PLUGIN_NEEDLE"; then
     local survivors line
     survivors=""
@@ -105,7 +102,3 @@ popup_h=$(tmux show-option -gqv @claude-agent-popup-height)
 
 tmux bind -N "Claude agent navigator" "$nav_key" \
   display-popup -E -w "$popup_w" -h "$popup_h" "$SCRIPTS/agent-sessions.sh"
-
-# Stash plugin path so the Claude-hooks installer can be invoked from
-# anywhere and still find the right scripts.
-tmux setenv -g CLAUDE_AGENT_STATUS_DIR "$CURRENT_DIR"

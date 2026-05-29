@@ -133,10 +133,11 @@ edit_description() {
     echo "usage: --edit <sess>:<win-key>.<pane-idx>" >&2
     return 2
   }
+  # Split on the LAST dot so window names containing dots survive (see the
+  # matching parse in the navigation path below).
   local sess="${target%%:*}"
-  local rest="${target#*:}"
-  local win_key="${rest%%.*}"
-  local pane_idx="${rest#*.}"
+  local win_key="${target%.*}"; win_key="${win_key#*:}"
+  local pane_idx="${target##*.}"
   local dir="$DESC_DIR/$sess/$win_key"
   local file="$dir/$pane_idx"
   local current=""
@@ -191,8 +192,8 @@ sel=$(build_cards | fzf \
   --bind 'down,ctrl-n,ctrl-j:down+transform([ {1} = H ] && echo down)' \
   --bind 'up,ctrl-p,ctrl-k:up+transform([ {1} = H ] && echo up)' \
   --bind 'enter:transform([ {1} = H ] && echo ignore || echo accept)' \
-  --bind "ctrl-e:execute($self --edit {2})+reload($self --list)" \
-  --bind "ctrl-r:reload($self --list)") || exit 0
+  --bind "ctrl-e:execute(\"$self\" --edit {2})+reload(\"$self\" --list)" \
+  --bind "ctrl-r:reload(\"$self\" --list)") || exit 0
 
 [ -z "$sel" ] && exit 0
 
@@ -201,10 +202,12 @@ target=$(printf '%s' "$sel" | awk -F'	' '{print $2}')
 # Defensive: if a heading somehow slips through (e.g., cycle wrap + accept),
 # don't navigate anywhere.
 [ "$target" = "__HEADER__" ] && exit 0
+# pane_idx is the trailing numeric component (after the LAST dot), so split
+# on the last dot -- this keeps window names that contain dots (e.g. a
+# sticky-renamed "v0.1.2") intact instead of splitting them mid-name.
 sess="${target%%:*}"
-rest="${target#*:}"
-win_key="${rest%%.*}"
-pane_idx="${rest#*.}"
+win_key="${target%.*}"; win_key="${win_key#*:}"
+pane_idx="${target##*.}"
 
 # tmux's target spec accepts either window name OR index for select-window,
 # so threading win_key through works for both sticky-name and auto-name
