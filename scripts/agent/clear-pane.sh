@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# tmux pane-exited hook: drop the state file for the dead pane, then
-# re-aggregate the window's worst-state icon. Kept as a script (vs.
-# inlined in the hook string) so $state_dir is resolved dynamically and
-# isn't fragile to spaces in the path.
+# tmux pane-exited hook: drop the dead pane's state file, then re-aggregate
+# the window icon. A script (not an inline hook) so $state_dir resolves at
+# run time and spaces in the path stay safe.
 # Usage: clear-pane.sh <pane_id> <window_id>
 set -eu
 

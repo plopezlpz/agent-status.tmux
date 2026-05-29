@@ -41,9 +41,8 @@ case "$state" in
     [ -z "$msg" ] && [ ! -t 0 ] && msg=$(jq -r '.message // ""' 2>/dev/null || true)
     [ -z "$msg" ] && msg=$(tmux display -t "$TMUX_PANE" -p '#S / #W' 2>/dev/null || true)
     if command -v terminal-notifier >/dev/null 2>&1; then
-      # Quote both -execute fields so spaces in $SCRIPT_DIR (e.g. plugin
-      # under "~/Library/Application Support") survive Notification
-      # Center's re-shell on click.
+      # Quote -execute fields: Notification Center re-shells on click, so a
+      # space in $SCRIPT_DIR would otherwise split the command.
       terminal-notifier \
         -title "Agent • $state" \
         -message "$msg" \
@@ -51,15 +50,13 @@ case "$state" in
         -group "agent-$TMUX_PANE" \
         >/dev/null 2>&1 &
     elif command -v notify-send >/dev/null 2>&1; then
-      # notify-send has no -execute equivalent without --action + a
-      # listener; ship a plain notification and let the user switch
-      # via `prefix A` (the navigator).
+      # notify-send can't run a command on click; just notify (use prefix A).
       notify-send "Agent • $state" "$msg" >/dev/null 2>&1 &
     fi
     ;;
 esac
 
-# Push-model: aggregator computes the worst-state icon for the window,
-# stashes it in @agent-icon, and triggers the status redraw.
+# Recompute the window's aggregate icon (writers push, the status format
+# just reads @agent-icon).
 window_id=$(tmux display -t "$TMUX_PANE" -p '#{window_id}' 2>/dev/null || true)
 [ -n "$window_id" ] && "$SCRIPT_DIR/update-window-icon.sh" "$window_id" || true

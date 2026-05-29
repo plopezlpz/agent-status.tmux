@@ -14,9 +14,7 @@ set -eu
 CURRENT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 SCRIPTS="$CURRENT_DIR/scripts"
 
-# ----- defaults (only set if user hasn't already overridden) -----------
-# -o means "set only if not already set", so users can configure these
-# anywhere in their config before the `run` line that loads tpm.
+# ----- defaults (-gqo = set only if unset, so user overrides win) ------
 tmux set-option -gqo @agent-icon-working  '󱐋'
 tmux set-option -gqo @agent-icon-asking   '󰘥'
 tmux set-option -gqo @agent-icon-finished '󰗠'
@@ -46,22 +44,13 @@ mkdir -p "$state_dir"
 tmux set-option -g focus-events on
 
 # ----- hooks -----------------------------------------------------------
-# Any hook entry whose command references this directory pattern is
-# considered "ours" and gets cleaned up on every plugin load, regardless
-# of which past plugin version installed it. New versions install fresh,
-# upgraders don't accumulate stale entries.
+# Hooks whose command contains this needle are "ours".
 PLUGIN_NEEDLE='agent-status.tmux/scripts/agent'
 
-# add_hook NAME CMD: install CMD as a global hook on NAME.
-#   - Idempotent + upgrade-safe: if any plugin entry exists (matched by
-#     PLUGIN_NEEDLE), rebuild the hook list keeping non-plugin entries
-#     (so user hooks survive) and append the current CMD. Re-running with
-#     the same CMD therefore converges to a single plugin entry. We match
-#     on PLUGIN_NEEDLE rather than CMD because tmux normalizes hook
-#     quoting (single -> double quotes), so the stored form never equals
-#     the literal CMD we passed in.
-#   - Append-only otherwise (set-hook -ga), so we coexist with hooks
-#     installed by the user or other plugins.
+# add_hook NAME CMD: append CMD as a global hook, idempotently. If a prior
+# plugin entry exists, rebuild the list keeping non-plugin (user) hooks and
+# re-add CMD -- so every reload converges to one plugin entry. Matches on
+# PLUGIN_NEEDLE, not CMD, since tmux rewrites hook quoting when it stores it.
 add_hook() {
   local name="$1" cmd="$2"
   local existing

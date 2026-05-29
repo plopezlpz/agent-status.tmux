@@ -15,9 +15,8 @@ state_dir=$(tmux show-option -gqv @agent-state-dir 2>/dev/null || true)
 best="" top=0
 while read -r pane; do
   state=""
-  # `|| true` (not `|| continue`): a file without a trailing newline makes
-  # read exit non-zero but still populates $state -- keep it. Only a
-  # missing/empty file should skip the pane.
+  # `|| true`, not `|| continue`: a missing trailing newline makes read
+  # return non-zero but $state is still set -- keep it.
   { read -r state < "$state_dir/$pane"; } 2>/dev/null || true
   [ -z "$state" ] && continue
   case "$state" in
@@ -30,10 +29,8 @@ while read -r pane; do
   if [ "$r" -gt "$top" ]; then top=$r; best=$state; fi
 done < <(tmux list-panes -t "$window_id" -F '#{pane_id}' 2>/dev/null)
 
-# Compare the new icon to what the window already shows; skip the
-# set/unset and the refresh when nothing changed. Saves a server-wide
-# redraw on every non-Claude pane death (pane-exited fires for ALL
-# panes, the vast majority of which aren't ours).
+# Skip the set/unset + redraw when the icon is unchanged -- avoids a
+# server-wide refresh on every (mostly non-ours) pane-exited event.
 new_icon=""
 if [ -n "$best" ]; then
   new_icon=$(tmux show-option -gqv "@agent-icon-$best" 2>/dev/null || true)

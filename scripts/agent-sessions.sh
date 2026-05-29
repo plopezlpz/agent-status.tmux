@@ -22,13 +22,9 @@ rank_of() {
   esac
 }
 
-# Window key: the user-renamed window-name when sticky (automatic-rename=0),
-# else the window-index. Used as BOTH the display label AND the description
-# filesystem key, so descriptions follow user-renamed windows across
-# `renumber-windows on` shuffles. Auto-renamed windows are ephemeral by
-# nature; falling back to index is acceptable.
-# Args: <idx> <name> <auto>  -- passed as separate args so window names
-# containing spaces / pipes / any user-typed chars survive intact.
+# Display label + description-file key: the sticky window name (so saved
+# descriptions survive `renumber-windows`), else the window index.
+# Args <idx> <name> <auto> kept separate so names with spaces/pipes survive.
 window_key() {
   if [ "$3" = "0" ]; then
     printf '%s' "$2"
@@ -37,14 +33,9 @@ window_key() {
   fi
 }
 
-# Records use \0-terminated, TAB-delimited columns:
-#   TYPE<TAB>TARGET<TAB>display\0
-# TYPE='A' (agent card) | 'H' (group heading -- inline, cursor-unreachable).
-# TARGET = navigation key for agents, or '__HEADER__' for headings.
-# The count is hidden (--info=hidden) so heading rows don't show up in a
-# total. Heading rows have explicit bg matching the popup background so
-# they look inert even during the brief moment fzf might paint them as
-# 'focused' before the down/up transform bindings skip past.
+# NUL-terminated, TAB-delimited records: TYPE<TAB>TARGET<TAB>display
+# TYPE 'A'=card, 'H'=heading (TARGET=__HEADER__). Headings paint with the
+# popup bg so they look inert; the fzf binds below keep the cursor off them.
 
 emit_heading() {
   # bg #2b3339 (popup bg) + dim + bold. Trailing reset.
@@ -59,30 +50,19 @@ emit_card() {
     "$sess" "$win_key" "$pane_idx" "$icon" "$desc" "$sess" "$win_key" "$pane_idx" "$folder"
 }
 
-# Returns 0 if the session has at least one pane with a state file, 1 otherwise.
-session_has_agents() {
-  local sess="$1" pane
-  while read -r pane; do
-    [ -f "$STATE_DIR/$pane" ] && return 0
-  done < <(tmux list-panes -s -t "$sess" -F '#{pane_id}' 2>/dev/null)
-  return 1
-}
-
-# Emit one card per agent pane in $sess. Cards are clustered by folder
-# (so panes in the same project stay adjacent) and ordered by state
-# precedence within each folder (asking > working > finished > idle).
-# Session grouping is implicit -- build_cards calls this once per session.
+# One card per agent pane in $sess, clustered by folder and ordered by
+# state precedence within each folder. Emits nothing if the session has no
+# agent panes, so build_cards can call it unconditionally.
 emit_agent_cards_for_session() {
   local sess="$1"
   # Two-stage so we can track group transitions across iterations (bash 3.2
   # pipes spawn subshells and lose variable state, so we stash the sorted
   # list in a tmpfile and re-read it in the current shell).
+  # Sort into a tmpfile, then re-read in this shell: a bash 3.2 pipe runs
+  # the while-loop in a subshell, losing the prev_group state we need to
+  # detect group transitions. TAB-delimited: names/paths never contain a tab.
   local tmp
   tmp=$(mktemp -t agent-status.XXXXXX)
-  # TAB delimiter -- tmux window names can contain any user-typed char
-  # including '|' and spaces, but never a literal tab from tmux's own
-  # internal renaming. Same applies to pane_current_path on any sane
-  # filesystem.
   while IFS=$'\t' read -r pane_id win_idx win_name auto pane_idx path; do
     local state=""
     if [ -f "$STATE_DIR/$pane_id" ]; then
@@ -119,9 +99,7 @@ emit_agent_cards_for_session() {
 build_cards() {
   local sess
   while read -r sess; do
-    if session_has_agents "$sess"; then
-      emit_agent_cards_for_session "$sess"
-    fi
+    emit_agent_cards_for_session "$sess"
   done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null)
 }
 
@@ -169,18 +147,9 @@ esac
 # Main mode: run fzf, then drill into the selected card's pane.
 self="$0"
 
-# Headings (TYPE=H) sit inline between groups. Three mechanisms keep them
-# out of the way:
-#   --info=hidden            suppresses the X/Y count line so headings
-#                            don't bump the total visible to the user.
-#   --sync + start:down      ensures the initial cursor lands on the
-#                            first card, never on the leading heading.
-#   down/up + transform      after every cursor move, if we landed on a
-#                            heading re-fire the same direction so the
-#                            cursor effectively can't rest on one.
-#   --cycle                  makes 'up' from the first card wrap to the
-#                            bottom rather than getting stuck on the
-#                            leading heading.
+# Keep the cursor off heading rows: --info=hidden drops them from the count,
+# --sync + start:down land the initial cursor on a card, the down/up
+# transforms re-fire past any heading, --cycle wraps instead of sticking.
 sel=$(build_cards | fzf \
   --sync --read0 --ansi --reverse --no-sort --border=rounded --cycle \
   --info=hidden \
@@ -197,14 +166,10 @@ sel=$(build_cards | fzf \
 
 [ -z "$sel" ] && exit 0
 
-# Hidden columns: TYPE<TAB>TARGET<TAB>…   TARGET = "<sess>:<win-key>.<pane-idx>"
+# TARGET (field 2) = "<sess>:<win-key>.<pane-idx>".
 target=$(printf '%s' "$sel" | awk -F'	' '{print $2}')
-# Defensive: if a heading somehow slips through (e.g., cycle wrap + accept),
-# don't navigate anywhere.
-[ "$target" = "__HEADER__" ] && exit 0
-# pane_idx is the trailing numeric component (after the LAST dot), so split
-# on the last dot -- this keeps window names that contain dots (e.g. a
-# sticky-renamed "v0.1.2") intact instead of splitting them mid-name.
+[ "$target" = "__HEADER__" ] && exit 0   # heading slipped through; ignore
+# Split on the LAST dot so window names with dots (e.g. "v0.1.2") stay intact.
 sess="${target%%:*}"
 win_key="${target%.*}"; win_key="${win_key#*:}"
 pane_idx="${target##*.}"

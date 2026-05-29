@@ -52,7 +52,7 @@ Then remove the TPM plugin line and uninstall via TPM (`prefix + alt + u`).
 | Dep | Minimum | Notes |
 |---|---|---|
 | tmux | 3.3 | needs `display-popup -E` |
-| fzf | 0.45 | needs `transform` / `transform-header` actions |
+| fzf | 0.45 | needs the `transform` action |
 | Bash | 3.2 | macOS default, fine |
 | jq | any | required by the install script only |
 | Claude Code | 2.1.x | needs `PermissionRequest` and `SessionEnd` hooks |
@@ -123,11 +123,10 @@ Plus:
   `switch-client + select-window + select-pane`.
 - `agent-sessions.sh`: the fzf navigator popup.
 
-## Why a separate state file per pane?
+## Why one state file per pane?
 
-So multiple Claude instances in the same tmux window each carry their
-own state, and the navigator can list them as distinct cards. The
-window-scoped aggregator picks the worst state for the status icon
+So multiple Claude instances in one window each keep their own state and
+list as distinct navigator cards; the window icon shows the worst of them
 (asking > working > finished > idle).
 
 ## License
