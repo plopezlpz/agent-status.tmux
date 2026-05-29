@@ -36,7 +36,11 @@ new=$(jq --arg s "$SCRIPTS" '
   .hooks.UserPromptSubmit  = ((.hooks.UserPromptSubmit  // []) | strip) + [{hooks:[{type:"command", command:"\($s)/set-state.sh working"}]}] |
   .hooks.Stop              = ((.hooks.Stop              // []) | strip) + [{hooks:[{type:"command", command:"\($s)/set-state.sh finished"}]}] |
   .hooks.PermissionRequest = ((.hooks.PermissionRequest // []) | strip) + [{hooks:[{type:"command", command:"\($s)/set-state.sh asking"}]}] |
-  .hooks.PreToolUse        = ((.hooks.PreToolUse        // []) | strip) + [{hooks:[{type:"command", command:"\($s)/set-state.sh working"}]}]
+  .hooks.PreToolUse        = ((.hooks.PreToolUse        // []) | strip) + [{hooks:[{type:"command", command:"\($s)/set-state.sh working"}]}] |
+  # Claude Code has no "permission answered" event, so `asking` only returns
+  # to `working` via the next tool. PostToolUse fires right after the approved
+  # tool runs -- wire it so the pane leaves `asking` the moment work resumes.
+  .hooks.PostToolUse       = ((.hooks.PostToolUse       // []) | strip) + [{hooks:[{type:"command", command:"\($s)/set-state.sh working"}]}]
 ' "$SETTINGS")
 
 printf '%s\n' "$new" > "$SETTINGS"

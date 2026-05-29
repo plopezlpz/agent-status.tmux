@@ -102,8 +102,8 @@ option `@agent-icon`. Reference it in your status format like:
 
 ```
 Claude Code hooks (settings.json)
-        ↓ SessionStart / UserPromptSubmit / PreToolUse / Stop /
-        ↓ PermissionRequest / SessionEnd
+        ↓ SessionStart / UserPromptSubmit / PreToolUse / PostToolUse /
+        ↓ Stop / PermissionRequest / SessionEnd
     set-state.sh / clear-state.sh
         ↓ writes <state-dir>/<pane_id>
         ↓ calls update-window-icon.sh
@@ -119,6 +119,16 @@ Plus:
   → `idle` when you visit the pane.
 - `clear-pane.sh` (tmux `pane-exited` hook): drops the state file when
   a pane dies and re-aggregates the window icon.
+
+Two non-obvious transitions:
+- **`asking` → `working`**: Claude Code has no "permission answered"
+  hook, so `PostToolUse` (fires right after the approved tool runs)
+  carries the pane back to `working`. Without it the question-mark icon
+  would linger until the next tool call or `Stop`.
+- **`SessionEnd` only clears on a real exit**: `clear-state.sh` reads the
+  SessionEnd `reason`. `/clear` and `/resume` keep the session (and pane)
+  alive, so the state is *kept*; only `other`/`logout`/etc. delete it.
+  A truly closed pane is still cleaned up by the `pane-exited` hook.
 - `focus-pane.sh`: target of `terminal-notifier -execute`, performs
   `switch-client + select-window + select-pane`.
 - `agent-sessions.sh`: the fzf navigator popup.
