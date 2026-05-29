@@ -24,9 +24,13 @@ tmux set-option -gqo @agent-icon-idle     '󱚣'
 tmux set-option -gqo @agent-navigator-key 'A'
 tmux set-option -gqo @agent-popup-width   '70%'
 tmux set-option -gqo @agent-popup-height  '70%'
-tmux set-option -gqo @agent-state-dir         '/tmp/agent-state'
-tmux set-option -gqo @agent-descriptions-dir  "$HOME/.cache/agent-status/descriptions"
-tmux set-option -gqo @agent-log               "$HOME/.cache/agent-status/agent.log"
+# Transient state -> tmux's tmpdir (per-user, reboot-cleared). Persistent
+# data (descriptions, log) -> XDG_DATA_HOME/tmux, like tmux-resurrect.
+_agent_runtime="${TMUX_TMPDIR:-/tmp}/agent-status-$(id -u)"
+_agent_data="${XDG_DATA_HOME:-$HOME/.local/share}/tmux/agent-status"
+tmux set-option -gqo @agent-state-dir         "$_agent_runtime"
+tmux set-option -gqo @agent-descriptions-dir  "$_agent_data/descriptions"
+tmux set-option -gqo @agent-log               "$_agent_data/agent.log"
 # Optional: macOS terminal app to activate on notification click (e.g.
 # "Ghostty", "iTerm", "Terminal"). Empty = don't activate any app.
 tmux set-option -gqo @agent-terminal-app ''

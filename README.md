@@ -94,9 +94,9 @@ option `@agent-icon`. Reference it in your status format like:
 
 | Option | Default | Description |
 |---|---|---|
-| `@agent-state-dir`         | `/tmp/agent-state` | per-pane state files (`<state_dir>/<pane_id>`) |
-| `@agent-descriptions-dir`  | `$HOME/.cache/agent-status/descriptions` | navigator descriptions, keyed by `session/window-key/pane-index` |
-| `@agent-log`               | `$HOME/.cache/agent-status/agent.log` | append-only audit trail of state transitions |
+| `@agent-state-dir`         | `${TMUX_TMPDIR:-/tmp}/agent-status-<uid>` | per-pane state files (`<state_dir>/<pane_id>`); transient, reboot-cleared |
+| `@agent-descriptions-dir`  | `${XDG_DATA_HOME:-$HOME/.local/share}/tmux/agent-status/descriptions` | navigator descriptions |
+| `@agent-log`               | `${XDG_DATA_HOME:-$HOME/.local/share}/tmux/agent-status/agent.log` | state-transition audit log |
 
 ## Architecture
 
@@ -105,7 +105,7 @@ Claude Code hooks (settings.json)
         ↓ SessionStart / UserPromptSubmit / PreToolUse / Stop /
         ↓ PermissionRequest / SessionEnd
     set-state.sh / clear-state.sh
-        ↓ writes /tmp/agent-state/<pane_id>
+        ↓ writes <state-dir>/<pane_id>
         ↓ calls update-window-icon.sh
     update-window-icon.sh
         ↓ aggregates worst state across all panes in window

@@ -8,9 +8,9 @@ pane="$1"
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
 state_dir=$(tmux show-option -gqv @agent-state-dir 2>/dev/null || true)
-: "${state_dir:=/tmp/agent-state}"
+: "${state_dir:=${TMUX_TMPDIR:-/tmp}/agent-status-$(id -u)}"
 log_file=$(tmux show-option -gqv @agent-log 2>/dev/null || true)
-: "${log_file:=$HOME/.cache/agent-status/agent.log}"
+: "${log_file:=${XDG_DATA_HOME:-$HOME/.local/share}/tmux/agent-status/agent.log}"
 
 file="$state_dir/$pane"
 state=""

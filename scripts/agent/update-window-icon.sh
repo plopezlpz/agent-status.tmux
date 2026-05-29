@@ -10,7 +10,7 @@ window_id="${1:-}"
 [ -n "$window_id" ] || exit 0
 
 state_dir=$(tmux show-option -gqv @agent-state-dir 2>/dev/null || true)
-: "${state_dir:=/tmp/agent-state}"
+: "${state_dir:=${TMUX_TMPDIR:-/tmp}/agent-status-$(id -u)}"
 
 best="" top=0
 while read -r pane; do

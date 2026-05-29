@@ -4,9 +4,9 @@
 set -eu
 
 state_dir=$(tmux show-option -gqv @agent-state-dir 2>/dev/null || true)
-: "${state_dir:=/tmp/agent-state}"
+: "${state_dir:=${TMUX_TMPDIR:-/tmp}/agent-status-$(id -u)}"
 desc_dir=$(tmux show-option -gqv @agent-descriptions-dir 2>/dev/null || true)
-: "${desc_dir:=$HOME/.cache/agent-status/descriptions}"
+: "${desc_dir:=${XDG_DATA_HOME:-$HOME/.local/share}/tmux/agent-status/descriptions}"
 
 STATE_DIR="$state_dir"
 DESC_DIR="$desc_dir"
