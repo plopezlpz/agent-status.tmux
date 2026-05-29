@@ -3,10 +3,10 @@
 # state in $state_dir. Bound to `prefix <key>` by the plugin entrypoint.
 set -eu
 
-state_dir=$(tmux show-option -gqv @claude-agent-state-dir 2>/dev/null || true)
-: "${state_dir:=/tmp/claude-agent-state}"
-desc_dir=$(tmux show-option -gqv @claude-agent-descriptions-dir 2>/dev/null || true)
-: "${desc_dir:=$HOME/.cache/claude-agent-status/descriptions}"
+state_dir=$(tmux show-option -gqv @agent-state-dir 2>/dev/null || true)
+: "${state_dir:=/tmp/agent-state}"
+desc_dir=$(tmux show-option -gqv @agent-descriptions-dir 2>/dev/null || true)
+: "${desc_dir:=$HOME/.cache/agent-status/descriptions}"
 
 STATE_DIR="$state_dir"
 DESC_DIR="$desc_dir"
@@ -78,7 +78,7 @@ emit_agent_cards_for_session() {
   # pipes spawn subshells and lose variable state, so we stash the sorted
   # list in a tmpfile and re-read it in the current shell).
   local tmp
-  tmp=$(mktemp -t claude-agent-status.XXXXXX)
+  tmp=$(mktemp -t agent-status.XXXXXX)
   # TAB delimiter -- tmux window names can contain any user-typed char
   # including '|' and spaces, but never a literal tab from tmux's own
   # internal renaming. Same applies to pane_current_path on any sane
@@ -103,7 +103,7 @@ emit_agent_cards_for_session() {
     [ -z "$folder" ] && continue
     local win_key icon descfile desc group
     win_key=$(window_key "$win_idx" "$win_name" "$auto")
-    icon=$(tmux show-option -gqv "@claude-agent-icon-$state" 2>/dev/null || true)
+    icon=$(tmux show-option -gqv "@agent-icon-$state" 2>/dev/null || true)
     descfile="$DESC_DIR/$sess/$win_key/$pane_idx"
     desc=""; [ -f "$descfile" ] && read -r desc < "$descfile" || true
     group="$sess · $folder"

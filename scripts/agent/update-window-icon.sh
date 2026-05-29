@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Recompute the worst-state agent glyph for a window and stash it as a
-# window-scoped tmux user option @claude-agent-icon. The status format
+# window-scoped tmux user option @agent-icon. The status format
 # reads that option directly (no shell fork per render). Push-model:
 # writers call this on every state change, readers stay cheap.
 # Usage: update-window-icon.sh <window_id>
@@ -9,8 +9,8 @@ set -eu
 window_id="${1:-}"
 [ -n "$window_id" ] || exit 0
 
-state_dir=$(tmux show-option -gqv @claude-agent-state-dir 2>/dev/null || true)
-: "${state_dir:=/tmp/claude-agent-state}"
+state_dir=$(tmux show-option -gqv @agent-state-dir 2>/dev/null || true)
+: "${state_dir:=/tmp/agent-state}"
 
 best="" top=0
 while read -r pane; do
@@ -36,16 +36,16 @@ done < <(tmux list-panes -t "$window_id" -F '#{pane_id}' 2>/dev/null)
 # panes, the vast majority of which aren't ours).
 new_icon=""
 if [ -n "$best" ]; then
-  new_icon=$(tmux show-option -gqv "@claude-agent-icon-$best" 2>/dev/null || true)
+  new_icon=$(tmux show-option -gqv "@agent-icon-$best" 2>/dev/null || true)
 fi
-prev_icon=$(tmux show-option -wqv -t "$window_id" @claude-agent-icon 2>/dev/null || true)
+prev_icon=$(tmux show-option -wqv -t "$window_id" @agent-icon 2>/dev/null || true)
 
 [ "$new_icon" = "$prev_icon" ] && exit 0
 
 if [ -n "$new_icon" ]; then
-  tmux set-option -w -t "$window_id" @claude-agent-icon "$new_icon" 2>/dev/null || true
+  tmux set-option -w -t "$window_id" @agent-icon "$new_icon" 2>/dev/null || true
 else
-  tmux set-option -w -t "$window_id" -u @claude-agent-icon 2>/dev/null || true
+  tmux set-option -w -t "$window_id" -u @agent-icon 2>/dev/null || true
 fi
 
 # Centralized refresh: every code path that mutates state lands here.

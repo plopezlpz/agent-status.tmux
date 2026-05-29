@@ -13,7 +13,7 @@ SCRIPTS="$PLUGIN_DIR/scripts/agent"
 SETTINGS="${CLAUDE_SETTINGS:-$HOME/.claude/settings.json}"
 
 if ! command -v jq >/dev/null 2>&1; then
-  echo "claude-agent-status: jq is required (brew install jq | apt install jq)" >&2
+  echo "agent-status: jq is required (brew install jq | apt install jq)" >&2
   exit 1
 fi
 
@@ -45,5 +45,5 @@ new=$(jq --arg s "$SCRIPTS" '
 
 printf '%s\n' "$new" > "$SETTINGS"
 
-echo "claude-agent-status: hooks installed in $SETTINGS"
-echo "claude-agent-status: backup saved to $backup"
+echo "agent-status: hooks installed in $SETTINGS"
+echo "agent-status: backup saved to $backup"

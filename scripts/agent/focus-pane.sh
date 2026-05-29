@@ -17,7 +17,7 @@ read -r session window < <(tmux display -t "$pane" -p '#{session_id} #{window_id
 [ -n "$session" ] && [ -n "$window" ] || exit 0
 
 # Optional: bring the terminal app forward. Override via tmux option.
-app=$(tmux show-option -gqv @claude-agent-terminal-app 2>/dev/null || true)
+app=$(tmux show-option -gqv @agent-terminal-app 2>/dev/null || true)
 : "${app:=}"
 if [ -n "$app" ] && [ "$(uname -s)" = "Darwin" ]; then
   osascript -e "tell application \"$app\" to activate" 2>/dev/null || true

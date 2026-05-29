@@ -15,12 +15,12 @@ esac
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
-state_dir=$(tmux show-option -gqv @claude-agent-state-dir 2>/dev/null || true)
-: "${state_dir:=/tmp/claude-agent-state}"
+state_dir=$(tmux show-option -gqv @agent-state-dir 2>/dev/null || true)
+: "${state_dir:=/tmp/agent-state}"
 mkdir -p "$state_dir"
 
-log_file=$(tmux show-option -gqv @claude-agent-log 2>/dev/null || true)
-: "${log_file:=$HOME/.cache/claude-agent-status/agent.log}"
+log_file=$(tmux show-option -gqv @agent-log 2>/dev/null || true)
+: "${log_file:=$HOME/.cache/agent-status/agent.log}"
 
 file="$state_dir/$TMUX_PANE"
 prev=""; [ -f "$file" ] && read -r prev < "$file" || true
@@ -45,21 +45,21 @@ case "$state" in
       # under "~/Library/Application Support") survive Notification
       # Center's re-shell on click.
       terminal-notifier \
-        -title "Claude • $state" \
+        -title "Agent • $state" \
         -message "$msg" \
         -execute "\"$SCRIPT_DIR/focus-pane.sh\" \"$TMUX_PANE\"" \
-        -group "claude-$TMUX_PANE" \
+        -group "agent-$TMUX_PANE" \
         >/dev/null 2>&1 &
     elif command -v notify-send >/dev/null 2>&1; then
       # notify-send has no -execute equivalent without --action + a
       # listener; ship a plain notification and let the user switch
       # via `prefix A` (the navigator).
-      notify-send "Claude • $state" "$msg" >/dev/null 2>&1 &
+      notify-send "Agent • $state" "$msg" >/dev/null 2>&1 &
     fi
     ;;
 esac
 
 # Push-model: aggregator computes the worst-state icon for the window,
-# stashes it in @claude-agent-icon, and triggers the status redraw.
+# stashes it in @agent-icon, and triggers the status redraw.
 window_id=$(tmux display -t "$TMUX_PANE" -p '#{window_id}' 2>/dev/null || true)
 [ -n "$window_id" ] && "$SCRIPT_DIR/update-window-icon.sh" "$window_id" || true

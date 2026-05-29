@@ -8,10 +8,10 @@ set -eu
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
-state_dir=$(tmux show-option -gqv @claude-agent-state-dir 2>/dev/null || true)
-: "${state_dir:=/tmp/claude-agent-state}"
-log_file=$(tmux show-option -gqv @claude-agent-log 2>/dev/null || true)
-: "${log_file:=$HOME/.cache/claude-agent-status/agent.log}"
+state_dir=$(tmux show-option -gqv @agent-state-dir 2>/dev/null || true)
+: "${state_dir:=/tmp/agent-state}"
+log_file=$(tmux show-option -gqv @agent-log 2>/dev/null || true)
+: "${log_file:=$HOME/.cache/agent-status/agent.log}"
 
 file="$state_dir/$TMUX_PANE"
 prev=""; [ -f "$file" ] && read -r prev < "$file" || true

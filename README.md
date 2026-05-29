@@ -1,4 +1,4 @@
-# claude-agent-status.tmux
+# agent-status.tmux
 
 Live status indicators and a navigator popup for [Claude Code] panes in tmux.
 
@@ -16,7 +16,7 @@ Live status indicators and a navigator popup for [Claude Code] panes in tmux.
 With [TPM]:
 
 ```tmux
-set -g @plugin 'pablodaco/claude-agent-status.tmux'
+set -g @plugin 'plopezlpz/agent-status.tmux'
 run '~/.tmux/plugins/tpm/tpm'
 ```
 
@@ -25,14 +25,14 @@ run '~/.tmux/plugins/tpm/tpm'
 Then wire the plugin into Claude Code's hooks (one time, idempotent):
 
 ```bash
-bash ~/.tmux/plugins/claude-agent-status.tmux/install-claude-hooks.sh
+bash ~/.tmux/plugins/agent-status.tmux/install-claude-hooks.sh
 ```
 
 Finally, add the icon to your `window-status-format` (and current-format):
 
 ```tmux
-setw -g window-status-format         "#[fg=...] #{?@claude-agent-icon,#{@claude-agent-icon} ,}#I:#W "
-setw -g window-status-current-format "#[fg=...] #{?@claude-agent-icon,#{@claude-agent-icon} ,}#I:#W "
+setw -g window-status-format         "#[fg=...] #{?@agent-icon,#{@agent-icon} ,}#I:#W "
+setw -g window-status-current-format "#[fg=...] #{?@agent-icon,#{@agent-icon} ,}#I:#W "
 ```
 
 Reload tmux (`prefix r` if your config has the binding, else
@@ -42,7 +42,7 @@ should appear next to the window name when Claude is running.
 ## Uninstall
 
 ```bash
-bash ~/.tmux/plugins/claude-agent-status.tmux/uninstall-claude-hooks.sh
+bash ~/.tmux/plugins/agent-status.tmux/uninstall-claude-hooks.sh
 ```
 
 Then remove the TPM plugin line and uninstall via TPM (`prefix + alt + u`).
@@ -63,40 +63,40 @@ Then remove the TPM plugin line and uninstall via TPM (`prefix + alt + u`).
 ## Configuration
 
 All options set before `run ~/.tmux/plugins/tpm/tpm` will override the
-defaults below. Set with `set -g @claude-agent-...`.
+defaults below. Set with `set -g @agent-...`.
 
 ### Icons (per state)
 
 | Option | Default | Description |
 |---|---|---|
-| `@claude-agent-icon-working`  | `󱐋` | Tool call in flight |
-| `@claude-agent-icon-asking`   | `󰘥` | Permission request waiting |
-| `@claude-agent-icon-finished` | `󰗠` | Stop hook fired, awaiting your focus |
-| `@claude-agent-icon-idle`     | `󱚣` | Session started, no activity |
+| `@agent-icon-working`  | `󱐋` | Tool call in flight |
+| `@agent-icon-asking`   | `󰘥` | Permission request waiting |
+| `@agent-icon-finished` | `󰗠` | Stop hook fired, awaiting your focus |
+| `@agent-icon-idle`     | `󱚣` | Session started, no activity |
 
 The aggregated worst-state icon is exposed as the **window-scoped**
-option `@claude-agent-icon`. Reference it in your status format like:
+option `@agent-icon`. Reference it in your status format like:
 
 ```tmux
-#{?@claude-agent-icon,#{@claude-agent-icon} ,}
+#{?@agent-icon,#{@agent-icon} ,}
 ```
 
 ### Behavior
 
 | Option | Default | Description |
 |---|---|---|
-| `@claude-agent-navigator-key` | `A` | Suffix key after `prefix` to open the popup |
-| `@claude-agent-popup-width`   | `70%` | `display-popup -w` value |
-| `@claude-agent-popup-height`  | `70%` | `display-popup -h` value |
-| `@claude-agent-terminal-app`  | `''` | macOS app to bring forward on notification click (e.g. `Ghostty`, `iTerm`) |
+| `@agent-navigator-key` | `A` | Suffix key after `prefix` to open the popup |
+| `@agent-popup-width`   | `70%` | `display-popup -w` value |
+| `@agent-popup-height`  | `70%` | `display-popup -h` value |
+| `@agent-terminal-app`  | `''` | macOS app to bring forward on notification click (e.g. `Ghostty`, `iTerm`) |
 
 ### Paths
 
 | Option | Default | Description |
 |---|---|---|
-| `@claude-agent-state-dir`         | `/tmp/claude-agent-state` | per-pane state files (`<state_dir>/<pane_id>`) |
-| `@claude-agent-descriptions-dir`  | `$HOME/.cache/claude-agent-status/descriptions` | navigator descriptions, keyed by `session/window-key/pane-index` |
-| `@claude-agent-log`               | `$HOME/.cache/claude-agent-status/agent.log` | append-only audit trail of state transitions |
+| `@agent-state-dir`         | `/tmp/agent-state` | per-pane state files (`<state_dir>/<pane_id>`) |
+| `@agent-descriptions-dir`  | `$HOME/.cache/agent-status/descriptions` | navigator descriptions, keyed by `session/window-key/pane-index` |
+| `@agent-log`               | `$HOME/.cache/agent-status/agent.log` | append-only audit trail of state transitions |
 
 ## Architecture
 
@@ -105,13 +105,13 @@ Claude Code hooks (settings.json)
         ↓ SessionStart / UserPromptSubmit / PreToolUse / Stop /
         ↓ PermissionRequest / SessionEnd
     set-state.sh / clear-state.sh
-        ↓ writes /tmp/claude-agent-state/<pane_id>
+        ↓ writes /tmp/agent-state/<pane_id>
         ↓ calls update-window-icon.sh
     update-window-icon.sh
         ↓ aggregates worst state across all panes in window
-        ↓ sets window-scoped @claude-agent-icon option
+        ↓ sets window-scoped @agent-icon option
     tmux status format
-        ↓ reads @claude-agent-icon directly (no shell fork per render)
+        ↓ reads @agent-icon directly (no shell fork per render)
 ```
 
 Plus:
