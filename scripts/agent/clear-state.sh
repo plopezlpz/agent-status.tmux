@@ -33,7 +33,7 @@ mkdir -p "$(dirname "$log_file")"
 case "$reason" in
   clear|resume)
     # Session is continuing in the same live process -- keep the pane visible.
-    printf '%s pane=%s %s kept (reason=%s)\n' \
+    printf '%s pane=%s %s->kept (reason=%s)\n' \
       "$(date -u +%FT%TZ)" "$TMUX_PANE" "${prev:-none}" "$reason" >> "$log_file"
     exit 0
     ;;

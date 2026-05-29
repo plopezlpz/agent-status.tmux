@@ -55,7 +55,7 @@ Then remove the TPM plugin line and uninstall via TPM (`prefix + alt + u`).
 | fzf | 0.45 | needs the `transform` action |
 | Bash | 3.2 | macOS default, fine |
 | jq | any | required by the install script only |
-| Claude Code | 2.1.x | needs `PermissionRequest` and `SessionEnd` hooks |
+| Claude Code | 2.1.x | needs `PostToolUse`, `PermissionRequest`/`PermissionDenied`, and `SessionEnd` (with `.reason`) hooks |
 | Nerd Font | any | for the default glyphs — override via options if you don't have one |
 | terminal-notifier | macOS | optional, for clickable notifications |
 | notify-send | Linux | optional Linux fallback |
@@ -103,7 +103,7 @@ option `@agent-icon`. Reference it in your status format like:
 ```
 Claude Code hooks (settings.json)
         ↓ SessionStart / UserPromptSubmit / PreToolUse / PostToolUse /
-        ↓ Stop / PermissionRequest / SessionEnd
+        ↓ Stop / PermissionRequest / PermissionDenied / SessionEnd
     set-state.sh / clear-state.sh
         ↓ writes <state-dir>/<pane_id>
         ↓ calls update-window-icon.sh
@@ -122,13 +122,20 @@ Plus:
 
 Two non-obvious transitions:
 - **`asking` → `working`**: Claude Code has no "permission answered"
-  hook, so `PostToolUse` (fires right after the approved tool runs)
-  carries the pane back to `working`. Without it the question-mark icon
+  hook, so the pane is carried back to `working` by `PostToolUse` (after
+  an approved tool runs) and by `PermissionDenied` (after a rejected
+  prompt — the turn continues). Without these the question-mark icon
   would linger until the next tool call or `Stop`.
 - **`SessionEnd` only clears on a real exit**: `clear-state.sh` reads the
   SessionEnd `reason`. `/clear` and `/resume` keep the session (and pane)
-  alive, so the state is *kept*; only `other`/`logout`/etc. delete it.
-  A truly closed pane is still cleaned up by the `pane-exited` hook.
+  alive, so the state is *kept*; real exits (`other`/`logout`/
+  `prompt_input_exit`/`bypass_permissions_disabled`) delete it. A truly
+  closed pane is still cleaned up by the `pane-exited` hook.
+
+> Hook *registrations* load at session start, so after
+> `install-claude-hooks.sh` restart any already-running Claude sessions to
+> pick up the state hooks. (`clear-state.sh` changes take effect
+> immediately — the `SessionEnd` hook re-invokes the script each time.)
 - `focus-pane.sh`: target of `terminal-notifier -execute`, performs
   `switch-client + select-window + select-pane`.
 - `agent-sessions.sh`: the fzf navigator popup.

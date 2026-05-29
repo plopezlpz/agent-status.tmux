@@ -38,9 +38,12 @@ new=$(jq --arg s "$SCRIPTS" '
   .hooks.PermissionRequest = ((.hooks.PermissionRequest // []) | strip) + [{hooks:[{type:"command", command:"\($s)/set-state.sh asking"}]}] |
   .hooks.PreToolUse        = ((.hooks.PreToolUse        // []) | strip) + [{hooks:[{type:"command", command:"\($s)/set-state.sh working"}]}] |
   # Claude Code has no "permission answered" event, so `asking` only returns
-  # to `working` via the next tool. PostToolUse fires right after the approved
-  # tool runs -- wire it so the pane leaves `asking` the moment work resumes.
-  .hooks.PostToolUse       = ((.hooks.PostToolUse       // []) | strip) + [{hooks:[{type:"command", command:"\($s)/set-state.sh working"}]}]
+  # to `working` via the next tool. PostToolUse fires right after an approved
+  # tool runs; PermissionDenied fires when a prompt is rejected (the turn then
+  # continues). Wire both so the pane leaves `asking` the moment work resumes,
+  # whether the prompt was approved or denied.
+  .hooks.PostToolUse       = ((.hooks.PostToolUse       // []) | strip) + [{hooks:[{type:"command", command:"\($s)/set-state.sh working"}]}] |
+  .hooks.PermissionDenied  = ((.hooks.PermissionDenied  // []) | strip) + [{hooks:[{type:"command", command:"\($s)/set-state.sh working"}]}]
 ' "$SETTINGS")
 
 printf '%s\n' "$new" > "$SETTINGS"
