@@ -31,9 +31,9 @@ new=$(jq --arg s "$SCRIPTS" '
     | map(select((.hooks // []) | length > 0));
   # Ensure .hooks is an object even if the file has it as null/array/other.
   .hooks |= (if type == "object" then . else {} end) |
-  .hooks.SessionStart      = ((.hooks.SessionStart      // []) | strip) + [{hooks:[{type:"command", command:"\($s)/set-state.sh idle"}]}] |
+  .hooks.SessionStart      = ((.hooks.SessionStart      // []) | strip) + [{hooks:[{type:"command", command:"\($s)/set-state.sh idle"}, {type:"command", command:"\($s)/auto-desc.sh clear"}]}] |
   .hooks.SessionEnd        = ((.hooks.SessionEnd        // []) | strip) + [{hooks:[{type:"command", command:"\($s)/clear-state.sh"}]}] |
-  .hooks.UserPromptSubmit  = ((.hooks.UserPromptSubmit  // []) | strip) + [{hooks:[{type:"command", command:"\($s)/set-state.sh working"}]}] |
+  .hooks.UserPromptSubmit  = ((.hooks.UserPromptSubmit  // []) | strip) + [{hooks:[{type:"command", command:"\($s)/set-state.sh working"}, {type:"command", command:"\($s)/auto-desc.sh set"}]}] |
   .hooks.Stop              = ((.hooks.Stop              // []) | strip) + [{hooks:[{type:"command", command:"\($s)/set-state.sh finished"}]}] |
   .hooks.PermissionRequest = ((.hooks.PermissionRequest // []) | strip) + [{hooks:[{type:"command", command:"\($s)/set-state.sh asking"}]}] |
   .hooks.PreToolUse        = ((.hooks.PreToolUse        // []) | strip) + [{hooks:[{type:"command", command:"\($s)/set-state.sh working"}]}] |
