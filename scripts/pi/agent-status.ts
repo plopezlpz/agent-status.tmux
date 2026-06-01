@@ -43,10 +43,21 @@ export default function (pi: ExtensionAPI) {
 
 	const set = (state: string) => run("set-state.sh", [state]);
 
-	// session_start fires on startup/new/resume/fork (reset to idle) and on
-	// reload (extension hot-reload — keep current state, don't reset mid-work).
+	// session_start fires on startup/new/resume/fork (reset to idle + drop the
+	// previous session's auto-description) and on reload (extension hot-reload —
+	// keep current state and label, don't reset mid-work).
 	pi.on("session_start", async (event) => {
-		if (event.reason !== "reload") await set("idle");
+		if (event.reason !== "reload") {
+			await set("idle");
+			await run("auto-desc.sh", ["clear"]);
+		}
+	});
+
+	// Capture the session's first prompt as the default navigator label
+	// (auto-desc.sh only writes once per session; the navigator ignores it when
+	// a Ctrl-E override exists).
+	pi.on("before_agent_start", async (event) => {
+		if (event.prompt) await run("auto-desc.sh", ["set", event.prompt]);
 	});
 
 	pi.on("agent_start", async () => {

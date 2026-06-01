@@ -56,12 +56,20 @@ process.env.HOME = "/home/test";
 {
 	const { pi, handlers, calls } = makePi();
 	extension(pi);
-	for (const ev of ["session_start", "agent_start", "agent_end", "session_shutdown"]) {
+	for (const ev of ["session_start", "agent_start", "agent_end", "session_shutdown", "before_agent_start"]) {
 		check(typeof handlers[ev] === "function", `registers ${ev}`);
 	}
 
 	await handlers.session_start({ reason: "startup" });
 	check(lastState(calls) === "idle", "session_start startup -> idle");
+	check(
+		calls.some((c) => c.cmd.endsWith("auto-desc.sh") && c.args[0] === "clear"),
+		"session_start (non-reload) -> auto-desc clear",
+	);
+
+	await handlers.before_agent_start({ prompt: "hello world" });
+	const adSet = calls.find((c) => c.cmd.endsWith("auto-desc.sh") && c.args[0] === "set");
+	check(!!adSet && adSet.args[1] === "hello world", "before_agent_start -> auto-desc set <prompt>");
 
 	await handlers.agent_start({});
 	check(lastState(calls) === "working", "agent_start -> working");
