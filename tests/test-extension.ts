@@ -7,7 +7,7 @@ import { dirname, resolve } from "node:path";
 
 type ExecCall = { cmd: string; args: string[] };
 
-function makePi() {
+function makePi(opts: { tmuxStdout?: string; tmuxThrows?: boolean } = {}) {
 	const handlers: Record<string, (e: unknown) => unknown> = {};
 	const calls: ExecCall[] = [];
 	const pi = {
@@ -17,12 +17,17 @@ function makePi() {
 		async exec(cmd: string, args: string[]) {
 			calls.push({ cmd, args });
 			// Stand in for `tmux show-option -gqv @agent-scripts-dir`.
-			if (cmd === "tmux") return { stdout: "/SCRIPTS\n", code: 0 };
+			if (cmd === "tmux") {
+				if (opts.tmuxThrows) throw new Error("tmux not found");
+				return { stdout: opts.tmuxStdout ?? "/SCRIPTS\n", code: 0 };
+			}
 			return { stdout: "", code: 0 };
 		},
 	};
 	return { pi, handlers, calls };
 }
+
+const TPM_FALLBACK = "/home/test/.tmux/plugins/agent-status.tmux/scripts/agent";
 
 let failed = 0;
 function check(cond: boolean, msg: string) {
@@ -84,7 +89,31 @@ process.env.HOME = "/home/test";
 	check(!!sc && sc.cmd.startsWith("/SCRIPTS/"), "uses @agent-scripts-dir for script path");
 }
 
-// --- outside tmux: no-op ---
+// --- fallback path: tmux lookup throws -> conventional TPM path ---
+{
+	process.env.TMUX_PANE = "%1";
+	process.env.HOME = "/home/test";
+	const { pi, handlers, calls } = makePi({ tmuxThrows: true });
+	extension(pi);
+	await handlers.session_start({ reason: "startup" });
+	const sc = calls.find((c) => c.cmd.endsWith("set-state.sh"));
+	check(!!sc && sc.cmd === `${TPM_FALLBACK}/set-state.sh`, "tmux throws -> falls back to TPM path");
+}
+
+// --- fallback path: empty @agent-scripts-dir -> conventional TPM path ---
+{
+	process.env.TMUX_PANE = "%1";
+	process.env.HOME = "/home/test";
+	const { pi, handlers, calls } = makePi({ tmuxStdout: "\n" });
+	extension(pi);
+	await handlers.session_start({ reason: "startup" });
+	const sc = calls.find((c) => c.cmd.endsWith("set-state.sh"));
+	check(!!sc && sc.cmd === `${TPM_FALLBACK}/set-state.sh`, "empty option -> falls back to TPM path");
+}
+
+// --- outside tmux: no-op. The env guard lives INSIDE the exported function
+//     (not at module scope), so calling it again with TMUX_PANE unset must
+//     register nothing. Keep the guard there or this contract breaks.
 {
 	delete process.env.TMUX_PANE;
 	const { pi, handlers } = makePi();

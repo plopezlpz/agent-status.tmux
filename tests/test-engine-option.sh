@@ -18,6 +18,9 @@ tmux -L "$SOCK" new-session -d -s t -x 80 -y 24
 # `tmux` calls inside the entrypoint target the test server, not the default.
 tmux -L "$SOCK" run-shell "$PLUGIN_DIR/agent-status.tmux" 2>/dev/null || true
 
+# Under symlinked installs (e.g. a TPM symlink pointing at a dev clone) the
+# resolved dir may differ from $PLUGIN_DIR, so assert the contract (option set
+# and usable), not path equality.
 dir="$(tmux -L "$SOCK" show-option -gqv @agent-scripts-dir 2>/dev/null || true)"
 
 [ -n "$dir" ] || fail "@agent-scripts-dir not set"
