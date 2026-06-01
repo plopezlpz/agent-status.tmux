@@ -22,8 +22,9 @@ case "$cmd" in
     fi
     # First prompt only: never overwrite an existing auto-desc.
     [ -e "$file" ] && exit 0
-    line=${raw%%$'\n'*}
-    cleaned=$(printf '%s' "$line" | tr -s '[:space:]' ' ' | sed 's/^ //;s/ $//')
+    # Collapse the whole prompt (incl. newlines) to one trimmed line, then
+    # truncate — captures content from any line and tolerates leading blanks.
+    cleaned=$(printf '%s' "$raw" | tr -s '[:space:]' ' ' | sed 's/^ //;s/ $//')
     [ -z "$cleaned" ] && exit 0
     if [ "${#cleaned}" -gt 50 ]; then
       cleaned="$(printf '%s' "$cleaned" | cut -c1-49)…"

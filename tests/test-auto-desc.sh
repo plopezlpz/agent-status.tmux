@@ -28,7 +28,11 @@ case "$out" in *…) : ;; *) fail "no ellipsis on long input: $out" ;; esac
 
 rm -f "$file"
 bash "$SCRIPT" set "$(printf 'first line here\nsecond line')"
-[ "$(cat "$file")" = "first line here" ] || fail "multi-line not first line: [$(cat "$file")]"
+[ "$(cat "$file")" = "first line here second line" ] || fail "multi-line not collapsed: [$(cat "$file")]"
+
+rm -f "$file"
+bash "$SCRIPT" set "$(printf '\n\nreal content here')"
+[ "$(cat "$file")" = "real content here" ] || fail "leading blank lines not handled: [$(cat "$file")]"
 
 rm -f "$file"
 bash "$SCRIPT" set "    "
