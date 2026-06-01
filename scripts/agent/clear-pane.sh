@@ -24,5 +24,8 @@ if [ -f "$file" ]; then
   mkdir -p "$(dirname "$log_file")"
   printf '%s pane=%s %s->cleared (exit)\n' "$(date -u +%FT%TZ)" "$pane" "${prev:-none}" >> "$log_file"
 fi
+# Drop the transient auto-default description too (it can outlive the state file
+# if the agent quit but the pane stayed alive).
+rm -f -- "$file.desc"
 
 [ -n "$window" ] && "$SCRIPT_DIR/update-window-icon.sh" "$window" || true

@@ -86,6 +86,11 @@ emit_agent_cards_for_session() {
     icon=$(tmux show-option -gqv "@agent-icon-$state" 2>/dev/null || true)
     descfile="$DESC_DIR/$sess/$win_key/$pane_idx"
     desc=""; [ -f "$descfile" ] && read -r desc < "$descfile" || true
+    # Fall back to the auto-default (first-prompt) description when there is no
+    # Ctrl-E override. Keyed by pane id, written by auto-desc.sh.
+    if [ -z "$desc" ] && [ -f "$STATE_DIR/$pane_id.desc" ]; then
+      read -r desc < "$STATE_DIR/$pane_id.desc" || true
+    fi
     group="$sess · $folder"
     if [ "$group" != "$prev_group" ]; then
       emit_heading "$(printf '%s' "$group" | tr '[:lower:]' '[:upper:]')"
