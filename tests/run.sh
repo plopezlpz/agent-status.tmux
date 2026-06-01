@@ -7,6 +7,8 @@ rc=0
 
 bash "$HERE/test-engine-option.sh" || rc=1
 bash "$HERE/test-installer.sh" || rc=1
+bash "$HERE/test-auto-desc.sh" || rc=1
+bash "$HERE/test-claude-hooks.sh" || rc=1
 if command -v bun >/dev/null 2>&1; then
   bun "$HERE/test-extension.ts" || rc=1
 else

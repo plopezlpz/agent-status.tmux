@@ -10,7 +10,8 @@ Live status indicators and a navigator popup for AI coding agent panes
   tmux to the pane that asked for input or finished a task — `notify-send`
   fallback on Linux
 - `prefix A` popup: one card per live agent pane, grouped by
-  `session · folder`, with editable per-pane descriptions
+  `session · folder`, auto-labeled from each session's first prompt
+  (`Ctrl-E` to override)
 
 ## Install
 
@@ -169,7 +170,12 @@ Two non-obvious transitions:
 > immediately — the `SessionEnd` hook re-invokes the script each time.)
 - `focus-pane.sh`: target of `terminal-notifier -execute`, performs
   `switch-client + select-window + select-pane`.
-- `agent-sessions.sh`: the fzf navigator popup.
+- `agent-sessions.sh`: the fzf navigator popup. Each card shows your `Ctrl-E`
+  description if set, else an auto-default derived from the session's first
+  prompt (trimmed to one short line), else a placeholder. The auto-default is
+  captured on the first prompt and regenerated each new session; it lives in
+  `<state-dir>/<pane_id>.desc` (transient, written by `auto-desc.sh` — wired via
+  Claude `UserPromptSubmit`/`SessionStart` hooks and the pi extension).
 
 ## Why one state file per pane?
 
