@@ -29,6 +29,9 @@ _agent_data="${XDG_DATA_HOME:-$HOME/.local/share}/tmux/agent-status"
 tmux set-option -gqo @agent-state-dir         "$_agent_runtime"
 tmux set-option -gqo @agent-descriptions-dir  "$_agent_data/descriptions"
 tmux set-option -gqo @agent-log               "$_agent_data/agent.log"
+# Advertise where the per-pane state scripts live so agent adapters (e.g. the
+# pi extension) can locate set-state.sh/clear-state.sh without a baked path.
+tmux set-option -gqo @agent-scripts-dir       "$SCRIPTS/agent"
 # Optional: macOS terminal app to activate on notification click (e.g.
 # "Ghostty", "iTerm", "Terminal"). Empty = don't activate any app.
 tmux set-option -gqo @agent-terminal-app ''
@@ -93,5 +96,5 @@ nav_key=$(tmux show-option -gqv @agent-navigator-key)
 popup_w=$(tmux show-option -gqv @agent-popup-width)
 popup_h=$(tmux show-option -gqv @agent-popup-height)
 
-tmux bind -N "Claude agent navigator" "$nav_key" \
+tmux bind -N "agent navigator" "$nav_key" \
   display-popup -E -w "$popup_w" -h "$popup_h" "$SCRIPTS/agent-sessions.sh"
