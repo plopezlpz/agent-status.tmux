@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Claude agent-instance navigator. One card per pane that has registered
+# Agent-instance navigator. One card per pane that has registered
 # state in $state_dir. Bound to `prefix <key>` by the plugin entrypoint.
 set -eu
 

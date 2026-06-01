@@ -1,14 +1,15 @@
 # agent-status.tmux
 
-Live status indicators and a navigator popup for [Claude Code] panes in tmux.
+Live status indicators and a navigator popup for AI coding agent panes
+([Claude Code] and [pi]) in tmux.
 
-- Per-pane state: **working / asking / finished / idle** driven by Claude
-  Code hooks
+- Per-pane state: **working / asking / finished / idle** driven by agent
+  events (Claude Code hooks, pi extension)
 - Per-window aggregated icon in your tmux status line (worst state wins)
 - Clickable macOS notifications (via `terminal-notifier`) that switch
   tmux to the pane that asked for input or finished a task — `notify-send`
   fallback on Linux
-- `prefix A` popup: one card per live Claude pane, grouped by
+- `prefix A` popup: one card per live agent pane, grouped by
   `session · folder`, with editable per-pane descriptions
 
 ## Install
@@ -28,6 +29,24 @@ Then wire the plugin into Claude Code's hooks (one time, idempotent):
 bash ~/.tmux/plugins/agent-status.tmux/install-claude-hooks.sh
 ```
 
+For [pi] panes, symlink the extension into pi's extensions directory instead
+(one time, idempotent):
+
+```bash
+bash ~/.tmux/plugins/agent-status.tmux/install-pi-extension.sh
+```
+
+Restart `pi` (or run `/reload` in a running session) to activate it. pi panes
+show **working / finished / idle**. pi runs without permission prompts by
+default, so there is no **asking** state out of the box; if you run a
+permission-gate extension, emit it yourself around the prompt:
+
+```ts
+const dir = (await pi.exec("tmux", ["show-option", "-gqv", "@agent-scripts-dir"])).stdout.trim();
+await pi.exec(`${dir}/set-state.sh`, ["asking"]);   // before ctx.ui.confirm(...)
+await pi.exec(`${dir}/set-state.sh`, ["working"]);  // after it returns
+```
+
 Finally, add the icon to your `window-status-format` (and current-format):
 
 ```tmux
@@ -36,13 +55,14 @@ setw -g window-status-current-format "#[fg=...] #{?@agent-icon,#{@agent-icon} ,}
 ```
 
 Reload tmux (`prefix r` if your config has the binding, else
-`tmux source ~/.tmux.conf`) and start a Claude session — the icon
-should appear next to the window name when Claude is running.
+`tmux source ~/.tmux.conf`) and start a Claude or pi session — the icon
+should appear next to the window name when an agent is running.
 
 ## Uninstall
 
 ```bash
-bash ~/.tmux/plugins/agent-status.tmux/uninstall-claude-hooks.sh
+bash ~/.tmux/plugins/agent-status.tmux/uninstall-claude-hooks.sh   # Claude Code
+bash ~/.tmux/plugins/agent-status.tmux/uninstall-pi-extension.sh   # pi
 ```
 
 Then remove the TPM plugin line and uninstall via TPM (`prefix + alt + u`).
@@ -56,6 +76,7 @@ Then remove the TPM plugin line and uninstall via TPM (`prefix + alt + u`).
 | Bash | 3.2 | macOS default, fine |
 | jq | any | required by the install script only |
 | Claude Code | 2.1.x | needs `PostToolUse`, `PermissionRequest`/`PermissionDenied`, and `SessionEnd` (with `.reason`) hooks |
+| pi | 0.78 | optional; uses `session_start` / `agent_start` / `agent_end` / `session_shutdown` events |
 | Nerd Font | any | for the default glyphs — override via options if you don't have one |
 | terminal-notifier | macOS | optional, for clickable notifications |
 | notify-send | Linux | optional Linux fallback |
@@ -97,6 +118,7 @@ option `@agent-icon`. Reference it in your status format like:
 | `@agent-state-dir`         | `${TMUX_TMPDIR:-/tmp}/agent-status-<uid>` | per-pane state files (`<state_dir>/<pane_id>`); transient, reboot-cleared |
 | `@agent-descriptions-dir`  | `${XDG_DATA_HOME:-$HOME/.local/share}/tmux/agent-status/descriptions` | navigator descriptions |
 | `@agent-log`               | `${XDG_DATA_HOME:-$HOME/.local/share}/tmux/agent-status/agent.log` | state-transition audit log |
+| `@agent-scripts-dir`       | `<plugin>/scripts/agent` | where agent adapters find the state scripts; set by the plugin, read by the pi extension |
 
 ## Architecture
 
@@ -113,6 +135,15 @@ Claude Code hooks (settings.json)
     tmux status format
         ↓ reads @agent-icon directly (no shell fork per render)
 ```
+
+**pi** is driven instead by an auto-discovered TypeScript extension
+(`scripts/pi/agent-status.ts`, symlinked by `install-pi-extension.sh`). It maps
+pi's `session_start` / `agent_start` / `agent_end` / `session_shutdown` events
+to the same `set-state.sh` / `clear-state.sh`, so everything downstream (icon,
+notifications, navigator) is shared. It clears state only on a real `quit`
+(reason guard), keeping the pane registered through `/new`, `/resume`, `/fork`,
+and `/reload`. The extension locates the scripts via the `@agent-scripts-dir`
+tmux option, so no path is baked in.
 
 Plus:
 - `clear-finished.sh` (tmux `pane-focus-in` hook): demotes `finished`
@@ -142,7 +173,7 @@ Two non-obvious transitions:
 
 ## Why one state file per pane?
 
-So multiple Claude instances in one window each keep their own state and
+So multiple agent instances in one window each keep their own state and
 list as distinct navigator cards; the window icon shows the worst of them
 (asking > working > finished > idle).
 
@@ -151,4 +182,5 @@ list as distinct navigator cards; the window icon shows the worst of them
 MIT — see [LICENSE](./LICENSE).
 
 [Claude Code]: https://github.com/anthropics/claude-code
+[pi]: https://github.com/earendil-works/pi
 [TPM]: https://github.com/tmux-plugins/tpm
