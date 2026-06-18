@@ -40,9 +40,38 @@ case "$state" in
     msg="${2:-}"
     [ -z "$msg" ] && [ ! -t 0 ] && msg=$(jq -r '.message // ""' 2>/dev/null || true)
     [ -z "$msg" ] && msg=$(tmux display -t "$TMUX_PANE" -p '#S / #W' 2>/dev/null || true)
-    if command -v terminal-notifier >/dev/null 2>&1; then
-      # Quote -execute fields: Notification Center re-shells on click, so a
-      # space in $SCRIPT_DIR would otherwise split the command.
+    if command -v alerter >/dev/null 2>&1; then
+      # Preferred path. terminal-notifier 2.0.0's click -> -execute callback
+      # no longer fires on modern macOS (NSUserNotification is dead), so the
+      # notification shows but clicking it does nothing. alerter (v26.x, built
+      # on the modern UserNotifications API) still delivers click events. It
+      # blocks until the user interacts and prints the result to stdout, so we
+      # run it detached and invoke focus-pane.sh ourselves on a click.
+      # -timeout bounds how long the helper process lingers (override via
+      # @agent-notify-timeout, seconds).
+      timeout=$(tmux show-option -gqv @agent-notify-timeout 2>/dev/null || true)
+      # Guard: a non-numeric value would make alerter error out and show no
+      # notification at all, so fall back to the default.
+      case "$timeout" in ''|*[!0-9]*) timeout=3600 ;; esac
+      (
+        # alerter v26.x uses long flags and reports the interaction as JSON;
+        # a body click is activationType "contentsClicked" (button click is
+        # "actionClicked"). --timeout 0 means "never auto-close".
+        result=$(alerter \
+          --title "Agent • $state" \
+          --message "$msg" \
+          --group "agent-$TMUX_PANE" \
+          --timeout "$timeout" \
+          --json 2>/dev/null)
+        act=$(printf '%s' "$result" | jq -r '.activationType // empty' 2>/dev/null || true)
+        case "$act" in
+          contentsClicked|actionClicked) "$SCRIPT_DIR/focus-pane.sh" "$TMUX_PANE" ;;
+        esac
+      ) >/dev/null 2>&1 &
+    elif command -v terminal-notifier >/dev/null 2>&1; then
+      # Fallback. Quote -execute fields: Notification Center re-shells on
+      # click, so a space in $SCRIPT_DIR would otherwise split the command.
+      # NOTE: the -execute click action is broken on macOS 11+ — prefer alerter.
       terminal-notifier \
         -title "Agent • $state" \
         -message "$msg" \

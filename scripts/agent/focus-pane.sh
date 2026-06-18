@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Switch tmux to the given pane (and on macOS, bring the terminal app
-# to the foreground). Invoked by terminal-notifier -execute. The
-# Notification Center spawns this with a minimal PATH and no $TMUX, so
-# we prepend the common Homebrew prefixes and rely on tmux's default
-# socket.
+# to the foreground). Invoked when a notification is clicked -- via
+# alerter's JSON activationType, or terminal-notifier -execute. The
+# launching context has a minimal PATH and no $TMUX, so we prepend the
+# common Homebrew prefixes and rely on tmux's default socket.
 # Usage: focus-pane.sh <pane_id>
 set -eu
 

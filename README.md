@@ -6,9 +6,9 @@ Live status indicators and a navigator popup for AI coding agent panes
 - Per-pane state: **working / asking / finished / idle** driven by agent
   events (Claude Code hooks, pi extension)
 - Per-window aggregated icon in your tmux status line (worst state wins)
-- Clickable macOS notifications (via `terminal-notifier`) that switch
-  tmux to the pane that asked for input or finished a task — `notify-send`
-  fallback on Linux
+- Clickable macOS notifications (via `alerter`, falling back to
+  `terminal-notifier`) that switch tmux to the pane that asked for input
+  or finished a task — `notify-send` fallback on Linux
 - `prefix A` popup: one card per live agent pane, grouped by
   `session · folder`, auto-labeled from each session's first prompt
   (`Ctrl-E` to override)
@@ -79,7 +79,8 @@ Then remove the TPM plugin line and uninstall via TPM (`prefix + alt + u`).
 | Claude Code | 2.1.x | needs `PostToolUse`, `PermissionRequest`/`PermissionDenied`, and `SessionEnd` (with `.reason`) hooks |
 | pi | 0.78 | optional; uses `session_start` / `agent_start` / `agent_end` / `session_shutdown` events |
 | Nerd Font | any | for the default glyphs — override via options if you don't have one |
-| terminal-notifier | macOS | optional, for clickable notifications |
+| alerter | macOS | optional, **preferred** for clickable notifications — `brew install vjeantet/tap/alerter` (its click action works on modern macOS) |
+| terminal-notifier | macOS | optional fallback; its click `-execute` action no longer fires on macOS 11+ (notifications still show, clicks are dead) |
 | notify-send | Linux | optional Linux fallback |
 
 ## Configuration
@@ -111,6 +112,7 @@ option `@agent-icon`. Reference it in your status format like:
 | `@agent-popup-width`   | `70%` | `display-popup -w` value |
 | `@agent-popup-height`  | `70%` | `display-popup -h` value |
 | `@agent-terminal-app`  | `''` | macOS app to bring forward on notification click (e.g. `Ghostty`, `iTerm`) |
+| `@agent-notify-timeout`| `3600` | seconds an `alerter` notification waits for a click before auto-closing (`0` = never). Each pending notification holds one background `alerter` process until clicked or timed out |
 
 ### Paths
 
@@ -168,7 +170,8 @@ Two non-obvious transitions:
 > `install-claude-hooks.sh` restart any already-running Claude sessions to
 > pick up the state hooks. (`clear-state.sh` changes take effect
 > immediately — the `SessionEnd` hook re-invokes the script each time.)
-- `focus-pane.sh`: target of `terminal-notifier -execute`, performs
+- `focus-pane.sh`: invoked when a notification is clicked (via `alerter`'s
+  JSON `activationType`, or `terminal-notifier -execute`), performs
   `switch-client + select-window + select-pane`.
 - `agent-sessions.sh`: the fzf navigator popup. Each card shows your `Ctrl-E`
   description if set, else an auto-default derived from the session's first

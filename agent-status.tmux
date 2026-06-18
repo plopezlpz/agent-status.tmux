@@ -35,6 +35,9 @@ tmux set-option -gqo @agent-scripts-dir       "$SCRIPTS/agent"
 # Optional: macOS terminal app to activate on notification click (e.g.
 # "Ghostty", "iTerm", "Terminal"). Empty = don't activate any app.
 tmux set-option -gqo @agent-terminal-app ''
+# Seconds an alerter notification waits for a click before auto-closing
+# (0 = never). Each pending notification holds one background alerter process.
+tmux set-option -gqo @agent-notify-timeout '3600'
 
 # ----- runtime directories --------------------------------------------
 state_dir=$(tmux show-option -gqv @agent-state-dir)
