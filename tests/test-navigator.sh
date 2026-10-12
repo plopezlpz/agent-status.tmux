@@ -190,4 +190,11 @@ tmux send-keys -t "$p1" 'echo preview-changed' Enter
 for _ in 1 2 3 4 5 6 7 8 9 10; do tmux capture-pane -p -t "$p1" | grep -q '^preview-changed' && break; sleep 0.1; done
 case "$(tick)" in *refresh-preview) ;; *) fail "changed pane did not refresh the preview" ;; esac
 
+# 13. Compact (phone) cards and label drop kind, window:pane and state words.
+card=$(AGENT_NAV_COMPACT=0 "$NAV" --list | tr '\0' '\n' | grep -F ' › ' | head -1)
+compact=$(AGENT_NAV_COMPACT=1 "$NAV" --list | tr '\0' '\n' | grep -F ' › ' | head -1)
+[ "$(printf '%s' "$card" | grep -o ' · ' | wc -l)" -gt "$(printf '%s' "$compact" | grep -o ' · ' | wc -l)" ] \
+  || fail "compact card kept its kind/window:pane: $compact"
+case "$(AGENT_NAV_COMPACT=1 "$NAV" --label)" in *working*|*finished*|*idle*|*waiting*) fail "compact label kept state words" ;; esac
+
 echo "PASS: navigator"

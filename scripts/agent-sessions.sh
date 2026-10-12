@@ -128,8 +128,11 @@ emit_card() {
   status="$LABEL $age"
   [ -z "$STATE_SGR" ] || printf -v status '\033[%sm%s\033[0m' "$STATE_SGR" "$status"
   location="$sess › $folder"
-  [ -z "$kind" ] || location="$location · $kind"
-  location="$location · $win_key:$pane_idx"
+  # Compact (phone) cards keep only where the agent is.
+  if [ "${AGENT_NAV_COMPACT:-0}" != 1 ]; then
+    [ -z "$kind" ] || location="$location · $kind"
+    location="$location · $win_key:$pane_idx"
+  fi
   clean_text "$location"; location="$CLEAN"
   printf 'A\t%s\t%s\t%s  %s\n   %s\033[2m  ·  %s\033[0m\0' \
     "$pane" "$desc_target" "${ICON:- }" "$title" "$status" "$location"
@@ -204,7 +207,11 @@ edit_description() {
 key_hint() { printf '\033[38;2;150;166;200m%s\033[0m \033[2m%s\033[0m   ' "$1" "$2"; }
 nav_footer() {
   local f
-  f="$(key_hint '⏎' jump)$(key_hint '^e' describe)$(key_hint '^g' generate)$(key_hint '^r' refresh)$(key_hint '^/' preview)$(key_hint esc close)"
+  if [ "${AGENT_NAV_COMPACT:-0}" = 1 ]; then
+    f="$(key_hint '⏎' jump)$(key_hint '^e' describe)$(key_hint '^/' preview)"
+  else
+    f="$(key_hint '⏎' jump)$(key_hint '^e' describe)$(key_hint '^g' generate)$(key_hint '^r' refresh)$(key_hint '^/' preview)$(key_hint esc close)"
+  fi
   printf '%s' "${f%   }"
 }
 NAV_GHOST='filter by task, project, agent or state'
@@ -394,7 +401,9 @@ summary_label() {
   for s in asking working finished idle; do
     case "$s" in asking) n=$waiting ;; working) n=$working ;; finished) n=$finished ;; idle) n=$idle ;; esac
     [ "$n" -gt 0 ] || continue
-    icon_of "$s"; out="$out $ICON $n $LABEL "
+    icon_of "$s"
+    # Compact: the coloured glyph alone, so the label fits a phone's border.
+    if [ "${AGENT_NAV_COMPACT:-0}" = 1 ]; then out="$out $ICON $n "; else out="$out $ICON $n $LABEL "; fi
   done
   [ "$((waiting + working + finished + idle))" -gt 0 ] || out=$'\033[1m agents \033[0m\033[2m none running \033[0m'
   printf '%s' "$out"
@@ -486,6 +495,13 @@ case "${1:-}" in
 esac
 
 prune_descriptions
+# A popup under 80 columns (a phone) gets compact cards, label and footer.
+# Exported so the --list and --label runs fzf starts render the same way.
+read -r _ cols < <(stty size 2>/dev/null < /dev/tty || echo '24 80')
+AGENT_NAV_COMPACT=0; [ "$cols" -ge 80 ] || AGENT_NAV_COMPACT=1
+export AGENT_NAV_COMPACT
+gap=1 padding=0,1 ghost="$NAV_GHOST"
+[ "$AGENT_NAV_COMPACT" = 0 ] || { gap=0 padding=0 ghost='filter agents'; }
 refresh_file=$(mktemp -t agent-status-refresh.XXXXXX)
 trap 'rm -f "$refresh_file" "$refresh_file.preview"' EXIT
 export AGENT_NAV_REFRESH_FILE="$refresh_file"
@@ -496,10 +512,10 @@ refresh_key; printf '%s\n' "$REFRESH_KEY" > "$refresh_file"
 sel=$(build_cards | fzf \
   --with-shell='/bin/sh -c' --sync --read0 --ansi --reverse --no-sort --cycle --track --id-nth=2 \
   --delimiter="$TAB" --with-nth=4.. \
-  --border=rounded --border-label="$(summary_label)" --border-label-pos=3 --padding=0,1 \
+  --border=rounded --border-label="$(summary_label)" --border-label-pos=3 --padding="$padding" \
   --input-border=line --footer-border=line --footer="$(nav_footer)" \
-  --info=inline-right --info-command='printf %s "${FZF_INFO%% +*}"' --prompt='› ' --ghost="$NAV_GHOST" \
-  --pointer='▌' --highlight-line --gap --gap-line=' ' \
+  --info=inline-right --info-command='printf %s "${FZF_INFO%% +*}"' --prompt='› ' --ghost="$ghost" \
+  --pointer='▌' --highlight-line --gap="$gap" --gap-line=' ' \
   --preview="$self_q --preview {2}" \
   --preview-window='right,50%,border-left,<70(up,50%,border-bottom,hidden)' \
   --color='bg:#181818,fg:#e4e4e4,bg+:#282828,fg+:#f5f5f5:regular,gutter:#181818' \
