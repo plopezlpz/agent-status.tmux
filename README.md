@@ -111,7 +111,7 @@ Set options before TPM runs; defaults never replace user overrides.
 | `@agent-icon-finished`, `@agent-color-finished` | `●`, `cyan` |
 | `@agent-icon-idle`, `@agent-color-idle` | `○`, `green` |
 | `@agent-navigator-key` | `A` |
-| `@agent-popup-width`, `@agent-popup-height` | `70%`, `70%` |
+| `@agent-popup-width`, `@agent-popup-height` | `70%`, `70%` (formats, expanded per client) |
 | `@agent-terminal-app` | empty |
 | `@agent-notify-timeout` | `300` |
 | `@agent-descriptions-dir` | `${XDG_DATA_HOME:-$HOME/.local/share}/tmux/agent-status/descriptions` |

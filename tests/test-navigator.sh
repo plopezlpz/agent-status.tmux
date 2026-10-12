@@ -181,4 +181,13 @@ rm -f "$DK"
 action=$(AGENT_NAV_REFRESH_FILE="$TMP/refresh" "$NAV" --refresh)
 case "$action" in reload\(*) ;; *) fail "automatic refresh is not a plain reload: $action" ;; esac
 
+# 12. The tick redraws the preview only when the focused pane's screen changed.
+# A minute rollover may add a reload; it must still carry refresh-preview.
+tick(){ AGENT_NAV_REFRESH_FILE="$TMP/refresh" "$NAV" --refresh "$p1"; }
+case "$(tick)" in *refresh-preview) ;; *) fail "first preview tick did not refresh the preview" ;; esac
+case "$(tick)" in ''|reload\(*) ;; *) fail "unchanged pane redrew the preview" ;; esac
+tmux send-keys -t "$p1" 'echo preview-changed' Enter
+for _ in 1 2 3 4 5 6 7 8 9 10; do tmux capture-pane -p -t "$p1" | grep -q '^preview-changed' && break; sleep 0.1; done
+case "$(tick)" in *refresh-preview) ;; *) fail "changed pane did not refresh the preview" ;; esac
+
 echo "PASS: navigator"

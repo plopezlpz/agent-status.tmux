@@ -5,6 +5,9 @@ set -eu
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 SEP=$'\037'
 TAB=$'\t'
+# fzf waits ESCDELAY ms (default 100) after Esc for an escape sequence. tmux
+# hands the popup whole sequences already, so a short wait makes Esc close fast.
+export ESCDELAY="${ESCDELAY:-10}"
 
 # One tmux lookup per popup. Reloaded list processes inherit this cache and only
 # need the single list-panes snapshot below.
@@ -443,24 +446,37 @@ refresh_key() {
   REFRESH_KEY="$revision:$((now / 60))"
 }
 
+# refresh_action [PANE]: the every(1) tick. Reloads the list when the revision
+# or minute changed, and redraws the preview only when PANE's screen changed:
+# an unconditional refresh-preview resent the whole preview every second.
 refresh_action() {
-  local file="${AGENT_NAV_REFRESH_FILE:-}" previous=""
+  local file="${AGENT_NAV_REFRESH_FILE:-}" pane="${1:-}" previous="" shot seen="" actions=""
   [ -f "$file" ] || return 0
   refresh_key
   read -r previous < "$file" || true
-  [ "$REFRESH_KEY" != "$previous" ] || return 0
-  printf '%s\n' "$REFRESH_KEY" > "$file"
-  printf -v self_q '%q' "$0"
-  # reload, not reload-sync: with --track, reload-sync blocks typing until the
-  # whole list has streamed, so automatic refreshes would drop keystrokes.
-  printf 'reload(%s --list)+transform-border-label(%s --label)\n' "$self_q" "$self_q"
+  if [ "$REFRESH_KEY" != "$previous" ]; then
+    printf '%s\n' "$REFRESH_KEY" > "$file"
+    printf -v self_q '%q' "$0"
+    # reload, not reload-sync: with --track, reload-sync blocks typing until the
+    # whole list has streamed, so automatic refreshes would drop keystrokes.
+    actions="reload($self_q --list)+transform-border-label($self_q --label)+refresh-preview"
+  fi
+  if [[ "$pane" =~ ^%[0-9]+$ ]]; then
+    shot="$pane $(tmux capture-pane -e -p -t "$pane" 2>/dev/null | cksum)"
+    [ ! -f "$file.preview" ] || read -r seen < "$file.preview" || true
+    if [ "$shot" != "$seen" ]; then
+      printf '%s\n' "$shot" > "$file.preview"
+      [ -n "$actions" ] || actions=refresh-preview
+    fi
+  fi
+  [ -z "$actions" ] || printf '%s\n' "$actions"
 }
 
 printf -v self_q '%q' "$0"
 case "${1:-}" in
   --list) build_cards; exit 0 ;;
   --edit) edit_description "${2:-}"; exit 0 ;;
-  --refresh) refresh_action; exit 0 ;;
+  --refresh) refresh_action "${2:-}"; exit 0 ;;
   --label) summary_label; exit 0 ;;
   --preview) preview_pane "${2:-}"; exit 0 ;;
   --dialog) describe_dialog "${2:-}"; exit 0 ;;
@@ -471,7 +487,7 @@ esac
 
 prune_descriptions
 refresh_file=$(mktemp -t agent-status-refresh.XXXXXX)
-trap 'rm -f "$refresh_file"' EXIT
+trap 'rm -f "$refresh_file" "$refresh_file.preview"' EXIT
 export AGENT_NAV_REFRESH_FILE="$refresh_file"
 refresh_key; printf '%s\n' "$REFRESH_KEY" > "$refresh_file"
 # gruber-darker palette, matching the Neovim floats: bg #181818, panel line
@@ -485,7 +501,7 @@ sel=$(build_cards | fzf \
   --info=inline-right --info-command='printf %s "${FZF_INFO%% +*}"' --prompt='› ' --ghost="$NAV_GHOST" \
   --pointer='▌' --highlight-line --gap --gap-line=' ' \
   --preview="$self_q --preview {2}" \
-  --preview-window='right,50%,border-left,<60(up,40%,border-bottom)' \
+  --preview-window='right,50%,border-left,<70(up,50%,border-bottom,hidden)' \
   --color='bg:#181818,fg:#e4e4e4,bg+:#282828,fg+:#f5f5f5:regular,gutter:#181818' \
   --color='hl:#c0d090:bold,hl+:#c0d090:bold,pointer:#e1d89e,marker:#96a6c8,spinner:#e1d89e' \
   --color='prompt:#e1d89e,query:#f5f5f5,ghost:#a0a0a0,info:#565f73,label:#e4e4e4' \
@@ -495,7 +511,7 @@ sel=$(build_cards | fzf \
   --bind "ctrl-e:execute($self_q --dialog {2})+reload-sync($self_q --list)+transform-border-label($self_q --label)" \
   --bind "ctrl-g:execute-silent($self_q --generate {2})+reload-sync($self_q --list)" \
   --bind "ctrl-r:reload-sync($self_q --list)+transform-border-label($self_q --label)" \
-  --bind "every(1):transform($self_q --refresh)+refresh-preview") || {
+  --bind "every(1):transform($self_q --refresh {2})") || {
   # 1 = no match, 130 = cancelled; anything else is an fzf error worth seeing.
   rc=$?; [ "$rc" -eq 1 ] || [ "$rc" -eq 130 ] || tmux display-message "agent navigator: fzf exited $rc"
   exit 0

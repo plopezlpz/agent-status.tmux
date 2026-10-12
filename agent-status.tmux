@@ -130,6 +130,7 @@ popup_w=$(tmux show-option -gqv @agent-popup-width)
 popup_h=$(tmux show-option -gqv @agent-popup-height)
 
 # Borderless popup: fzf draws the single rounded frame, label and footer.
+# run-shell -C expands formats in the size options against the invoking
+# client (display-popup -w/-h take plain sizes), e.g. full screen on a phone.
 tmux bind -N "agent navigator" "$nav_key" \
-  display-popup -B -E -w "$popup_w" -h "$popup_h" -s 'bg=#181818,fg=#e4e4e4' \
-  "$SCRIPTS/agent-sessions.sh"
+  run-shell -C "display-popup -B -E -c #{q:client_name} -w '$popup_w' -h '$popup_h' -s 'bg=#181818,fg=#e4e4e4' \"$SCRIPTS/agent-sessions.sh\""
