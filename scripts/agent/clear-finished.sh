@@ -1,28 +1,23 @@
 #!/usr/bin/env bash
-# Demote `finished` -> `idle` for a pane when it gains focus.
+# Mark a completed (idle + unseen) pane as seen when it gains focus.
 # Usage: clear-finished.sh <pane_id>
-# No-op for any other state -- asking should persist through focus.
 set -eu
 
-pane="$1"
+pane="${1:-}"
+[[ "$pane" =~ ^%[0-9]+$ ]] || exit 0
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+# shellcheck source=lib.sh
+. "$SCRIPT_DIR/lib.sh"
+finished(){ [ "$(tmux display -t "$pane" -p '#{pane_id}:#{@agent-state}:#{@agent-unseen}' 2>/dev/null || true)" = "$pane:idle:1" ]; }
+# Focus changes are frequent; skip the lock unless there is work to do.
+finished || exit 0
+agent_lock "pane-${pane#%}"
+finished || exit 0
 
-state_dir=$(tmux show-option -gqv @agent-state-dir 2>/dev/null || true)
-: "${state_dir:=${TMUX_TMPDIR:-/tmp}/agent-status-$(id -u)}"
-log_file=$(tmux show-option -gqv @agent-log 2>/dev/null || true)
-: "${log_file:=${XDG_DATA_HOME:-$HOME/.local/share}/tmux/agent-status/agent.log}"
+tmux set-option -p -t "$pane" @agent-unseen 0 2>/dev/null || true
+agent_unlock
 
-file="$state_dir/$pane"
-state=""
-[ -f "$file" ] && read -r state < "$file" || true
-[ "$state" = "finished" ] || exit 0
+agent_log "pane=$pane finished->idle (focus)"
 
-# Atomic write -- prevents readers from seeing a half-written file.
-tmp="$file.$$"
-echo "idle" > "$tmp" && mv -f "$tmp" "$file"
-
-mkdir -p "$(dirname "$log_file")"
-printf '%s pane=%s finished->idle (focus)\n' "$(date -u +%FT%TZ)" "$pane" >> "$log_file"
-
-window_id=$(tmux display -t "$pane" -p '#{window_id}' 2>/dev/null || true)
+window_id=$(agent_window_of "$pane")
 [ -n "$window_id" ] && "$SCRIPT_DIR/update-window-icon.sh" "$window_id" || true
