@@ -71,4 +71,6 @@ Installer path overrides follow each provider's conventions: pi
 `OMP_EXTENSIONS_DIR`; `OPENCODE_CONFIG_DIR`, `KILO_CONFIG_DIR`,
 `KIMI_CODE_HOME`, `MASTRACODE_HOME` and `CLAUDE_SETTINGS`. Providers whose
 config directory is missing are skipped (Claude's `settings.json` is created).
-The old `install-pi-extension.sh` and `install-claude-hooks.sh` still work.
+`install-claude-hooks.sh [install|uninstall]` is what `manage-provider.sh`
+runs for Claude; the older `install-pi-extension.sh` and
+`uninstall-claude-hooks.sh` still work.
