@@ -73,7 +73,7 @@ Set options before TPM runs.
 
 ## Requirements
 
-tmux 3.3, Bash 3.2, jq; optionally alerter, terminal-notifier or notify-send
+tmux 3.8, Bash 3.2, jq; optionally alerter, terminal-notifier or notify-send
 for notifications, and pi for suggested titles.
 
 ## Internals

@@ -14,7 +14,7 @@ chmod 600 "$CLAUDE_SETTINGS"
 fail(){ echo "FAIL: $1" >&2; exit 1; }
 
 bash "$PLUGIN_DIR/install-claude-hooks.sh" >/dev/null
-mode=$(stat -f %Lp "$CLAUDE_SETTINGS" 2>/dev/null || stat -c %a "$CLAUDE_SETTINGS")
+mode=$(stat -c %a "$CLAUDE_SETTINGS" 2>/dev/null || stat -f %Lp "$CLAUDE_SETTINGS")
 [ "$mode" = 600 ] || fail "install changed settings permissions"
 jq -e '.hooks.SessionStart[].hooks[].command | select(test("auto-desc.sh clear"))' "$CLAUDE_SETTINGS" >/dev/null || fail "SessionStart missing auto-desc clear"
 jq -e '.hooks.UserPromptSubmit[].hooks[].command | select(test("auto-desc.sh set"))' "$CLAUDE_SETTINGS" >/dev/null || fail "UserPromptSubmit missing auto-desc set"
