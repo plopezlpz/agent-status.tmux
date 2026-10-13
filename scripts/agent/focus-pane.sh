@@ -12,9 +12,11 @@ case "$socket" in "") tmux_cmd=(tmux -u) ;; /*) tmux_cmd=(tmux -u -S "$socket") 
 # Client names are tty paths (/dev/ttys055).
 case "$client" in *[!A-Za-z0-9._:/-]*) client="" ;; esac
 
-# Neither id can contain a space.
-metadata=$("${tmux_cmd[@]}" display -t "$pane" -p '#{session_id} #{window_id}' 2>/dev/null) || exit 0
-read -r session window <<< "$metadata"
+# No id can contain a space. display -t on a vanished pane silently describes
+# another one, so the pane id must match.
+metadata=$("${tmux_cmd[@]}" display -t "$pane" -p '#{pane_id} #{session_id} #{window_id}' 2>/dev/null) || exit 0
+read -r found session window <<< "$metadata"
+[ "$found" = "$pane" ] || exit 0
 [[ "$session" =~ ^\$[0-9]+$ ]] || exit 0
 [[ "$window" =~ ^@[0-9]+$ ]] || exit 0
 
