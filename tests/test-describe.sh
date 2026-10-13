@@ -26,9 +26,13 @@ mkdir "$TMP/bin" "$TMP/stub"
 for tool in tmux jq; do
   ! command -v "$tool" >/dev/null 2>&1 || ln -s "$(command -v "$tool")" "$TMP/bin/$tool"
 done
-# No coreutils timeout here (stock macOS): generation must use its perl
-# watchdog. No fallback path either: only the stub pi may run.
-export PATH="$TMP/bin:$TMP/stub:/usr/bin:/bin" AGENT_PI_FALLBACK_PATH=
+# No coreutils timeout here: generation must use its perl watchdog, so the
+# system dirs are linked in without it (Linux keeps it in /usr/bin). No
+# fallback path either: only the stub pi may run.
+mkdir "$TMP/sys"
+ln -s /usr/bin/* /bin/* "$TMP/sys/" 2>/dev/null || true
+rm -f "$TMP/sys/timeout" "$TMP/sys/gtimeout"
+export PATH="$TMP/bin:$TMP/stub:$TMP/sys" AGENT_PI_FALLBACK_PATH=
 DESCRIBE="$PLUGIN_DIR/scripts/agent/describe.sh"
 stub_pi(){ printf '#!/bin/sh\n%s\n' "$1" > "$TMP/stub/pi"; chmod +x "$TMP/stub/pi"; }
 wait_for(){ for _ in $(seq 1 50); do eval "$1" && return 0; sleep 0.2; done; return 1; }
