@@ -64,7 +64,9 @@ finishes_within(){
 tmux set-hook -g pane-exited 'display-message user-hook'
 bash "$PLUGIN_DIR/agent-status.tmux"
 bash "$PLUGIN_DIR/agent-status.tmux"
-for h in pane-focus-in pane-exited pane-died window-layout-changed pane-moved; do
+# pane-moved is new in tmux 3.8; the plugin skips it where tmux lacks it.
+moved=; tmux show-hooks -g pane-moved >/dev/null 2>&1 && moved=pane-moved
+for h in pane-focus-in pane-exited pane-died window-layout-changed $moved; do
   hooks=$(tmux show-hooks -g "$h")
   n=$(printf '%s\n' "$hooks" | grep -cF 'agent-status.tmux/scripts/agent' || true)
   [ "$n" -eq 1 ] || fail "$h has $n plugin entries after reload"
@@ -74,7 +76,8 @@ tmux show-hooks -g pane-exited | grep -F 'user-hook' >/dev/null || fail "reload 
 tmux show-hooks -g pane-exited | grep -F '#{hook_pane}' >/dev/null || fail "pane-exited hook does not use #{hook_pane}"
 
 # ----- pane-exited clears the exited pane, not the session's current one ---
-# Record what tmux passes as #{hook_window}: the plugin relies on it.
+# Record what tmux passes as #{hook_window}: the plugin relies on it (tmux
+# before 3.8 passes none; window-layout-changed then reaggregates).
 for h in pane-exited pane-died; do
   tmux set-hook -ga "$h" "run-shell -b 'echo $h #{hook_pane} #{hook_window} >> $TMP/hook-window'"
 done
@@ -89,7 +92,7 @@ eventually gone "$p2" || fail "short-lived pane did not exit"
 eventually icon_is "$w1" working || fail "pane-exited did not reaggregate the window"
 [ "$(get "$p1" @agent-state)" = working ] || fail "pane-exited cleared the wrong pane"
 [ "$(get "$p1" @agent-description)" = 'first title' ] || fail "pane-exited cleared another pane's title"
-grep -Fx "pane-exited $p2 $w1" "$TMP/hook-window" >/dev/null || fail "pane-exited #{hook_window} is not the pane's window"
+grep -Ex "pane-exited $p2( $w1)?" "$TMP/hook-window" >/dev/null || fail "pane-exited #{hook_window} is not the pane's window"
 if grep -F "pane=$p2 " "$TMP/agent.log" | grep -F 'cleared (exit)' >/dev/null; then fail "vanished pane logged another pane's state as cleared"; fi
 
 # ----- remain-on-exit: pane-died clears the dead pane --------------------
@@ -101,7 +104,7 @@ eventually dead || fail "remain-on-exit pane did not die"
 cleared(){ [ -z "$(get "$p3" @agent-state)" ]; }
 eventually cleared || fail "pane-died did not clear the dead pane"
 eventually icon_is "$w1" working || fail "pane-died did not reaggregate the window"
-grep -Fx "pane-died $p3 $w1" "$TMP/hook-window" >/dev/null || fail "pane-died #{hook_window} is not the pane's window"
+grep -Ex "pane-died $p3( $w1)?" "$TMP/hook-window" >/dev/null || fail "pane-died #{hook_window} is not the pane's window"
 tmux kill-pane -t "$p3"
 
 # ----- reports for a vanished pane change nothing --------------------------
@@ -131,8 +134,11 @@ p5=$(tmux split-window -d -P -F '#{pane_id}' -t "$p1")
 state "$p5" asking "" a-5 1 test reset
 tmux break-pane -d -s "$p5"
 w2=$(tmux display -pt "$p5" '#{window_id}')
-eventually icon_is "$w1" working || fail "break-pane left the old window's icon"
-eventually icon_is "$w2" asking || fail "break-pane did not set the new window's icon"
+if [ -n "$moved" ]; then
+  # Only pane-moved reports a window made by break-pane.
+  eventually icon_is "$w1" working || fail "break-pane left the old window's icon"
+  eventually icon_is "$w2" asking || fail "break-pane did not set the new window's icon"
+fi
 tmux split-window -d -t "$p5"
 tmux join-pane -d -s "$p5" -t "$p1"
 eventually icon_is "$w1" asking || fail "join-pane did not set the destination icon"
