@@ -46,4 +46,6 @@ headless() {
 
 SCRIPT_DIR=$(tmux show-option -gqv @agent-scripts-dir 2>/dev/null || true)
 : "${SCRIPT_DIR:=${HOME}/.tmux/plugins/agent-status.tmux/scripts/agent}"
+# An older checkout named by @agent-scripts-dir may predate hook-event.sh.
+[ -x "$SCRIPT_DIR/hook-event.sh" ] || exit 0
 exec "$SCRIPT_DIR/hook-event.sh" kimi "$action"
