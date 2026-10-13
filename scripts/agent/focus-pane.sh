@@ -1,28 +1,40 @@
 #!/usr/bin/env bash
-# Switch tmux to the given pane (and on macOS, bring the terminal app
-# to the foreground). Invoked by terminal-notifier -execute. The
-# Notification Center spawns this with a minimal PATH and no $TMUX, so
-# we prepend the common Homebrew prefixes and rely on tmux's default
-# socket.
-# Usage: focus-pane.sh <pane_id>
+# Focus a notification's pane on the originating tmux server/client.
+# Usage: focus-pane.sh <pane_id> [socket_path] [client_name]
 set -eu
 
 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+pane="${1:-}" socket="${2:-}" client="${3:-}"
+[[ "$pane" =~ ^%[0-9]+$ ]] || exit 0
+# -u: run without TMUX or a UTF-8 locale (terminal-notifier -execute), tmux
+# would otherwise print control characters and non-ASCII as '_'.
+case "$socket" in "") tmux_cmd=(tmux -u) ;; /*) tmux_cmd=(tmux -u -S "$socket") ;; *) exit 0 ;; esac
+# Client names are tty paths (/dev/ttys055).
+case "$client" in *[!A-Za-z0-9._:/-]*) client="" ;; esac
 
-pane="$1"
-# Use the server-unique IDs (#{session_id} like $0, #{window_id} like @5)
-# instead of names -- names can contain spaces or any user-typed
-# character, breaking the space-split read.
-read -r session window < <(tmux display -t "$pane" -p '#{session_id} #{window_id}' 2>/dev/null) || exit 0
-[ -n "$session" ] && [ -n "$window" ] || exit 0
+# No id can contain a space. display -t on a vanished pane silently describes
+# another one, so the pane id must match.
+metadata=$("${tmux_cmd[@]}" display -t "$pane" -p '#{pane_id} #{session_id} #{window_id}' 2>/dev/null) || exit 0
+read -r found session window <<< "$metadata"
+[ "$found" = "$pane" ] || exit 0
+[[ "$session" =~ ^\$[0-9]+$ ]] || exit 0
+[[ "$window" =~ ^@[0-9]+$ ]] || exit 0
 
-# Optional: bring the terminal app forward. Override via tmux option.
-app=$(tmux show-option -gqv @agent-terminal-app 2>/dev/null || true)
-: "${app:=}"
-if [ -n "$app" ] && [ "$(uname -s)" = "Darwin" ]; then
-  osascript -e "tell application \"$app\" to activate" 2>/dev/null || true
+app=$("${tmux_cmd[@]}" show-option -gqv @agent-terminal-app 2>/dev/null || true)
+app=$(printf '%s' "$app" | LC_ALL=C tr -d '\000-\037\177' | cut -c1-100)
+if [ -n "$app" ] && [ "$(uname -s)" = Darwin ]; then
+  # Pass app as argv rather than interpolating it into AppleScript source.
+  osascript - "$app" <<'APPLESCRIPT' 2>/dev/null || true
+on run argv
+  tell application (item 1 of argv) to activate
+end run
+APPLESCRIPT
 fi
 
-tmux switch-client -t "$session" 2>/dev/null || true
-tmux select-window -t "$window"  2>/dev/null || true
-tmux select-pane   -t "$pane"    2>/dev/null || true
+# The client captured at notify time may be gone (reattached on another tty):
+# fall back to tmux's most recently active client rather than doing nothing.
+if [ -z "$client" ] || ! "${tmux_cmd[@]}" switch-client -c "$client" -t "$session" 2>/dev/null; then
+  "${tmux_cmd[@]}" switch-client -t "$session" 2>/dev/null || true
+fi
+"${tmux_cmd[@]}" select-window -t "$window" 2>/dev/null || exit 0
+"${tmux_cmd[@]}" select-pane -t "$pane" 2>/dev/null || true

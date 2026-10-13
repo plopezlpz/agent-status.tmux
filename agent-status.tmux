@@ -1,50 +1,78 @@
 #!/usr/bin/env bash
 # agent-status.tmux -- TPM entrypoint.
 #
-# Live agent status for Claude Code panes in tmux:
-#   - per-pane state (working / asking / finished / idle) driven by
-#     Claude hooks (see ./install-claude-hooks.sh)
+# Live agent status for lifecycle-authoritative provider panes in tmux:
+#   - per-pane semantic state (working / asking / idle) plus unseen completion
+#     driven by agent lifecycle hooks
 #   - aggregated worst-state icon set as the @agent-icon
 #     window-scoped option (add `#{?@agent-icon,...}` to your
 #     window-status-format)
-#   - clickable notifications (terminal-notifier / notify-send)
-#   - fzf-based navigator popup over all live agent panes
+#   - clickable notifications (alerter / terminal-notifier / notify-send)
+#   - fzf-based navigator popup: an agents tab over all live agent panes and
+#     a sessions tab over every session and window
 
 set -eu
 CURRENT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 SCRIPTS="$CURRENT_DIR/scripts"
+# tmux shim forcing UTF-8 output (keeps \037 field separators intact).
+# shellcheck source=scripts/agent/lib.sh
+. "$SCRIPTS/agent/lib.sh"
 
 # ----- defaults (-gqo = set only if unset, so user overrides win) ------
-tmux set-option -gqo @agent-icon-working  '󱐋'
-tmux set-option -gqo @agent-icon-asking   '󰘥'
-tmux set-option -gqo @agent-icon-finished '󰗠'
-tmux set-option -gqo @agent-icon-idle     '󱚣'
+tmux set-option -gqo @agent-icon-working  '●'
+tmux set-option -gqo @agent-icon-asking   '●'
+tmux set-option -gqo @agent-icon-finished '●'
+tmux set-option -gqo @agent-icon-idle     '○'
+# Upgrade the old built-in Nerd Font glyphs without replacing user overrides.
+[ "$(tmux show-option -gqv @agent-icon-working)"  != '󱐋' ] || tmux set-option -g @agent-icon-working  '●'
+[ "$(tmux show-option -gqv @agent-icon-asking)"   != '󰘥' ] || tmux set-option -g @agent-icon-asking   '●'
+[ "$(tmux show-option -gqv @agent-icon-finished)" != '󰗠' ] || tmux set-option -g @agent-icon-finished '●'
+[ "$(tmux show-option -gqv @agent-icon-idle)"     != '󱚣' ] || tmux set-option -g @agent-icon-idle     '○'
+tmux set-option -gqo @agent-color-working  'yellow'
+tmux set-option -gqo @agent-color-asking   'red'
+tmux set-option -gqo @agent-color-finished 'cyan'
+tmux set-option -gqo @agent-color-idle     'green'
 tmux set-option -gqo @agent-navigator-key 'A'
+# Opens the same popup on its sessions tab. Unbound unless set.
+tmux set-option -gqo @agent-sessions-key  ''
 tmux set-option -gqo @agent-popup-width   '70%'
 tmux set-option -gqo @agent-popup-height  '70%'
-# Transient state -> tmux's tmpdir (per-user, reboot-cleared). Persistent
-# data (descriptions, log) -> XDG_DATA_HOME/tmux, like tmux-resurrect.
-_agent_runtime="${TMUX_TMPDIR:-/tmp}/agent-status-$(id -u)"
+# Model for the navigator's ctrl-g "generate description" (pi --model pattern).
+tmux set-option -gqo @agent-describe-model 'openai-codex/gpt-6-luna'
+# Pane options hold transient state. Persistent descriptions and the audit log
+# live under XDG_DATA_HOME, like tmux-resurrect.
 _agent_data="${XDG_DATA_HOME:-$HOME/.local/share}/tmux/agent-status"
-tmux set-option -gqo @agent-state-dir         "$_agent_runtime"
-tmux set-option -gqo @agent-descriptions-dir  "$_agent_data/descriptions"
-tmux set-option -gqo @agent-log               "$_agent_data/agent.log"
-# Advertise where the per-pane state scripts live so agent adapters (e.g. the
-# pi extension) can locate set-state.sh/clear-state.sh without a baked path.
+tmux set-option -gqo @agent-descriptions-dir "$_agent_data/descriptions"
+tmux set-option -gqo @agent-log              "$_agent_data/agent.log"
+# Advertise where the per-pane state scripts live so provider extensions can
+# locate shared scripts without a baked path.
 tmux set-option -gqo @agent-scripts-dir       "$SCRIPTS/agent"
 # Optional: macOS terminal app to activate on notification click (e.g.
 # "Ghostty", "iTerm", "Terminal"). Empty = don't activate any app.
 tmux set-option -gqo @agent-terminal-app ''
-
-# ----- runtime directories --------------------------------------------
-state_dir=$(tmux show-option -gqv @agent-state-dir)
-mkdir -p "$state_dir"
+# Seconds an alerter notification waits for a click before auto-closing
+# (0 = never). Keep this bounded: each pending notification owns a process.
+tmux set-option -gqo @agent-notify-timeout '300'
+# Seconds a Claude agent-team lead's completion notification waits while its
+# teammates are alive; dropped if the lead resumes. 0 = notify at once.
+tmux set-option -gqo @agent-notify-team-delay '10'
+tmux set-option -gqo @agent-revision '0'
 
 # ----- prerequisites ---------------------------------------------------
 # pane-focus-in only fires when the server has focus-events on -- tmux's
 # default is off, so users without it set would see icons stick on
 # "finished" forever. Required, set unconditionally.
 tmux set-option -g focus-events on
+
+# Timestamp panes created by older releases, then reconcile cached window icons
+# once on load. A pane closing mid-loop must not abort the plugin load.
+now=$(date +%s)
+while IFS=$'\037' read -r pane state state_at; do
+  [ -z "$state" ] || [ -n "$state_at" ] || tmux set-option -p -t "$pane" @agent-state-at "$now" 2>/dev/null || true
+done < <(tmux list-panes -a -F $'#{pane_id}\037#{@agent-state}\037#{@agent-state-at}' 2>/dev/null)
+while read -r window; do
+  [ -z "$window" ] || "$SCRIPTS/agent/update-window-icon.sh" "$window" || true
+done < <(tmux list-windows -a -F '#{window_id}' 2>/dev/null | sort -u)
 
 # ----- hooks -----------------------------------------------------------
 # Hooks whose command contains this needle are "ours".
@@ -74,27 +102,48 @@ add_hook() {
     tmux set-hook -gu "$name"
     while IFS= read -r line; do
       [ -z "$line" ] && continue
-      tmux set-hook -ga "$name" "$line"
+      tmux set-hook -ga "$name" "$line" || echo "agent-status: could not restore $name hook: $line" >&2
     done <<< "$survivors"
   fi
 
   tmux set-hook -ga "$name" "$cmd"
 }
 
-# Demote `finished` -> `idle` when the pane gets focus.
+# All hooks use run-shell -b so a slow script never blocks tmux's command queue.
+# Mark an unseen idle completion as seen when the pane gets focus.
 add_hook pane-focus-in \
-  "run-shell '$SCRIPTS/agent/clear-finished.sh \"#{pane_id}\"'"
+  "run-shell -b '$SCRIPTS/agent/clear-finished.sh \"#{pane_id}\"'"
 
-# Pane death: drop its state file and re-aggregate the window icon.
-# Wrapped in a helper script so the runtime path is resolved dynamically
-# and any spaces in $state_dir don't break the hook command string.
+# Clear a closed pane's registration and re-aggregate its window. By
+# pane-exited the pane is gone and #{pane_id} names another pane, so use the
+# hook_* formats; remain-on-exit panes fire pane-died instead.
 add_hook pane-exited \
-  "run-shell '$SCRIPTS/agent/clear-pane.sh \"#{pane_id}\" \"#{window_id}\"'"
+  "run-shell -b '$SCRIPTS/agent/clear-pane.sh \"#{hook_pane}\" \"#{hook_window}\"'"
+add_hook pane-died \
+  "run-shell -b '$SCRIPTS/agent/clear-pane.sh \"#{hook_pane}\" \"#{hook_window}\"'"
 
-# ----- binding ---------------------------------------------------------
+# Reconcile icons when panes leave or join a window: kill-pane, join-pane/
+# move-pane and cross-window swap-pane change both windows' layouts; a window
+# made by break-pane only reports pane-moved (skipped where tmux lacks it).
+add_hook window-layout-changed \
+  "run-shell -b '$SCRIPTS/agent/update-window-icon.sh \"#{hook_window}\" layout'"
+add_hook pane-moved \
+  "run-shell -b '$SCRIPTS/agent/update-window-icon.sh \"#{hook_window}\" layout'" 2>/dev/null || true
+
+# ----- bindings --------------------------------------------------------
 nav_key=$(tmux show-option -gqv @agent-navigator-key)
+sessions_key=$(tmux show-option -gqv @agent-sessions-key)
 popup_w=$(tmux show-option -gqv @agent-popup-width)
 popup_h=$(tmux show-option -gqv @agent-popup-height)
 
-tmux bind -N "agent navigator" "$nav_key" \
-  display-popup -E -w "$popup_w" -h "$popup_h" "$SCRIPTS/agent-sessions.sh"
+# Borderless popup: fzf draws the single rounded frame, label and footer.
+# run-shell -C expands formats in the size options against the invoking
+# client (display-popup -w/-h take plain sizes), e.g. full screen on a phone.
+# Popup -e values are literal, so the same expansion hands the popup its
+# invoking client and location: the navigator never guesses a client, since
+# another terminal may become active while it is open.
+popup="display-popup -B -E -c #{q:client_name} -w '$popup_w' -h '$popup_h' -s 'bg=#181818,fg=#e4e4e4'"
+popup="$popup -e AGENT_NAV_CLIENT=#{q:client_name} -e AGENT_NAV_SESSION=#{q:session_id} -e AGENT_NAV_WINDOW=#{q:window_id}"
+popup="$popup \"$SCRIPTS/navigator.sh\""
+tmux bind -N "agent navigator" "$nav_key" run-shell -C "$popup agents"
+[ -z "$sessions_key" ] || tmux bind -N "session navigator" "$sessions_key" run-shell -C "$popup sessions"

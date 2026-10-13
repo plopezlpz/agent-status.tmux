@@ -1,47 +1,48 @@
 #!/usr/bin/env bash
-# Claude SessionEnd handler. Drop the pane's agent state -- but ONLY when
-# Claude is really exiting.
-#
-# SessionEnd fires for more than just quitting: `/clear` (reason "clear") and
-# resuming another conversation (reason "resume") end the *session* while the
-# Claude process and the tmux pane stay alive. Deleting the state then makes
-# the pane vanish from the navigator and lose its window icon mid-work -- the
-# bug this guard fixes. We branch on the SessionEnd `.reason` from stdin and
-# keep the pane registered for those continuing cases (SessionStart resets it
-# to idle right after). A real exit (reason "other"/"logout"/... ) clears it.
+# Clear the current pane's registration on a real agent exit.
+# Usage: clear-state.sh [reason] [instance] [kind]
+# Claude SessionEnd reasons `clear` and `resume` keep the live pane registered.
 set -eu
 
 [ -z "${TMUX_PANE:-}" ] && exit 0
-
+[[ "$TMUX_PANE" =~ ^%[0-9]+$ ]] || exit 0
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+# shellcheck source=lib.sh
+. "$SCRIPT_DIR/lib.sh"
 
-state_dir=$(tmux show-option -gqv @agent-state-dir 2>/dev/null || true)
-: "${state_dir:=${TMUX_TMPDIR:-/tmp}/agent-status-$(id -u)}"
-log_file=$(tmux show-option -gqv @agent-log 2>/dev/null || true)
-: "${log_file:=${XDG_DATA_HOME:-$HOME/.local/share}/tmux/agent-status/agent.log}"
+reason="${1:-}" instance="${2:-}" kind="${3:-${AGENT_STATUS_KIND:-}}" sep=$'\037'
+# Only the Claude hook form (no arguments) carries a stdin payload; adapters
+# pass arguments and may leave stdin open.
+if [ "$#" -eq 0 ] && [ ! -t 0 ] && command -v jq >/dev/null 2>&1; then
+  metadata=$(jq -r '[.reason // "", .session_id // ""] | join("\u001f")' 2>/dev/null || true)
+  IFS="$sep" read -r reason instance <<< "$metadata"
+fi
+case "$reason" in clear|resume) exit 0 ;; esac
+instance="${instance:0:256}"
+kind="${kind:0:64}"
+case "$kind" in ""|*[!A-Za-z0-9._-]*) kind="" ;; esac
+if [ -n "$instance" ] && [ -n "$kind" ]; then
+  case "$instance" in "$kind:"*) ;; *) instance="$kind:$instance" ;; esac
+fi
 
-# SessionEnd pipes JSON with a `.reason`. No stdin (manual run) -> treat as a
-# real clear. jq missing -> reason stays empty -> falls through to delete.
-reason=""
-[ ! -t 0 ] && reason=$(jq -r '.reason // ""' 2>/dev/null || true)
+agent_lock "pane-${TMUX_PANE#%}"
 
-file="$state_dir/$TMUX_PANE"
-prev=""; [ -f "$file" ] && read -r prev < "$file" || true
+metadata=$(tmux display -t "$TMUX_PANE" -p $'#{pane_id}\037#{@agent-state}\037#{@agent-unseen}\037#{@agent-instance}' 2>/dev/null || true)
+IFS="$sep" read -r cur_pane state unseen current_instance <<< "$metadata"
+[ "$cur_pane" = "$TMUX_PANE" ] || exit 0
+# Once a pane has an authoritative instance, identity-less or stale shutdowns
+# fail closed. Pane-exited cleanup remains the fallback when payload parsing is unavailable.
+if [ -n "$current_instance" ] && [ "$instance" != "$current_instance" ]; then
+  exit 0
+fi
+if [ "$state" = idle ] && [ "$unseen" = 1 ]; then state=finished; fi
 
-mkdir -p "$(dirname "$log_file")"
+for option in $AGENT_PANE_OPTIONS; do
+  tmux set-option -p -u -t "$TMUX_PANE" "$option" 2>/dev/null || true
+done
+agent_unlock
 
-case "$reason" in
-  clear|resume)
-    # Session is continuing in the same live process -- keep the pane visible.
-    printf '%s pane=%s %s->kept (reason=%s)\n' \
-      "$(date -u +%FT%TZ)" "$TMUX_PANE" "${prev:-none}" "$reason" >> "$log_file"
-    exit 0
-    ;;
-esac
+[ -z "$state" ] || agent_log "pane=$TMUX_PANE $state->cleared (reason=${reason:-none})"
 
-rm -f "$file"
-printf '%s pane=%s %s->cleared (reason=%s)\n' \
-  "$(date -u +%FT%TZ)" "$TMUX_PANE" "${prev:-none}" "${reason:-none}" >> "$log_file"
-
-window_id=$(tmux display -t "$TMUX_PANE" -p '#{window_id}' 2>/dev/null || true)
+window_id=$(agent_window_of "$TMUX_PANE")
 [ -n "$window_id" ] && "$SCRIPT_DIR/update-window-icon.sh" "$window_id" || true

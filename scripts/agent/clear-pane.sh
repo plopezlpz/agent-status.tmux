@@ -1,31 +1,43 @@
 #!/usr/bin/env bash
-# tmux pane-exited hook: drop the dead pane's state file, then re-aggregate
-# the window icon. A script (not an inline hook) so $state_dir resolves at
-# run time and spaces in the path stay safe.
-# Usage: clear-pane.sh <pane_id> <window_id>
+# tmux pane-exited / pane-died hook: clear retained dead-pane options and the
+# pane's description files, log, and reaggregate.
+# Usage: clear-pane.sh <pane_id> [window_id]
+# By pane-exited the pane is already gone (hence #{hook_pane}/#{hook_window},
+# not #{pane_id}); with remain-on-exit, pane-died fires and the pane remains.
 set -eu
 
-pane="${1:-}"
-window="${2:-}"
-[ -n "$pane" ] || exit 0
-
+pane="${1:-}" window="${2:-}"
+[[ "$pane" =~ ^%[0-9]+$ ]] || exit 0
+[[ "$window" =~ ^@[0-9]+$ ]] || window=""
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-state_dir=$(tmux show-option -gqv @agent-state-dir 2>/dev/null || true)
-: "${state_dir:=${TMUX_TMPDIR:-/tmp}/agent-status-$(id -u)}"
-log_file=$(tmux show-option -gqv @agent-log 2>/dev/null || true)
-: "${log_file:=${XDG_DATA_HOME:-$HOME/.local/share}/tmux/agent-status/agent.log}"
+# shellcheck source=lib.sh
+. "$SCRIPT_DIR/lib.sh"
+sep=$'\037'
+agent_lock "pane-${pane#%}"
 
-file="$state_dir/$pane"
-# Log + delete only when there was state -- the pane-exited hook fires
-# server-wide on every pane death, most of which aren't ours.
-if [ -f "$file" ]; then
-  prev=""; read -r prev < "$file" || true
-  rm -f -- "$file"
-  mkdir -p "$(dirname "$log_file")"
-  printf '%s pane=%s %s->cleared (exit)\n' "$(date -u +%FT%TZ)" "$pane" "${prev:-none}" >> "$log_file"
+metadata=$(tmux display -t "$pane" -p $'#{pane_id}\037#{@agent-state}\037#{@agent-unseen}\037#{window_id}' 2>/dev/null || true)
+IFS="$sep" read -r cur_pane state unseen pane_window <<< "$metadata"
+# By pane-exited the pane is gone and display describes some other pane.
+if [ "$cur_pane" != "$pane" ]; then
+  state="" unseen=""
+else
+  [ -n "$window" ] || window="$pane_window"
+  for option in $AGENT_PANE_OPTIONS; do
+    tmux set-option -p -u -t "$pane" "$option" 2>/dev/null || true
+  done
 fi
-# Drop the transient auto-default description too (it can outlive the state file
-# if the agent quit but the pane stayed alive).
-rm -f -- "$file.desc"
+if [ "$state" = idle ] && [ "$unseen" = 1 ]; then state=finished; fi
+agent_unlock
 
-[ -n "$window" ] && "$SCRIPT_DIR/update-window-icon.sh" "$window" || true
+[ -z "$state" ] || agent_log "pane=$pane $state->cleared (exit)"
+
+# Descriptions are keyed by server start time and pane number.
+info=$(tmux display -p $'#{start_time}\037#{@agent-descriptions-dir}' 2>/dev/null || true)
+IFS="$sep" read -r start_time desc_dir <<< "$info"
+case "$start_time" in ''|*[!0-9]*) ;; *)
+  case "$desc_dir" in /*)
+    rm -f "$desc_dir/$start_time-${pane#%}" "$desc_dir/.generating-$start_time-${pane#%}" 2>/dev/null || true
+  ;; esac
+;; esac
+
+[ -z "$window" ] || "$SCRIPT_DIR/update-window-icon.sh" "$window" || true

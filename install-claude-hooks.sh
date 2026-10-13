@@ -5,11 +5,17 @@
 # directory are stripped first, then re-added. Safe to re-run after the
 # plugin updates (e.g., after a TPM update pulls in new commits).
 #
-# Backs up ~/.claude/settings.json to .bak-<unix-ts> before writing.
+# Backs up an existing settings file before writing.
 set -eu
 
 PLUGIN_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 SCRIPTS="$PLUGIN_DIR/scripts/agent"
+# Resolved path: hooks are written with it, and stripped under both spellings
+# so installs through a symlinked plugin dir (e.g. TPM) never duplicate.
+SCRIPTS_REAL="$( cd "$SCRIPTS" && pwd -P )"
+# Path-independent match for entries written under any other spelling
+# (old installs through a symlink, a moved clone).
+OURS='/agent-status\.tmux/scripts/agent/(set-state|clear-state|auto-desc)\.sh( |$)'
 SETTINGS="${CLAUDE_SETTINGS:-$HOME/.claude/settings.json}"
 
 if ! command -v jq >/dev/null 2>&1; then
@@ -17,36 +23,73 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 1
 fi
 
-mkdir -p "$(dirname "$SETTINGS")"
-[ -f "$SETTINGS" ] || echo '{}' > "$SETTINGS"
-backup="$SETTINGS.bak-$(date +%s)"
-cp "$SETTINGS" "$backup"
+[ ! -L "$SETTINGS" ] || { echo "agent-status: refusing to edit config symlink $SETTINGS" >&2; exit 1; }
+[ ! -e "$SETTINGS" ] || [ -f "$SETTINGS" ] || { echo "agent-status: refusing non-file config $SETTINGS" >&2; exit 1; }
+# Keep only the newest 3 of our backups (exact mktemp name pattern below).
+prune_backups() {
+  local f stamp
+  for f in "$SETTINGS".bak-*; do
+    stamp="${f#"$SETTINGS".bak-}"
+    [[ "$stamp" =~ ^[0-9]+\.[A-Za-z0-9]{6}$ ]] && [ -f "$f" ] && [ ! -L "$f" ] || continue
+    printf '%s\t%s\n' "${stamp%%.*}" "$f"
+  done | sort -t $'\t' -k1,1nr | tail -n +4 | cut -f2- | while IFS= read -r f; do
+    rm -f -- "$f"
+  done
+}
 
-new=$(jq --arg s "$SCRIPTS" '
+mkdir -p "$(dirname "$SETTINGS")"
+input=/dev/null backup=""
+if [ -f "$SETTINGS" ]; then
+  input="$SETTINGS"
+  backup=$(mktemp "$SETTINGS.bak-$(date +%s).XXXXXX")
+  cp -p "$SETTINGS" "$backup"
+fi
+
+# shellcheck disable=SC2016 # jq program, not shell interpolation
+filter='
   # strip: drop only the inner hooks pointing at this plugin (keep peers
   # from other tools), then drop entries left with no hooks. The (.hooks //
   # []) coerce handles a missing/null inner hooks field. Then append fresh.
   def strip:
-    map(.hooks = ((.hooks // []) | map(select((.command // "") | contains($s) | not))))
+    map(.hooks = ((.hooks // []) | map(select((.command // "") | (contains($s + "/") or contains($r + "/") or test($ours)) | not))))
     | map(select((.hooks // []) | length > 0));
   # Ensure .hooks is an object even if the file has it as null/array/other.
   .hooks |= (if type == "object" then . else {} end) |
-  .hooks.SessionStart      = ((.hooks.SessionStart      // []) | strip) + [{hooks:[{type:"command", command:"\($s)/set-state.sh idle"}, {type:"command", command:"\($s)/auto-desc.sh clear"}]}] |
-  .hooks.SessionEnd        = ((.hooks.SessionEnd        // []) | strip) + [{hooks:[{type:"command", command:"\($s)/clear-state.sh"}]}] |
-  .hooks.UserPromptSubmit  = ((.hooks.UserPromptSubmit  // []) | strip) + [{hooks:[{type:"command", command:"\($s)/set-state.sh working"}, {type:"command", command:"\($s)/auto-desc.sh set"}]}] |
-  .hooks.Stop              = ((.hooks.Stop              // []) | strip) + [{hooks:[{type:"command", command:"\($s)/set-state.sh finished"}]}] |
-  .hooks.PermissionRequest = ((.hooks.PermissionRequest // []) | strip) + [{hooks:[{type:"command", command:"\($s)/set-state.sh asking"}]}] |
-  .hooks.PreToolUse        = ((.hooks.PreToolUse        // []) | strip) + [{hooks:[{type:"command", command:"\($s)/set-state.sh working"}]}] |
-  # Claude Code has no "permission answered" event, so `asking` only returns
-  # to `working` via the next tool. PostToolUse fires right after an approved
-  # tool runs; PermissionDenied fires when a prompt is rejected (the turn then
-  # continues). Wire both so the pane leaves `asking` the moment work resumes,
-  # whether the prompt was approved or denied.
-  .hooks.PostToolUse       = ((.hooks.PostToolUse       // []) | strip) + [{hooks:[{type:"command", command:"\($s)/set-state.sh working"}]}] |
-  .hooks.PermissionDenied  = ((.hooks.PermissionDenied  // []) | strip) + [{hooks:[{type:"command", command:"\($s)/set-state.sh working"}]}]
-' "$SETTINGS")
-
-printf '%s\n' "$new" > "$SETTINGS"
+  # Older plugin releases registered PermissionDenied, which fires on auto-mode
+  # classifier denials mid-turn and is not a state change. Remove only our old
+  # entry and preserve any unrelated user configuration.
+  .hooks.PermissionDenied = ((.hooks.PermissionDenied // []) | strip) |
+  if (.hooks.PermissionDenied | length) == 0 then del(.hooks.PermissionDenied) else . end |
+  .hooks.SessionStart      = ((.hooks.SessionStart      // []) | strip) + [{hooks:[{type:"command", command:"env AGENT_STATUS_KIND=claude \($r)/set-state.sh idle"}, {type:"command", command:"\($r)/auto-desc.sh clear"}]}] |
+  .hooks.SessionEnd        = ((.hooks.SessionEnd        // []) | strip) + [{hooks:[{type:"command", command:"env AGENT_STATUS_KIND=claude \($r)/clear-state.sh"}]}] |
+  .hooks.UserPromptSubmit  = ((.hooks.UserPromptSubmit  // []) | strip) + [{hooks:[{type:"command", command:"env AGENT_STATUS_KIND=claude \($r)/set-state.sh working"}, {type:"command", command:"\($r)/auto-desc.sh set"}]}] |
+  .hooks.Stop              = ((.hooks.Stop              // []) | strip) + [{hooks:[{type:"command", command:"env AGENT_STATUS_KIND=claude \($r)/set-state.sh finished"}]}] |
+  # A turn that ends in an API error (rate limit, overload, auth) fires
+  # StopFailure instead of Stop.
+  .hooks.StopFailure       = ((.hooks.StopFailure       // []) | strip) + [{hooks:[{type:"command", command:"env AGENT_STATUS_KIND=claude \($r)/set-state.sh finished"}]}] |
+  # An Esc interrupt fires neither. idle_prompt is sent once the prompt has sat
+  # idle (default 60s) with no turn, dialog, or background agent running, so
+  # it ends a working/asking state that no Stop will ever close.
+  .hooks.Notification      = ((.hooks.Notification      // []) | strip) + [{matcher:"idle_prompt", hooks:[{type:"command", command:"env AGENT_STATUS_KIND=claude \($r)/set-state.sh idle"}]}] |
+  .hooks.PermissionRequest = ((.hooks.PermissionRequest // []) | strip) + [{hooks:[{type:"command", command:"env AGENT_STATUS_KIND=claude \($r)/set-state.sh asking"}]}] |
+  .hooks.PreToolUse        = ((.hooks.PreToolUse        // []) | strip) + [{hooks:[{type:"command", command:"env AGENT_STATUS_KIND=claude \($r)/set-state.sh working"}]}] |
+  # Claude Code has no "permission answered" event. PostToolUse fires after an
+  # approved tool runs; a denial ends the turn like an interrupt, so the
+  # idle_prompt notification above closes it.
+  .hooks.PostToolUse       = ((.hooks.PostToolUse       // []) | strip) + [{hooks:[{type:"command", command:"env AGENT_STATUS_KIND=claude \($r)/set-state.sh working"}]}]
+'
+if [ "$input" = /dev/null ]; then
+  new=$(printf '{}\n' | jq --arg s "$SCRIPTS" --arg r "$SCRIPTS_REAL" --arg ours "$OURS" "$filter")
+else
+  new=$(jq --arg s "$SCRIPTS" --arg r "$SCRIPTS_REAL" --arg ours "$OURS" "$filter" "$input")
+fi
+tmp=$(mktemp "$SETTINGS.agent-status.XXXXXX")
+trap '[ -z "$tmp" ] || rm -f "$tmp"' EXIT
+if [ -f "$SETTINGS" ]; then cp -p "$SETTINGS" "$tmp"; fi
+printf '%s\n' "$new" > "$tmp"
+mv "$tmp" "$SETTINGS"
+tmp=""
+prune_backups
 
 echo "agent-status: hooks installed in $SETTINGS"
-echo "agent-status: backup saved to $backup"
+[ -z "$backup" ] || echo "agent-status: backup saved to $backup"

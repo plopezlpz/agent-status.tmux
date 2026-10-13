@@ -1,52 +1,63 @@
 #!/usr/bin/env bash
-# Unit-test auto-desc.sh: cleaning, first-prompt-only, trim, stdin source,
-# clear, and the compact guard. Uses a sentinel pane in the resolved state dir.
+# Unit-test the pane-scoped first-prompt description.
 set -euo pipefail
 PLUGIN_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
 SCRIPT="$PLUGIN_DIR/scripts/agent/auto-desc.sh"
-state_dir="$(tmux show-option -gqv @agent-state-dir 2>/dev/null || true)"
-: "${state_dir:=${TMUX_TMPDIR:-/tmp}/agent-status-$(id -u)}"
-export TMUX_PANE="%autodesctest$$"
-file="$state_dir/$TMUX_PANE.desc"
-mkdir -p "$state_dir"
-trap 'rm -f "$file"' EXIT
+SOCK="agent-status-desc-test-$$"
 fail(){ echo "FAIL: $1" >&2; exit 1; }
-rm -f "$file"
+ctl(){ TMUX='' tmux -L "$SOCK" "$@"; }
+cleanup(){ ctl kill-server 2>/dev/null || true; }
+trap cleanup EXIT
+
+command -v tmux >/dev/null 2>&1 || { echo "SKIP: tmux not installed"; exit 0; }
+ctl -f /dev/null new-session -d -s t -x 80 -y 24
+TMUX_PANE="$(ctl display -pt t:0.0 '#{pane_id}')"
+TMUX="$(ctl display -pt "$TMUX_PANE" '#{socket_path},#{pid},0')"
+export TMUX_PANE TMUX
+get(){ tmux show-option -p -q -v -t "$TMUX_PANE" @agent-auto-description 2>/dev/null || true; }
+unset_desc(){ tmux set-option -p -u -t "$TMUX_PANE" @agent-auto-description 2>/dev/null || true; }
 
 bash "$SCRIPT" set "  fix   the login bug  "
-[ -f "$file" ] || fail "set did not write"
-[ "$(cat "$file")" = "fix the login bug" ] || fail "not cleaned: [$(cat "$file")]"
+[ "$(get)" = "fix the login bug" ] || fail "not cleaned: [$(get)]"
 
 bash "$SCRIPT" set "a different prompt"
-[ "$(cat "$file")" = "fix the login bug" ] || fail "second set overwrote (not first-prompt-only)"
+[ "$(get)" = "fix the login bug" ] || fail "second set overwrote first prompt"
 
-rm -f "$file"
+unset_desc
 bash "$SCRIPT" set "this is a really long first prompt that should be truncated to about fifty chars ok"
-out="$(cat "$file")"
+out="$(get)"
 case "$out" in *…) : ;; *) fail "no ellipsis on long input: $out" ;; esac
 [ "${#out}" -le 60 ] || fail "too long: $out"
 
-rm -f "$file"
+unset_desc
 bash "$SCRIPT" set "$(printf 'first line here\nsecond line')"
-[ "$(cat "$file")" = "first line here second line" ] || fail "multi-line not collapsed: [$(cat "$file")]"
+[ "$(get)" = "first line here second line" ] || fail "multi-line not collapsed: [$(get)]"
 
-rm -f "$file"
+unset_desc
 bash "$SCRIPT" set "$(printf '\n\nreal content here')"
-[ "$(cat "$file")" = "real content here" ] || fail "leading blank lines not handled: [$(cat "$file")]"
+[ "$(get)" = "real content here" ] || fail "leading blanks not handled: [$(get)]"
 
-rm -f "$file"
+unset_desc
 bash "$SCRIPT" set "    "
-[ -e "$file" ] && fail "empty input wrote a file"
+[ -z "$(get)" ] || fail "empty input wrote an option"
 
-rm -f "$file"
+bash "$SCRIPT" set $'safe\033bad\037end'
+case "$(get)" in *$'\033'*|*$'\037'*) fail "control characters were retained" ;; esac
+unset_desc
+bash "$SCRIPT" set "first concurrent value" & p1=$!
+bash "$SCRIPT" set "second concurrent value" & p2=$!
+wait "$p1" "$p2"
+case "$(get)" in "first concurrent value"|"second concurrent value") ;; *) fail "locked concurrent set was corrupt: [$(get)]" ;; esac
+unset_desc
+
 echo '{"prompt":"from stdin json"}' | bash "$SCRIPT" set
-[ "$(cat "$file")" = "from stdin json" ] || fail "stdin .prompt unused: [$(cat "$file" 2>/dev/null)]"
+[ "$(get)" = "from stdin json" ] || fail "stdin .prompt unused: [$(get)]"
 
 bash "$SCRIPT" clear
-[ -e "$file" ] && fail "clear did not remove"
+[ -z "$(get)" ] || fail "clear did not unset option"
 
-echo "keep me" > "$file"
+tmux set-option -p -t "$TMUX_PANE" @agent-auto-description "keep me"
 echo '{"source":"compact"}' | bash "$SCRIPT" clear
-{ [ -f "$file" ] && [ "$(cat "$file")" = "keep me" ]; } || fail "compact clear should keep the file"
+[ "$(get)" = "keep me" ] || fail "compact clear should keep option"
 
 echo "PASS: auto-desc"

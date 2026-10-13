@@ -13,7 +13,7 @@ cleanup() { tmux -L "$SOCK" kill-server 2>/dev/null || true; }
 trap cleanup EXIT
 fail() { echo "FAIL: $1" >&2; exit 1; }
 
-tmux -L "$SOCK" new-session -d -s t -x 80 -y 24
+tmux -L "$SOCK" -f /dev/null new-session -d -s t -x 80 -y 24
 # run-shell executes with $TMUX pointing at this test server, so the bare
 # `tmux` calls inside the entrypoint target the test server, not the default.
 tmux -L "$SOCK" run-shell "$PLUGIN_DIR/agent-status.tmux" 2>/dev/null || true
@@ -25,4 +25,10 @@ dir="$(tmux -L "$SOCK" show-option -gqv @agent-scripts-dir 2>/dev/null || true)"
 
 [ -n "$dir" ] || fail "@agent-scripts-dir not set"
 [ -x "$dir/set-state.sh" ] || fail "@agent-scripts-dir ($dir) has no executable set-state.sh"
-echo "PASS: engine advertises @agent-scripts-dir ($dir)"
+[ "$(tmux -L "$SOCK" show-option -gqv @agent-icon-working)" = '●' ] || fail "working icon is not a circle"
+[ "$(tmux -L "$SOCK" show-option -gqv @agent-icon-idle)" = '○' ] || fail "idle icon is not outlined"
+[ "$(tmux -L "$SOCK" show-option -gqv @agent-color-working)" = yellow ] || fail "working color is not yellow"
+[ "$(tmux -L "$SOCK" show-option -gqv @agent-color-finished)" = cyan ] || fail "done color is not cyan"
+grep -F -- '--bind "every(1):transform' "$PLUGIN_DIR/scripts/agent-sessions.sh" >/dev/null || fail "navigator has no selective live refresh"
+grep -F -- '--track --id-nth=2' "$PLUGIN_DIR/scripts/agent-sessions.sh" >/dev/null || fail "navigator does not retain selection across refreshes"
+echo "PASS: engine advertises @agent-scripts-dir ($dir) and Herdr-style indicators"
