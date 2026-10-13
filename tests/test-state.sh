@@ -21,9 +21,6 @@ p2="$(ctl split-window -d -P -F '#{pane_id}' -t "$p1")"
 TMUX="$(ctl display -pt "$p1" '#{socket_path},#{pid},0')"
 export TMUX
 tmux set-option -g @agent-log "$TMP/agent.log"
-tmux set-option -g @agent-descriptions-dir "$TMP/descriptions"
-# Description override and generating marker of $p1 (server start + pane id).
-DK="$TMP/descriptions/$(tmux display -p "#{start_time}")-${p1#%}"; DM="${DK%/*}/.generating-${DK##*/}"
 tmux set-option -g @agent-icon-working W
 tmux set-option -g @agent-icon-asking A
 tmux set-option -g @agent-icon-finished F
@@ -100,18 +97,18 @@ window=$(tmux display -pt "$p2" '#{window_id}')
 [ -z "$(get "$p2" @agent-state)" ] || fail "pane-exited cleanup left retained state"
 icon_is green I || fail "pane-exited cleanup did not reaggregate window"
 
-# AI description, with a stub pi: success saves a cleaned title, failure
-# keeps the old one.
+# AI title, with a stub pi: success sets a cleaned title, failure keeps the
+# old one.
 mkdir -p "$TMP/fakepi"
 printf '#!/bin/sh\ncat >/dev/null\nprintf "\\n\\"Refactor the VAT rounding\\"\\nextra line\\n"\n' > "$TMP/fakepi/pi"
 chmod +x "$TMP/fakepi/pi"
 PATH="$TMP/fakepi:$PATH" "$DESCRIBE" run "$p1"
-[ "$(cat "$DK")" = 'Refactor the VAT rounding' ] || fail "generated description not saved cleanly"
-[ ! -e "$DM" ] || fail "generation left its marker behind"
+[ "$(get "$p1" @agent-description)" = 'Refactor the VAT rounding' ] || fail "generated title not set cleanly"
+[ -z "$(get "$p1" @agent-generating)" ] || fail "generation left its marker behind"
 printf '#!/bin/sh\ncat >/dev/null\nexit 1\n' > "$TMP/fakepi/pi"
 PATH="$TMP/fakepi:$PATH" "$DESCRIBE" run "$p1"
-[ "$(cat "$DK")" = 'Refactor the VAT rounding' ] || fail "failed generation changed the description"
-rm -f "$DM" "$DK"
+[ "$(get "$p1" @agent-description)" = 'Refactor the VAT rounding' ] || fail "failed generation changed the title"
+tmux set-option -p -u -t "$p1" @agent-description
 
 if [ -n "$JQ" ]; then
   printf '%s\n' '{"session_id":"claude-1","hook_event_name":"SessionStart"}' | \
@@ -175,8 +172,7 @@ if [ -n "$JQ" ]; then
   grep -F 'now fix the VAT rounding' "$TMP/pi-input" >/dev/null || fail "generation did not send the latest prompt"
   grep -F 'Rounding fixed in computeVat.' "$TMP/pi-input" >/dev/null || fail "generation did not send the latest assistant reply"
   if grep -E 'TOOL OUTPUT|META PROMPT|SIDECHAIN|SYNTHETIC' "$TMP/pi-input" >/dev/null; then fail "generation sent non-conversation entries"; fi
-  [ "$(cat "$DK")" = 'Fix VAT rounding' ] || fail "transcript-based description not saved"
-  rm -f "$DK"
+  [ "$(get "$p1" @agent-description)" = 'Fix VAT rounding' ] || fail "transcript-based title not set"
   # pi session files use {"type":"message","message":{"role":...}} entries.
   printf '%s\n' '{"type":"session","version":3,"id":"x"}' \
     '{"type":"message","message":{"role":"user","content":[{"type":"text","text":"pi: tidy the billing tests"}]}}' \
@@ -189,6 +185,7 @@ if [ -n "$JQ" ]; then
 
   printf '%s\n' '{"reason":"other","session_id":"claude-1"}' | TMUX_PANE="$p1" AGENT_STATUS_KIND=claude "$CLEAR"
   [ -z "$(get "$p1" @agent-transcript)" ] || fail "clear left the transcript path"
+  [ -z "$(get "$p1" @agent-description)" ] || fail "the agent's exit left its title"
   printf '%s\n' '{"session_id":"claude-1","hook_event_name":"SessionStart"}' | \
     TMUX_PANE="$p1" AGENT_STATUS_KIND=claude "$SET" idle
 

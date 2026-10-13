@@ -1,34 +1,24 @@
 #!/usr/bin/env bash
-# Agent descriptions: the title a UI (corral) shows for an agent pane.
-#   describe.sh set PANE [TEXT]   store an override (no TEXT: back to the
-#                                 automatic first-prompt description)
-#   describe.sh generate PANE     ask pi for a title in the background
+# Agent titles. A pane's @agent-description is the title the user gave its
+# agent; UIs (paddock) show it over the automatic @agent-auto-description and
+# may set it themselves. Both are unset with the agent's other options when
+# it exits (lib.sh).
+#   describe.sh set PANE [TEXT]   set the title (no TEXT: back to automatic)
+#   describe.sh suggest PANE      print pi's title for PANE without setting it
+#   describe.sh generate PANE     have pi set the title, in the background
 #   describe.sh run PANE [TOKEN]  the generation itself (generate starts it)
-#   describe.sh context FILE      what generation reads from a transcript
-#   describe.sh prune             drop week-old files of earlier servers
-# Overrides live in @agent-descriptions-dir as <server start>-<pane number>,
-# with a .generating-<server start>-<pane number> marker while pi runs; each
-# change bumps @agent-revision so open UIs refresh. clear-pane.sh removes
-# both files when the pane exits.
+#   describe.sh context FILE      what pi reads from a transcript
+# While a generation runs, the pane's @agent-generating holds its token,
+# "<start epoch>.<pid>.<random>".
 set -eu
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 # shellcheck source=lib.sh
 . "$SCRIPT_DIR/lib.sh"
 SEP=$'\037'
-
-info=$(tmux display-message -p $'#{@agent-descriptions-dir}\037#{start_time}' 2>/dev/null || true)
-IFS="$SEP" read -r DESC_DIR SERVER_START <<< "$info"
-: "${DESC_DIR:=${XDG_DATA_HOME:-$HOME/.local/share}/tmux/agent-status/descriptions}"
-# Keyed by server start time and pane number: pane ids restart at %0 with
-# the server, so a bare id would hand an old title to a new pane.
-case "${SERVER_START:-}" in ''|*[!0-9]*) SERVER_START=0 ;; esac
-
-# desc_paths PANE: DESC_FILE (the override) and GEN_FILE (the marker).
-desc_paths() {
-  DESC_FILE="$DESC_DIR/$SERVER_START-${1#%}"
-  GEN_FILE="$DESC_DIR/.generating-$SERVER_START-${1#%}"
-}
+# Where pi may live outside the tmux server's PATH: fnm's per-shell bin dirs
+# go stale, its default alias does not. Empty: PATH only.
+: "${AGENT_PI_FALLBACK_PATH=$HOME/.local/share/fnm/aliases/default/bin}"
 
 bump_revision() {
   tmux set-option -g @agent-revision "$(date +%s).$$.$RANDOM" 2>/dev/null || true
@@ -39,8 +29,14 @@ pane_alive() {
   [ "$(tmux display -p -t "$1" '#{pane_id}' 2>/dev/null)" = "$1" ]
 }
 
-# utf8_cut N TEXT: the first N characters of TEXT (not bytes, so a multibyte
-# character is never split), even when the caller's locale is not UTF-8.
+# pane_option PANE NAME: the pane's option value ("" when unset or gone).
+pane_option() {
+  tmux show-option -pqv -t "$1" "$2" 2>/dev/null || true
+}
+
+# utf8_cut N TEXT: CUT, the first N characters of TEXT (not bytes, so a
+# multibyte character is never split), even when the caller's locale is not
+# UTF-8.
 utf8_cut() {
   case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
     *[Uu][Tt][Ff]-8*|*[Uu][Tt][Ff]8*) ;;
@@ -49,7 +45,8 @@ utf8_cut() {
   CUT=${2:0:$1}
 }
 
-# clean_text TEXT: one line without control characters, at most 240 chars.
+# clean_text TEXT: CLEAN, one line without control characters, at most 240
+# characters, without surrounding blanks.
 clean_text() {
   local text="$1" controls char
   text=${text//$'\n'/ }; text=${text//$'\r'/ }; text=${text//$'\t'/ }
@@ -57,54 +54,32 @@ clean_text() {
   while [ -n "$controls" ]; do
     char=${controls%"${controls#?}"}; controls=${controls#?}; text=${text//"$char"/}
   done
+  text="${text#"${text%%[![:space:]]*}"}"; text="${text%"${text##*[![:space:]]}"}"
   utf8_cut 240 "$text"; CLEAN="$CUT"
 }
 
-# save_description PANE TEXT: store an override (empty TEXT clears it,
-# falling back to the automatic first-prompt description).
-save_description() {
+valid_pane() {
+  [[ "$1" =~ ^%[0-9]+$ ]] || { echo "describe.sh: not a pane id: $1" >&2; return 2; }
+}
+
+# set_title PANE TEXT: set the title (empty TEXT: back to automatic).
+set_title() {
   local target="$1"
-  [[ "$target" =~ ^%[0-9]+$ ]] || return 2
-  pane_alive "$target" || return 0  # no orphan files for a vanished pane
-  desc_paths "$target"
+  valid_pane "$target" || return
+  pane_alive "$target" || { echo "describe.sh: pane $target is gone" >&2; return 1; }
   clean_text "$2"
   if [ -n "$CLEAN" ]; then
-    mkdir -p "$DESC_DIR"; printf '%s\n' "$CLEAN" > "$DESC_FILE"
+    tmux set-option -p -t "$target" @agent-description "$CLEAN"
   else
-    rm -f "$DESC_FILE"
+    tmux set-option -p -u -t "$target" @agent-description
   fi
   bump_revision
 }
 
-# ----- AI description ------------------------------------------------------
-# Ask pi for a short task title from the pane's context. It takes seconds, so
-# the work runs under the tmux server (survives the UI closing); the marker
-# file says "generating" until the result is saved.
-generate_start() {
-  local target="$1" path_q self_arg token cmd
-  [[ "$target" =~ ^%[0-9]+$ ]] || return 0
-  pane_alive "$target" || return 0
-  # fnm's per-shell bin dirs can go stale; its default alias is a stable fallback.
-  PATH="$PATH:$HOME/.local/share/fnm/aliases/default/bin"
-  command -v pi >/dev/null 2>&1 || { tmux display-message "agent-status: pi not found to generate a description"; return 0; }
-  desc_paths "$target"; mkdir -p "$DESC_DIR"
-  # The marker holds the run's token: one run per pane at a time, and only its
-  # owner removes it. A marker older than 3 minutes outlived its run (pi is
-  # capped at 2), so it is reclaimed.
-  token="$$.$RANDOM"
-  if ! ( set -C; printf '%s\n' "$token" > "$GEN_FILE" ) 2>/dev/null; then
-    if [ -n "$(find "$GEN_FILE" -mmin -3 2>/dev/null)" ]; then
-      tmux display-message "agent-status: already generating a description for $target" 2>/dev/null || true
-      return 0
-    fi
-    printf '%s\n' "$token" > "$GEN_FILE"
-  fi
-  bump_revision
-  # The server's environment may lack this shell's PATH (pi lives under fnm).
-  printf -v path_q '%q' "$PATH"; printf -v self_arg '%q' "$0"
-  # run-shell format-expands its command; %q leaves '#' alone, so double it.
-  cmd="PATH=$path_q $self_arg run $target $token"
-  tmux run-shell -b "${cmd//#/##}" 2>/dev/null || rm -f "$GEN_FILE"
+# find_pi: pi on PATH, also trying AGENT_PI_FALLBACK_PATH.
+find_pi() {
+  [ -z "$AGENT_PI_FALLBACK_PATH" ] || PATH="$PATH:$AGENT_PI_FALLBACK_PATH"
+  command -v pi >/dev/null 2>&1
 }
 
 # transcript_context FILE: the latest real user prompts (up to 3, oldest first)
@@ -139,35 +114,23 @@ transcript_context() {
       }'
 }
 
-# generate_cleanup: EXIT trap of `run`. Removes the marker only while this
-# run still owns it, then refreshes open UIs.
-generate_cleanup() {
-  local owner=""
-  [ ! -f "$GEN_FILE" ] || read -r owner < "$GEN_FILE" || true
-  [ "$owner" != "$GEN_TOKEN" ] || rm -f "$GEN_FILE"
-  bump_revision
-}
-
-generate_run() {
-  local target="$1" owner="" info id auto kind path transcript current="" latest="" conversation="" context screen_lines=80 model title
+# ----- asking pi -----------------------------------------------------------
+# ask_title PANE: TITLE, pi's title for PANE from its conversation (else its
+# screen). Returns 1 when PANE is gone, 3 with the reason in ASK_ERR when
+# there is none (tmux unreachable, pi failed). pi runs as a background job (ASK_PID) so that a signal reaching
+# this script can stop it: ask_abort.
+ASK_PID="" ASK_TMP=""
+ask_title() {
+  local target="$1" info id auto kind path transcript current conversation="" context screen_lines=80 model rc=0 err
   local limit="${AGENT_DESCRIBE_TIMEOUT:-120}" timeout_bin
   local -a runner=()
-  [[ "$target" =~ ^%[0-9]+$ ]] || return 0
-  desc_paths "$target"
-  # generate_start passes the marker token; a direct run claims the marker.
-  GEN_TOKEN="${2:-}"
-  if [ -n "$GEN_TOKEN" ]; then
-    [ ! -f "$GEN_FILE" ] || read -r owner < "$GEN_FILE" || true
-    [ "$owner" = "$GEN_TOKEN" ] || return 0  # superseded or cleared meanwhile
-  else
-    GEN_TOKEN="$$.$RANDOM"; mkdir -p "$DESC_DIR"; printf '%s\n' "$GEN_TOKEN" > "$GEN_FILE"
-  fi
-  trap generate_cleanup EXIT
-  trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM
-  info=$(tmux display -p -t "$target" $'#{pane_id}\037#{@agent-auto-description}\037#{@agent-kind}\037#{pane_current_path}\037#{@agent-transcript}' 2>/dev/null) || return 0
-  IFS="$SEP" read -r id auto kind path transcript <<< "$info"
-  [ "$id" = "$target" ] || return 0  # display -p succeeds for a vanished pane
-  [ ! -f "$DESC_FILE" ] || read -r current < "$DESC_FILE" || true
+  TITLE="" ASK_ERR=""
+  # display -p fails only when tmux can't be run or reached; for a gone pane
+  # it describes another one, hence the id check.
+  info=$(tmux display -p -t "$target" $'#{pane_id}\037#{@agent-auto-description}\037#{@agent-kind}\037#{pane_current_path}\037#{@agent-transcript}\037#{@agent-description}' 2>/dev/null) \
+    || { ASK_ERR="cannot reach tmux"; return 3; }
+  IFS="$SEP" read -r id auto kind path transcript current <<< "$info"
+  [ "$id" = "$target" ] || return 1  # display -p succeeds for a vanished pane
   # The conversation is the best signal; the screen is a fallback (TUIs on the
   # alternate screen have no scrollback, so it is mostly the visible UI).
   case "$transcript" in /*.jsonl) conversation=$(transcript_context "$transcript") ;; esac
@@ -177,54 +140,150 @@ generate_run() {
   model=$(tmux show-option -gqv @agent-describe-model 2>/dev/null || true)
   # Cap pi's runtime: coreutils timeout, else a perl watchdog that, like
   # timeout, kills pi's whole process group (children would hold the pipe
-  # open), else no cap.
+  # open) on expiry or when it is itself signalled, else no cap.
   timeout_bin=$(command -v timeout || command -v gtimeout || true)
   if [ -n "$timeout_bin" ]; then runner=("$timeout_bin" "$limit")
   elif command -v perl >/dev/null 2>&1; then
     runner=(perl -e '$t = shift; defined($p = fork) or exit 127;
       if (!$p) { setpgrp(0, 0); exec @ARGV or exit 127 }
-      setpgrp($p, $p); $SIG{ALRM} = sub { kill "TERM", -$p; exit 124 }; alarm $t;
+      setpgrp($p, $p);
+      $SIG{ALRM} = sub { kill "TERM", -$p; exit 124 }; alarm $t;
+      $SIG{TERM} = $SIG{HUP} = $SIG{INT} = sub { kill "TERM", -$p; exit 143 };
       waitpid($p, 0); exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' "$limit")
   fi
-  title=$(printf 'Agent: %s\nFolder: %s\nFirst prompt: %s\nCurrent title: %s\n%s\nVisible terminal (may be stale UI):\n%s\n' \
+  ASK_TMP=$(mktemp -d "${TMPDIR:-/tmp}/agent-describe.XXXXXX")
+  printf 'Agent: %s\nFolder: %s\nFirst prompt: %s\nCurrent title: %s\n%s\nVisible terminal (may be stale UI):\n%s\n' \
       "${kind:-unknown}" "$path" "$auto" "$current" "$conversation" "$context" \
     | ${runner[@]+"${runner[@]}"} pi --print --no-session --no-tools --model "${model:-openai-codex/gpt-6-luna}" --thinking minimal \
         --system-prompt 'You label coding-agent terminal sessions for a task switcher. Reply with ONE line only: what the agent is working on now, as a concise title of at most 60 characters, imperative mood, no quotes, no trailing period. Weigh the latest user prompts most; the first prompt may be outdated.' \
-        'Write the title for this session.' 2>/dev/null | awk 'NF { print; exit }') || title=""
-  title="${title#\"}"; title="${title%\"}"
-  if [ -z "$title" ]; then
-    tmux display-message "agent-status: could not generate a description" 2>/dev/null || true
-    return 0
-  fi
-  # Keep an edit made while pi was running, and drop the result if the marker
-  # was cleared (pane exit) or reclaimed by a newer run.
-  [ ! -f "$DESC_FILE" ] || read -r latest < "$DESC_FILE" || true
-  owner=""; [ ! -f "$GEN_FILE" ] || read -r owner < "$GEN_FILE" || true
-  [ "$latest" = "$current" ] && [ "$owner" = "$GEN_TOKEN" ] || return 0
-  utf8_cut 80 "$title"
-  save_description "$target" "$CUT"
+        'Write the title for this session.' > "$ASK_TMP/out" 2> "$ASK_TMP/err" &
+  ASK_PID=$!
+  wait "$ASK_PID" || rc=$?
+  ASK_PID=""
+  TITLE=$(awk 'NF { print; exit }' "$ASK_TMP/out")
+  TITLE="${TITLE#\"}"; TITLE="${TITLE%\"}"
+  err=$(awk 'NF { line = $0 } END { print line }' "$ASK_TMP/err" | cut -c1-160)
+  ask_cleanup
+  [ -z "$TITLE" ] || [ "$rc" -ne 0 ] || return 0
+  TITLE=""
+  case "$rc" in
+    0) ASK_ERR="pi gave no title" ;;
+    124) ASK_ERR="pi timed out after ${limit}s" ;;
+    *) ASK_ERR="pi failed: ${err:-exit status $rc}" ;;
+  esac
+  return 3
 }
 
-# prune_descriptions: drop week-old descriptions/markers left by earlier tmux
-# servers. Entries of the running server are kept, as are those of other live
-# servers (-L) unless untouched for a week; legacy bare-id files and other
-# names are never matched.
-prune_descriptions() {
-  local f name
-  [ -d "$DESC_DIR" ] || return 0
-  find "$DESC_DIR" -maxdepth 1 -type f \( -name '[0-9]*-[0-9]*' -o -name '.generating-[0-9]*-[0-9]*' \) -mtime +7 2>/dev/null \
-    | while IFS= read -r f; do
-        name=${f##*/}; name=${name#.generating-}
-        [[ "$name" =~ ^[0-9]+-[0-9]+$ ]] || continue
-        [ "${name%%-*}" = "$SERVER_START" ] || rm -f "$f"
-      done || true
+ask_cleanup() {
+  [ -z "$ASK_TMP" ] || rm -rf "$ASK_TMP"
+  ASK_TMP=""
+}
+
+# ask_abort STATUS: signal handler; stops pi (through its runner, which
+# forwards the signal to pi's process group) and exits.
+ask_abort() {
+  # $!: a signal can land after pi's job starts but before ASK_PID is set
+  # (no other background job runs before it).
+  local pid="${ASK_PID:-${!:-}}"
+  [ -z "$pid" ] || kill -TERM "$pid" 2>/dev/null || true
+  exit "$1"
+}
+
+# suggest_title PANE: print pi's title for PANE, cleaned, without setting it
+# (a UI's editor offers it). Waits for pi; fails with the reason on stderr.
+suggest_title() {
+  local target="$1" rc=0
+  valid_pane "$target" || return
+  find_pi || { echo "pi is not installed" >&2; return 1; }
+  trap ask_cleanup EXIT
+  trap 'ask_abort 129' HUP; trap 'ask_abort 130' INT; trap 'ask_abort 143' TERM
+  ask_title "$target" || rc=$?
+  case "$rc" in
+    0) ;;
+    1) echo "pane $target is gone" >&2; return 1 ;;
+    *) echo "$ASK_ERR" >&2; return 1 ;;
+  esac
+  clean_text "$TITLE"; utf8_cut 80 "$CLEAN"
+  printf '%s\n' "$CUT"
+}
+
+# ----- background generation -------------------------------------------------
+# generate PANE: run pi under the tmux server (it survives the UI closing),
+# one run per pane: @agent-generating names the run's token, and only its
+# owner clears it. A token older than 3 minutes outlived its run (pi is
+# capped at 2), so it is reclaimed.
+generate_start() {
+  local target="$1" token current path_q self_arg cmd now
+  valid_pane "$target" || return
+  pane_alive "$target" || return 0
+  find_pi || { tmux display-message "agent-status: pi is not installed"; return 0; }
+  now=$(date +%s)
+  token="$now.$$.$RANDOM"
+  agent_lock "pane-${target#%}"
+  current=$(pane_option "$target" @agent-generating)
+  case "${current%%.*}" in ''|*[!0-9]*) current=0 ;; *) current=${current%%.*} ;; esac
+  if [ $((now - current)) -lt 180 ]; then
+    agent_unlock
+    tmux display-message "agent-status: already generating a title for $target" 2>/dev/null || true
+    return 0
+  fi
+  tmux set-option -p -t "$target" @agent-generating "$token"
+  agent_unlock
+  bump_revision
+  # The server's environment may lack this shell's PATH (pi lives under fnm).
+  printf -v path_q '%q' "$PATH"; printf -v self_arg '%q' "$0"
+  # run-shell format-expands its command; %q leaves '#' alone, so double it.
+  cmd="PATH=$path_q $self_arg run $target $token"
+  tmux run-shell -b "${cmd//#/##}" 2>/dev/null || tmux set-option -p -u -t "$target" @agent-generating 2>/dev/null || true
+}
+
+# generate_cleanup: EXIT trap of `run`. Clears the marker only while this
+# run still owns it.
+generate_cleanup() {
+  ask_cleanup
+  [ "$(pane_option "$GEN_PANE" @agent-generating)" != "$GEN_TOKEN" ] \
+    || tmux set-option -p -u -t "$GEN_PANE" @agent-generating 2>/dev/null || true
+  bump_revision
+}
+
+generate_run() {
+  local target="$1" current rc=0
+  valid_pane "$target" || return
+  GEN_PANE="$target" GEN_TOKEN="${2:-}"
+  if [ -n "$GEN_TOKEN" ]; then
+    # Superseded or cleared (the agent exited) meanwhile.
+    [ "$(pane_option "$target" @agent-generating)" = "$GEN_TOKEN" ] || return 0
+  else
+    pane_alive "$target" || return 0
+    GEN_TOKEN="$(date +%s).$$.$RANDOM"
+    tmux set-option -p -t "$target" @agent-generating "$GEN_TOKEN"
+  fi
+  trap generate_cleanup EXIT
+  trap 'ask_abort 129' HUP; trap 'ask_abort 130' INT; trap 'ask_abort 143' TERM
+  current=$(pane_option "$target" @agent-description)
+  ask_title "$target" || rc=$?
+  case "$rc" in
+    0) ;;
+    1) return 0 ;;
+    *) tmux display-message "agent-status: could not generate a title: $ASK_ERR" 2>/dev/null || true; return 0 ;;
+  esac
+  # Keep a title set while pi ran, and drop the result if the marker was
+  # cleared (the agent exited) or reclaimed by a newer run; under the pane's
+  # lock, so the agent's exit can't clear its options in between.
+  agent_lock "pane-${target#%}"
+  if [ "$(pane_option "$target" @agent-description)" = "$current" ] && [ "$(pane_option "$target" @agent-generating)" = "$GEN_TOKEN" ]; then
+    utf8_cut 80 "$TITLE"
+    set_title "$target" "$CUT" 2>/dev/null || true  # the pane may have gone
+  fi
+  agent_unlock
+  trap generate_cleanup EXIT
 }
 
 case "${1:-}" in
-  set) save_description "${2:-}" "${3:-}" ;;
+  set) set_title "${2:-}" "${3:-}" ;;
+  suggest) suggest_title "${2:-}" ;;
   generate) generate_start "${2:-}" ;;
   run) generate_run "${2:-}" "${3:-}" ;;
   context) transcript_context "${2:-}" ;;
-  prune) prune_descriptions ;;
-  *) echo "usage: describe.sh set PANE [TEXT] | generate PANE | run PANE [TOKEN] | context FILE | prune" >&2; exit 2 ;;
+  *) echo "usage: describe.sh set PANE [TEXT] | suggest PANE | generate PANE | run PANE [TOKEN] | context FILE" >&2; exit 2 ;;
 esac

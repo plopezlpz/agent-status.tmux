@@ -25,7 +25,7 @@ fi
 
 agent_lock "window-${window_id#@}"
 
-# UIs (corral) watch this cheap global token; update it even when the
+# UIs watch this cheap global token; update it even when the
 # window's worst-state icon is unchanged (another pane's state changed).
 [ "$mode" = layout ] || tmux set-option -g @agent-revision "$(date +%s).$$.$RANDOM" 2>/dev/null || true
 

@@ -9,7 +9,7 @@
 #     window-status-format)
 #   - clickable notifications (terminal-notifier / notify-send)
 #   - agent descriptions (first prompt, overrides, AI-generated) for a UI:
-#     a UI such as corral reads all of the above from tmux options
+#     a UI such as paddock reads all of the above from tmux options
 
 set -eu
 CURRENT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
@@ -32,13 +32,16 @@ tmux set-option -gqo @agent-color-working  'yellow'
 tmux set-option -gqo @agent-color-asking   'red'
 tmux set-option -gqo @agent-color-finished 'cyan'
 tmux set-option -gqo @agent-color-idle     'green'
-# Model for generated descriptions (describe.sh generate; pi --model pattern).
+# Model for generated titles (describe.sh suggest and generate; pi --model
+# pattern).
 tmux set-option -gqo @agent-describe-model 'openai-codex/gpt-6-luna'
-# Pane options hold transient state. Persistent descriptions and the audit log
-# live under XDG_DATA_HOME, like tmux-resurrect.
-_agent_data="${XDG_DATA_HOME:-$HOME/.local/share}/tmux/agent-status"
-tmux set-option -gqo @agent-descriptions-dir "$_agent_data/descriptions"
-tmux set-option -gqo @agent-log              "$_agent_data/agent.log"
+# How a UI asks for a title suggestion: the command, run with a pane id as its
+# last argument, prints one. Set on every load: it names this checkout.
+printf -v _suggest '%q suggest' "$SCRIPTS/agent/describe.sh"
+tmux set-option -g @agent-suggest-command "$_suggest"
+# Pane options hold transient state; the audit log lives under XDG_DATA_HOME,
+# like tmux-resurrect.
+tmux set-option -gqo @agent-log "${XDG_DATA_HOME:-$HOME/.local/share}/tmux/agent-status/agent.log"
 # Advertise where the per-pane state scripts live so provider extensions can
 # locate shared scripts without a baked path.
 tmux set-option -gqo @agent-scripts-dir       "$SCRIPTS/agent"
@@ -65,9 +68,6 @@ done < <(tmux list-panes -a -F $'#{pane_id}\037#{@agent-state}\037#{@agent-state
 while read -r window; do
   [ -z "$window" ] || "$SCRIPTS/agent/update-window-icon.sh" "$window" || true
 done < <(tmux list-windows -a -F '#{window_id}' 2>/dev/null | sort -u)
-
-# Drop week-old description files left by earlier tmux servers.
-"$SCRIPTS/agent/describe.sh" prune || true
 
 # ----- hooks -----------------------------------------------------------
 # Hooks whose command contains this needle are "ours".
