@@ -20,7 +20,7 @@ agent state a UI such as [paddock](https://github.com/plopezlpz/paddock) shows.
 | Kilo Code | Partial lifecycle | plugin; Kilo has no exit event, so the pane is cleared from a process exit/signal handler (untested against a real Kilo); a prompt in another root session (`kilo -c`, picking a session) rebinds the pane; headless commands are detected from argv |
 | Kimi Code | Full lifecycle | native hooks incl. `SessionEnd`; headless runs (`-p`, `acp`, `web`, `rc`) are detected from the kimi process argv |
 | MastraCode | Full lifecycle | native hooks incl. `SessionEnd`; headless `--prompt` runs are detected from argv |
-| Claude Code | Best-effort compatibility | native hooks; Claude has no permission-resolved event |
+| Claude Code | Best-effort compatibility | native hooks; Claude has no interrupt or permission-resolved event, so an Esc interrupt or a denied prompt settles to idle only when Claude's `idle_prompt` notification fires (default 60s); API errors end the turn through `StopFailure` |
 
 Herdr also recognizes Codex, Copilot, Devin, Droid, Qoder, Qwen, Cursor,
 Hermes, Antigravity, Grok, Amp, Kiro, Gemini, Cline, and Maki. They are **not
@@ -52,9 +52,10 @@ bash "$PLUGIN/manage-provider.sh" install claude
 ```
 
 The old `install-pi-extension.sh` and `install-claude-hooks.sh` commands remain
-compatible. Restart/reload the provider after installation. Missing provider
-config homes are skipped safely. Install refuses existing foreign files,
-foreign symlinks, config symlinks, and malformed edited configs.
+compatible. Restart/reload the provider after installation. Providers whose
+config directory is missing are skipped (Claude's `settings.json` is created).
+Install refuses existing foreign files, foreign symlinks, config symlinks, and
+malformed edited configs.
 
 Add the cached icon to both status formats:
 
@@ -112,13 +113,14 @@ Set options before TPM runs; defaults never replace user overrides.
 | `@agent-icon-finished`, `@agent-color-finished` | `●`, `cyan` |
 | `@agent-icon-idle`, `@agent-color-idle` | `○`, `green` |
 | `@agent-terminal-app` | empty |
-| `@agent-notify-timeout` | `300` |
+| `@agent-notify-timeout` | `300` (seconds before an alerter notification closes; `0` = never) |
+| `@agent-notify-team-delay` | `10` (seconds a Claude agent-team lead's notification waits for its teammates; `0` = off) |
 | `@agent-describe-model` | `openai-codex/gpt-6-luna` (pi model for suggested titles) |
 | `@agent-log` | `${XDG_DATA_HOME:-$HOME/.local/share}/tmux/agent-status/agent.log` |
 
-Installer path overrides mirror provider conventions where useful:
-`PI_CODING_AGENT_DIR`, `PI_EXTENSIONS_DIR`, `PI_CONFIG_DIR`,
-`OMP_EXTENSIONS_DIR`, `OPENCODE_CONFIG_DIR`, `KILO_CONFIG_DIR`,
+Installer path overrides mirror provider conventions: pi
+`PI_CODING_AGENT_DIR`, `PI_EXTENSIONS_DIR`; OMP `PI_CONFIG_DIR`,
+`OMP_EXTENSIONS_DIR`; `OPENCODE_CONFIG_DIR`, `KILO_CONFIG_DIR`,
 `KIMI_CODE_HOME`, `MASTRACODE_HOME`, and `CLAUDE_SETTINGS`.
 OMP debounce and retry grace honor `HERDR_OMP_IDLE_DEBOUNCE_MS` and
 `HERDR_OMP_RETRY_GRACE_MS`.
@@ -173,5 +175,9 @@ A future provider adapter must:
 Nested or headless agents (e.g. `claude -p` run from inside an agent pane)
 inherit `TMUX_PANE` and would take over that pane's status. Run them with it
 cleared: `TMUX_PANE= claude -p ...`.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
 
 [TPM]: https://github.com/tmux-plugins/tpm

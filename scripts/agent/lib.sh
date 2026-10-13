@@ -8,7 +8,7 @@ tmux() { command tmux -u "$@"; }
 
 # Pane options owned by a registration; cleared together on exit.
 # shellcheck disable=SC2034 # used by the sourcing scripts
-AGENT_PANE_OPTIONS="@agent-state @agent-unseen @agent-instance @agent-seq @agent-kind @agent-state-at @agent-auto-description @agent-description @agent-generating @agent-transcript"
+AGENT_PANE_OPTIONS="@agent-state @agent-unseen @agent-instance @agent-seq @agent-kind @agent-state-at @agent-auto-description @agent-description @agent-generating @agent-transcript @agent-notify-token"
 
 # agent_window_of PANE: print the pane's window id, or nothing once the pane
 # is gone (display -t on a vanished pane silently describes another pane, so

@@ -174,6 +174,27 @@ claude "$p6" '{"session_id":"c-2","hook_event_name":"SessionStart","source":"com
 [ "$(get "$p6" @agent-state):$(get "$p6" @agent-instance)" = idle:claude:c-2 ] || fail "compaction did not register an unknown pane"
 tmux kill-pane -t "$p6"
 
+# ----- turns that end without Stop ----------------------------------------
+p6=$(tmux split-window -d -P -F '#{pane_id}' -t "$p1")
+claude "$p6" '{"session_id":"c-3","hook_event_name":"SessionStart","source":"startup"}' idle
+# Esc interrupt: no Stop; the idle_prompt notification closes the turn
+# without claiming an unseen completion.
+claude "$p6" '{"session_id":"c-3","hook_event_name":"UserPromptSubmit"}' working
+claude "$p6" '{"session_id":"c-3","hook_event_name":"Notification","notification_type":"idle_prompt","message":"Claude is waiting for your input"}' idle
+[ "$(get "$p6" @agent-state):$(get "$p6" @agent-unseen)" = idle:0 ] || fail "idle_prompt did not close an interrupted turn"
+# A denied permission prompt also ends the turn without Stop.
+claude "$p6" '{"session_id":"c-3","hook_event_name":"PermissionRequest"}' asking
+claude "$p6" '{"session_id":"c-3","hook_event_name":"Notification","notification_type":"idle_prompt"}' idle
+[ "$(get "$p6" @agent-state)" = idle ] || fail "idle_prompt did not close a denied permission prompt"
+# An API error ends the turn with StopFailure: an unseen completion.
+claude "$p6" '{"session_id":"c-3","hook_event_name":"UserPromptSubmit"}' working
+claude "$p6" '{"session_id":"c-3","hook_event_name":"StopFailure","error":"rate_limit"}' finished
+[ "$(get "$p6" @agent-state):$(get "$p6" @agent-unseen)" = idle:1 ] || fail "StopFailure did not finish the turn"
+# A later idle_prompt must not acknowledge that completion.
+claude "$p6" '{"session_id":"c-3","hook_event_name":"Notification","notification_type":"idle_prompt"}' idle
+[ "$(get "$p6" @agent-unseen)" = 1 ] || fail "idle_prompt acknowledged an unseen completion"
+tmux kill-pane -t "$p6"
+
 # ----- locks: stale and wedged holders cannot block hooks -----------------
 holder(){  # holder PANE MODE &: take PANE's lock, record its path, then MODE
   rm -f "$TMP/lockpath"
@@ -284,7 +305,9 @@ nstate "$p1" finished "" a-1 51 test
 grep -F "pane=$p1 working->finished (focused, not notified)" "$TMP/agent.log" >/dev/null || fail "focused completion was not recognised"
 [ "$(get "$p1" @agent-state):$(get "$p1" @agent-unseen)" = idle:1 ] || fail "focused completion lost its unseen marker"
 sleep 0.3; ! notified "$p1" || fail "completion in the focused pane was notified"
-nstate "$p1" working "" a-1 52 test
+nstate "$p1" asking "" a-1 52 test
+sleep 0.3; ! notified "$p1" || fail "permission prompt in the focused pane was notified"
+nstate "$p1" working "" a-1 53 test
 [ "$(get "$p1" @agent-unseen)" = 0 ] || fail "next prompt did not clear the unseen marker"
 nstate "$p8" working "" a-8 1 test reset
 nstate "$p8" finished "" a-8 2 test
@@ -293,9 +316,41 @@ eventually notified "$p8" || fail "completion in a background pane was not notif
 outer send-keys -t o -H 1b 5b 4f   # terminal focus-out
 unfocused(){ ! focused; }
 eventually unfocused || fail "client did not lose focus"
-nstate "$p1" finished "" a-1 53 test
+nstate "$p1" finished "" a-1 54 test
 [ "$(get "$p1" @agent-unseen)" = 1 ] || fail "completion in an unfocused terminal was not unseen"
 eventually notified "$p1" || fail "completion in an unfocused terminal was not notified"
+
+# A Claude agent-team lead's completion waits while teammates are alive and is
+# dropped when the lead resumes, a newer completion supersedes it, or the pane
+# is seen. Without teammates it is immediate.
+tmux set-option -g @agent-notify-team-delay 1
+p10=$(tmux split-window -d -P -F '#{pane_id}' -t "$p1")
+lead(){ printf '{"session_id":"c-10","hook_event_name":"%s","background_tasks":%s}\n' "$2" "${3:-[]}" | \
+  PATH="$TMP/rbin:$PATH" TMUX_PANE="$p10" AGENT_STATUS_KIND=claude "$SET" "$1"; }
+team='[{"id":"t1","type":"teammate","status":"running"}]'
+lead working SessionStart
+lead working UserPromptSubmit
+lead finished Stop "$team"
+[ "$(get "$p10" @agent-state):$(get "$p10" @agent-unseen)" = idle:1 ] || fail "team delay delayed the pane state"
+lead working PreToolUse
+sleep 1.5; ! notified "$p10" || fail "lead completion that resumed within the delay was notified"
+lead finished Stop "$team"
+"$AGENT/clear-finished.sh" "$p10" </dev/null
+sleep 1.5; ! notified "$p10" || fail "lead completion seen within the delay was notified"
+lead working PreToolUse
+lead finished Stop "$team"
+eventually notified "$p10" || fail "lead completion that stayed finished was not notified"
+rm -f "$TMP/notified-agent-$p10"
+# A newer state change cancels a pending delayed send: here the immediate
+# completion notifies once, and the earlier team Stop must not notify again.
+lead working UserPromptSubmit
+lead finished Stop "$team"
+lead working UserPromptSubmit
+lead finished Stop
+eventually notified "$p10" || fail "completion without teammates was not notified"
+rm -f "$TMP/notified-agent-$p10"
+sleep 1.5; ! notified "$p10" || fail "superseded delayed completion was notified"
+tmux kill-pane -t "$p10"
 
 tmux new-session -d -s other
 p9=$(tmux display -pt other: '#{pane_id}')

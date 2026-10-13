@@ -166,7 +166,8 @@ PreCompact||working
 PermissionRequest||blocked
 PermissionResult||working
 Stop||idle
-Interrupt||idle
+StopFailure||idle
+Interrupt||interrupt
 KIMI
         printf '# <<< agent-status.tmux kimi integration\n'
       } >> "$tmp"
@@ -174,11 +175,11 @@ KIMI
       link_install "$src" "$dest"
       ;;
     mastracode)
-      events='[{"event":"SessionStart","action":"session"},{"event":"SessionEnd","action":"end"},{"event":"UserPromptSubmit","action":"working"},{"event":"AgentStart","action":"working"},{"event":"PreToolUse","action":"working"},{"event":"PermissionRequest","action":"blocked"},{"event":"PermissionResult","action":"working"},{"event":"SubagentStart","action":"working"},{"event":"SubagentEnd","action":"working"},{"event":"Interrupt","action":"idle"},{"event":"AgentEnd","action":"idle"},{"event":"Stop","action":"idle"}]'
+      events='[{"event":"SessionStart","action":"session"},{"event":"SessionEnd","action":"end"},{"event":"UserPromptSubmit","action":"working"},{"event":"AgentStart","action":"working"},{"event":"PreToolUse","action":"working"},{"event":"PermissionRequest","action":"blocked"},{"event":"PermissionResult","action":"working"},{"event":"SubagentStart","action":"working"},{"event":"SubagentEnd","action":"working"},{"event":"Interrupt","action":"interrupt"},{"event":"AgentEnd","action":"idle"},{"event":"Stop","action":"idle"}]'
       cmd_path=$(printf '%s' "$dest" | sed "s/'/'\\\\''/g")
       link_validate "$src" "$dest"
       # shellcheck disable=SC2016 # jq variables, not shell variables
-      json_update "$config" 'if type != "object" then error("root must be object") else . end | reduce $events[] as $e (. ; .[$e.event] = (((.[$e.event] // []) | map(select((.command // "") != ($command + " " + $e.action)))) + [{type:"command",command:($command + " " + $e.action),timeout:10000}]))' --arg command "'$cmd_path'" --argjson events "$events"
+      json_update "$config" 'if type != "object" then error("root must be object") else . end | reduce $events[] as $e (. ; .[$e.event] = (((.[$e.event] // []) | map(select((.command // "") | startswith($command + " ") | not))) + [{type:"command",command:($command + " " + $e.action),timeout:10000}]))' --arg command "'$cmd_path'" --argjson events "$events"
       link_install "$src" "$dest"
       ;;
     *) link_install "$src" "$dest" ;;
@@ -202,10 +203,10 @@ else
       ;;
     mastracode)
       if [ -e "$config" ] || [ -L "$config" ]; then
-        events='[{"event":"SessionStart","action":"session"},{"event":"SessionEnd","action":"end"},{"event":"UserPromptSubmit","action":"working"},{"event":"AgentStart","action":"working"},{"event":"PreToolUse","action":"working"},{"event":"PermissionRequest","action":"blocked"},{"event":"PermissionResult","action":"working"},{"event":"SubagentStart","action":"working"},{"event":"SubagentEnd","action":"working"},{"event":"Interrupt","action":"idle"},{"event":"AgentEnd","action":"idle"},{"event":"Stop","action":"idle"}]'
+        events='[{"event":"SessionStart","action":"session"},{"event":"SessionEnd","action":"end"},{"event":"UserPromptSubmit","action":"working"},{"event":"AgentStart","action":"working"},{"event":"PreToolUse","action":"working"},{"event":"PermissionRequest","action":"blocked"},{"event":"PermissionResult","action":"working"},{"event":"SubagentStart","action":"working"},{"event":"SubagentEnd","action":"working"},{"event":"Interrupt","action":"interrupt"},{"event":"AgentEnd","action":"idle"},{"event":"Stop","action":"idle"}]'
         cmd_path=$(printf '%s' "$dest" | sed "s/'/'\\\\''/g")
         # shellcheck disable=SC2016 # jq variables, not shell variables
-        json_update "$config" 'if type != "object" then error("root must be object") else . end | reduce $events[] as $e (. ; ($command + " " + $e.action) as $owned | if ((.[$e.event] // []) | type) == "array" and ((.[$e.event] // []) | any((.command // "") == $owned)) then .[$e.event] |= map(select((.command // "") != $owned)) | if (.[$e.event] | length) == 0 then del(.[$e.event]) else . end else . end)' --arg command "'$cmd_path'" --argjson events "$events"
+        json_update "$config" 'if type != "object" then error("root must be object") else . end | reduce $events[] as $e (. ; ($command + " ") as $owned | if ((.[$e.event] // []) | type) == "array" and ((.[$e.event] // []) | any((.command // "") | startswith($owned))) then .[$e.event] |= map(select((.command // "") | startswith($owned) | not)) | if (.[$e.event] | length) == 0 then del(.[$e.event]) else . end else . end)' --arg command "'$cmd_path'" --argjson events "$events"
       fi
       link_remove "$src" "$dest"
       ;;

@@ -2,7 +2,7 @@
 # agent-status.tmux — MastraCode hook adapter.
 set -eu
 [ -n "${TMUX_PANE:-}" ] || exit 0
-case "${1:-}" in session|working|blocked|idle|end) action="$1" ;; *) exit 0 ;; esac
+case "${1:-}" in session|working|blocked|idle|interrupt|end) action="$1" ;; *) exit 0 ;; esac
 
 # Headless runs (`mastracode --prompt`) can inherit TMUX_PANE from an agent
 # pane and must not report or steal its identity. The hook payload has no mode
@@ -59,6 +59,8 @@ case "$action" in
     ;;
   blocked) "$SCRIPT_DIR/set-state.sh" asking "$message" "$instance" "" mastracode </dev/null ;;
   idle) "$SCRIPT_DIR/set-state.sh" finished "" "$instance" "" mastracode </dev/null ;;
+  # The user's own Esc: settle without claiming an unseen completion.
+  interrupt) "$SCRIPT_DIR/set-state.sh" idle "" "$instance" "" mastracode </dev/null ;;
   end)
     [ -n "$instance" ] || exit 0
     "$SCRIPT_DIR/clear-state.sh" "${reason:-exit}" "$instance" mastracode </dev/null

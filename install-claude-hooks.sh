@@ -55,18 +55,27 @@ filter='
     | map(select((.hooks // []) | length > 0));
   # Ensure .hooks is an object even if the file has it as null/array/other.
   .hooks |= (if type == "object" then . else {} end) |
-  # Older plugin releases registered the nonexistent PermissionDenied event.
-  # Remove only our old entry and preserve any unrelated user configuration.
+  # Older plugin releases registered PermissionDenied, which fires on auto-mode
+  # classifier denials mid-turn and is not a state change. Remove only our old
+  # entry and preserve any unrelated user configuration.
   .hooks.PermissionDenied = ((.hooks.PermissionDenied // []) | strip) |
   if (.hooks.PermissionDenied | length) == 0 then del(.hooks.PermissionDenied) else . end |
   .hooks.SessionStart      = ((.hooks.SessionStart      // []) | strip) + [{hooks:[{type:"command", command:"env AGENT_STATUS_KIND=claude \($r)/set-state.sh idle"}, {type:"command", command:"\($r)/auto-desc.sh clear"}]}] |
   .hooks.SessionEnd        = ((.hooks.SessionEnd        // []) | strip) + [{hooks:[{type:"command", command:"env AGENT_STATUS_KIND=claude \($r)/clear-state.sh"}]}] |
   .hooks.UserPromptSubmit  = ((.hooks.UserPromptSubmit  // []) | strip) + [{hooks:[{type:"command", command:"env AGENT_STATUS_KIND=claude \($r)/set-state.sh working"}, {type:"command", command:"\($r)/auto-desc.sh set"}]}] |
   .hooks.Stop              = ((.hooks.Stop              // []) | strip) + [{hooks:[{type:"command", command:"env AGENT_STATUS_KIND=claude \($r)/set-state.sh finished"}]}] |
+  # A turn that ends in an API error (rate limit, overload, auth) fires
+  # StopFailure instead of Stop.
+  .hooks.StopFailure       = ((.hooks.StopFailure       // []) | strip) + [{hooks:[{type:"command", command:"env AGENT_STATUS_KIND=claude \($r)/set-state.sh finished"}]}] |
+  # An Esc interrupt fires neither. idle_prompt is sent once the prompt has sat
+  # idle (default 60s) with no turn, dialog, or background agent running, so
+  # it ends a working/asking state that no Stop will ever close.
+  .hooks.Notification      = ((.hooks.Notification      // []) | strip) + [{matcher:"idle_prompt", hooks:[{type:"command", command:"env AGENT_STATUS_KIND=claude \($r)/set-state.sh idle"}]}] |
   .hooks.PermissionRequest = ((.hooks.PermissionRequest // []) | strip) + [{hooks:[{type:"command", command:"env AGENT_STATUS_KIND=claude \($r)/set-state.sh asking"}]}] |
   .hooks.PreToolUse        = ((.hooks.PreToolUse        // []) | strip) + [{hooks:[{type:"command", command:"env AGENT_STATUS_KIND=claude \($r)/set-state.sh working"}]}] |
   # Claude Code has no "permission answered" event. PostToolUse fires after an
-  # approved tool runs; a denial eventually reaches Stop (completion).
+  # approved tool runs; a denial ends the turn like an interrupt, so the
+  # idle_prompt notification above closes it.
   .hooks.PostToolUse       = ((.hooks.PostToolUse       // []) | strip) + [{hooks:[{type:"command", command:"env AGENT_STATUS_KIND=claude \($r)/set-state.sh working"}]}]
 '
 if [ "$input" = /dev/null ]; then

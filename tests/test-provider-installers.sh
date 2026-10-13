@@ -12,7 +12,8 @@ export OPENCODE_CONFIG_DIR="$TMP/opencode"; mkdir -p "$OPENCODE_CONFIG_DIR"; ech
 export KILO_CONFIG_DIR="$TMP/kilo"; mkdir -p "$KILO_CONFIG_DIR"
 export KIMI_CODE_HOME="$TMP/kimi"; mkdir -p "$KIMI_CODE_HOME"; echo 'model = "keep"' > "$KIMI_CODE_HOME/config.toml"
 export MASTRACODE_HOME="$TMP/mastra"; mkdir -p "$MASTRACODE_HOME"
-jq -n --arg wrapped "wrapper $MASTRACODE_HOME/hooks/agent-status.tmux.sh extra" '{UserPromptSubmit:[{type:"command",command:"keep"},{type:"command",command:$wrapped}]}' > "$MASTRACODE_HOME/hooks.json"
+# Includes an Interrupt entry from an older event map, which must be replaced.
+jq -n --arg wrapped "wrapper $MASTRACODE_HOME/hooks/agent-status.tmux.sh extra" --arg old "'$MASTRACODE_HOME/hooks/agent-status.tmux.sh' idle" '{UserPromptSubmit:[{type:"command",command:"keep"},{type:"command",command:$wrapped}],Interrupt:[{type:"command",command:$old}]}' > "$MASTRACODE_HOME/hooks.json"
 
 for provider in pi omp opencode kilo kimi mastracode; do
   bash "$ROOT/manage-provider.sh" install "$provider" >/dev/null
@@ -28,8 +29,11 @@ bash "$TMP/plugin-alias/manage-provider.sh" install pi >/dev/null
 mode=$(stat -f %Lp "$OPENCODE_CONFIG_DIR/tui.jsonc" 2>/dev/null || stat -c %a "$OPENCODE_CONFIG_DIR/tui.jsonc")
 [ "$mode" = 600 ] || fail "opencode changed config permissions"
 [ "$(grep -c '^# >>> agent-status.tmux kimi integration$' "$KIMI_CODE_HOME/config.toml")" -eq 1 ] || fail "kimi block duplicated"
-[ "$(grep -c '^\[\[hooks\]\]$' "$KIMI_CODE_HOME/config.toml")" -eq 13 ] || fail "kimi hook map is not exact"
+[ "$(grep -c '^\[\[hooks\]\]$' "$KIMI_CODE_HOME/config.toml")" -eq 14 ] || fail "kimi hook map is not exact"
+grep -A1 '^event = "StopFailure"$' "$KIMI_CODE_HOME/config.toml" | grep -q "' idle\"$" || fail "kimi StopFailure does not end the turn"
 grep -F 'model = "keep"' "$KIMI_CODE_HOME/config.toml" >/dev/null || fail "kimi changed unrelated config"
+grep -A1 '^event = "Interrupt"$' "$KIMI_CODE_HOME/config.toml" | grep -q "' interrupt\"$" || fail "kimi Interrupt claims a completion"
+[ "$(jq -c '[.Interrupt[].command | split(" ") | last]' "$MASTRACODE_HOME/hooks.json")" = '["interrupt"]' ] || fail "mastra Interrupt not replaced by interrupt"
 [ "$(jq '[.UserPromptSubmit[] | select(.command == "keep")] | length' "$MASTRACODE_HOME/hooks.json")" -eq 1 ] || fail "mastra removed unrelated hook"
 [ "$(jq --arg wrapped "wrapper $MASTRACODE_HOME/hooks/agent-status.tmux.sh extra" '[.UserPromptSubmit[] | select(.command == $wrapped)] | length' "$MASTRACODE_HOME/hooks.json")" -eq 1 ] || fail "mastra removed a non-owned command containing its path"
 [ "$(jq 'keys | length' "$MASTRACODE_HOME/hooks.json")" -eq 12 ] || fail "mastra hook map is not exact"
