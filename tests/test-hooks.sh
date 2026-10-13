@@ -193,6 +193,10 @@ claude "$p6" '{"session_id":"c-3","hook_event_name":"StopFailure","error":"rate_
 # A later idle_prompt must not acknowledge that completion.
 claude "$p6" '{"session_id":"c-3","hook_event_name":"Notification","notification_type":"idle_prompt"}' idle
 [ "$(get "$p6" @agent-unseen)" = 1 ] || fail "idle_prompt acknowledged an unseen completion"
+# A headless claude -p started from the pane reports nothing into it.
+printf '%s\n' '{"session_id":"c-9","hook_event_name":"UserPromptSubmit"}' | CLAUDE_CODE_ENTRYPOINT=sdk-cli TMUX_PANE="$p6" "$SET" working
+printf '%s\n' '{"session_id":"c-9","reason":"other"}' | CLAUDE_CODE_ENTRYPOINT=sdk-cli TMUX_PANE="$p6" "$AGENT/clear-state.sh"
+[ "$(get "$p6" @agent-state):$(get "$p6" @agent-instance)" = idle:claude:c-3 ] || fail "headless claude -p reported into the pane"
 tmux kill-pane -t "$p6"
 
 # ----- locks: stale and wedged holders cannot block hooks -----------------
