@@ -313,7 +313,9 @@ nstate "$p1" finished "" a-1 51 test
 grep -F "pane=$p1 working->finished (focused, not notified)" "$TMP/agent.log" >/dev/null || fail "focused completion was not recognised"
 [ "$(get "$p1" @agent-state):$(get "$p1" @agent-unseen)" = idle:1 ] || fail "focused completion lost its unseen marker"
 sleep 0.3; ! notified "$p1" || fail "completion in the focused pane was notified"
-nstate "$p1" working "" a-1 52 test
+nstate "$p1" asking "" a-1 52 test
+sleep 0.3; ! notified "$p1" || fail "permission prompt in the focused pane was notified"
+nstate "$p1" working "" a-1 53 test
 [ "$(get "$p1" @agent-unseen)" = 0 ] || fail "next prompt did not clear the unseen marker"
 nstate "$p8" working "" a-8 1 test reset
 nstate "$p8" finished "" a-8 2 test
@@ -322,7 +324,7 @@ eventually notified "$p8" || fail "completion in a background pane was not notif
 outer send-keys -t o -H 1b 5b 4f   # terminal focus-out
 unfocused(){ ! focused; }
 eventually unfocused || fail "client did not lose focus"
-nstate "$p1" finished "" a-1 53 test
+nstate "$p1" finished "" a-1 54 test
 [ "$(get "$p1" @agent-unseen)" = 1 ] || fail "completion in an unfocused terminal was not unseen"
 eventually notified "$p1" || fail "completion in an unfocused terminal was not notified"
 
@@ -345,11 +347,17 @@ lead finished Stop "$team"
 sleep 1.5; ! notified "$p10" || fail "lead completion seen within the delay was notified"
 lead working PreToolUse
 lead finished Stop "$team"
-sleep 1.5; notified "$p10" || fail "lead completion that stayed finished was not notified"
+eventually notified "$p10" || fail "lead completion that stayed finished was not notified"
 rm -f "$TMP/notified-agent-$p10"
+# A newer state change cancels a pending delayed send: here the immediate
+# completion notifies once, and the earlier team Stop must not notify again.
+lead working UserPromptSubmit
+lead finished Stop "$team"
 lead working UserPromptSubmit
 lead finished Stop
-sleep 0.5; notified "$p10" || fail "completion without teammates was delayed"
+eventually notified "$p10" || fail "completion without teammates was not notified"
+rm -f "$TMP/notified-agent-$p10"
+sleep 1.5; ! notified "$p10" || fail "superseded delayed completion was notified"
 tmux kill-pane -t "$p10"
 
 tmux new-session -d -s other

@@ -7,7 +7,7 @@
 #   - aggregated worst-state icon set as the @agent-icon
 #     window-scoped option (add `#{?@agent-icon,...}` to your
 #     window-status-format)
-#   - clickable notifications (terminal-notifier / notify-send)
+#   - clickable notifications (alerter / terminal-notifier / notify-send)
 #   - fzf-based navigator popup: an agents tab over all live agent panes and
 #     a sessions tab over every session and window
 
@@ -53,6 +53,9 @@ tmux set-option -gqo @agent-terminal-app ''
 # Seconds an alerter notification waits for a click before auto-closing
 # (0 = never). Keep this bounded: each pending notification owns a process.
 tmux set-option -gqo @agent-notify-timeout '300'
+# Seconds a Claude agent-team lead's completion notification waits while its
+# teammates are alive; dropped if the lead resumes. 0 = notify at once.
+tmux set-option -gqo @agent-notify-team-delay '10'
 tmux set-option -gqo @agent-revision '0'
 
 # ----- prerequisites ---------------------------------------------------

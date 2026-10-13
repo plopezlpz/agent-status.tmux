@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Update the current pane's agent state and optionally notify.
 # Usage: set-state.sh <working|asking|finished|idle> [message] [instance] [seq] [kind] [reset]
-# `finished` is a compatibility event: it is stored as idle + unseen.
+# `finished` is stored as idle + unseen: an idle completion not yet seen.
 set -eu
 
 [ -z "${TMUX_PANE:-}" ] && exit 0
@@ -133,18 +133,21 @@ fi
 if [ -n "$transcript" ] && [ "$transcript" != "$prev_transcript" ]; then
   tmux set-option -p -t "$TMUX_PANE" @agent-transcript "$transcript"
 fi
+# Any state change cancels a pending delayed notification (see below).
+[ "$changed" -eq 0 ] || tmux set-option -p -t "$TMUX_PANE" @agent-notify-token "$$"
 
 agent_unlock
 
 # Metadata-only reports need no log, notification, aggregation, or redraw.
 [ "$changed" -eq 1 ] || exit 0
 
-# Skip the desktop notification for a completion in the pane a client is
-# showing with terminal focus (focus-events). The unseen marker stays: tmux
-# counts a client as focused until a focus-out arrives, so a locked screen or
-# a terminal without focus reporting would otherwise lose the completion
-# entirely. Focusing the pane or the next prompt (working) clears it.
-if [ "$notify_state" = finished ]; then
+# Skip the desktop notification for the pane a client is showing with
+# terminal focus (focus-events): a completion or permission prompt there is
+# already in view. A completion's unseen marker stays: tmux counts a client as
+# focused until a focus-out arrives, so a locked screen or a terminal without
+# focus reporting would otherwise lose it entirely. Focusing the pane or the
+# next prompt (working) clears it.
+if [ -n "$notify_state" ]; then
   while IFS="$sep" read -r client_pane client_flags; do
     [ "$client_pane" = "$TMUX_PANE" ] || continue
     case ",$client_flags," in
@@ -157,7 +160,7 @@ prev_display="$prev_state"
 if [ "$prev_state" = idle ] && [ "$prev_unseen" = 1 ]; then prev_display=finished; fi
 agent_log "pane=$TMUX_PANE ${prev_display:-none}->$raw_state$held"
 
-# send_notification: show $notify_state/$message with the first notifier found.
+# send_notification: show $title/$message with the first notifier found.
 send_notification() {
   if command -v alerter >/dev/null 2>&1; then
     timeout=$(tmux show-option -gqv @agent-notify-timeout 2>/dev/null || true)
@@ -166,7 +169,7 @@ send_notification() {
       # This subshell inherits set -e: a dismissed/failed alerter must not
       # kill it before the click check.
       result=$(alerter \
-        --title "Agent • $notify_state" \
+        --title "$title" \
         --message "$message" \
         --group "agent-$TMUX_PANE" \
         --timeout "$timeout" \
@@ -179,26 +182,30 @@ send_notification() {
   elif command -v terminal-notifier >/dev/null 2>&1; then
     printf -v click '%q %q %q %q' "$SCRIPT_DIR/focus-pane.sh" "$TMUX_PANE" "$socket" "$client"
     terminal-notifier \
-      -title "Agent • $notify_state" \
+      -title "$title" \
       -message "$message" \
       -execute "$click" \
       -group "agent-$TMUX_PANE" \
       >/dev/null 2>&1 &
   elif command -v notify-send >/dev/null 2>&1; then
-    notify-send "Agent • $notify_state" "$message" >/dev/null 2>&1 &
+    notify-send "$title" "$message" >/dev/null 2>&1 &
   fi
 }
 
 case "$notify_state" in
   asking|finished)
-    if [ -z "$message" ] && [ -n "$payload" ] && command -v jq >/dev/null 2>&1; then
-      # StopFailure carries only an error type (rate_limit, overloaded, ...).
-      message=$(printf '%s' "$payload" | jq -r '.message // .title //
-        (.error | if type == "string" then "error: " + . else "" end)' 2>/dev/null || true)
-    fi
     info=$(tmux display -t "$TMUX_PANE" -p $'#{pane_id}\037#{socket_path}\037#{client_name}\037#S / #W' 2>/dev/null || true)
     IFS="$sep" read -r cur_pane socket client name <<< "$info"
     [ "$cur_pane" = "$TMUX_PANE" ] || exit 0
+    title="Agent • $notify_state"
+    if [ "$hook_name" = StopFailure ]; then
+      # A turn that died on an API error: StopFailure carries only its type
+      # (rate_limit, overloaded, ...).
+      title="Agent • failed"
+      message="$name: $(printf '%s' "$payload" | jq -r '.error // "error" | tostring' 2>/dev/null || true)"
+    elif [ -z "$message" ] && [ -n "$payload" ] && command -v jq >/dev/null 2>&1; then
+      message=$(printf '%s' "$payload" | jq -r '.message // .title // ""' 2>/dev/null || true)
+    fi
     [ -n "$message" ] || message="$name"
     message=$(printf '%s' "$message" | LC_ALL=C tr -d '\000-\010\013\014\016-\037\177' | tr '\n\r\t' '   ' | cut -c1-240)
     case "$socket" in /*) ;; *) socket="" ;; esac
@@ -206,8 +213,8 @@ case "$notify_state" in
     # An agent-team lead's turn ends each time it waits on its teammates, and
     # their next message resumes it moments later. With teammates alive, a
     # finished notification waits @agent-notify-team-delay seconds and is
-    # dropped if the pane has moved on: working again, a newer completion (new
-    # token), or the pane seen (unseen cleared). The pane state is not delayed.
+    # dropped if the pane has changed state since (new token) or been seen
+    # (unseen cleared). The pane state is not delayed.
     delay=0
     case "$team" in ''|*[!0-9]*) team=0 ;; esac
     if [ "$notify_state" = finished ] && [ "$team" -gt 0 ]; then
@@ -215,12 +222,10 @@ case "$notify_state" in
       case "$delay" in ''|*[!0-9]*) delay=10 ;; esac
     fi
     if [ "$delay" -gt 0 ]; then
-      token=$$
-      tmux set-option -p -t "$TMUX_PANE" @agent-notify-token "$token"
       (
         sleep "$delay"
         now=$(tmux display -t "$TMUX_PANE" -p $'#{pane_id}\037#{@agent-state}\037#{@agent-unseen}\037#{@agent-notify-token}' 2>/dev/null || true)
-        [ "$now" = "$TMUX_PANE${sep}idle${sep}1${sep}$token" ] || exit 0
+        [ "$now" = "$TMUX_PANE${sep}idle${sep}1${sep}$$" ] || exit 0
         send_notification
       ) </dev/null >/dev/null 2>&1 &
     else
