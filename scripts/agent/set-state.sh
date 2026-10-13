@@ -156,7 +156,9 @@ agent_log "pane=$TMUX_PANE ${prev_display:-none}->$raw_state$held"
 case "$notify_state" in
   asking|finished)
     if [ -z "$message" ] && [ -n "$payload" ] && command -v jq >/dev/null 2>&1; then
-      message=$(printf '%s' "$payload" | jq -r '.message // .title // ""' 2>/dev/null || true)
+      # StopFailure carries only an error type (rate_limit, overloaded, ...).
+      message=$(printf '%s' "$payload" | jq -r '.message // .title //
+        (.error | if type == "string" then "error: " + . else "" end)' 2>/dev/null || true)
     fi
     info=$(tmux display -t "$TMUX_PANE" -p $'#{pane_id}\037#{socket_path}\037#{client_name}\037#S / #W' 2>/dev/null || true)
     IFS="$sep" read -r cur_pane socket client name <<< "$info"

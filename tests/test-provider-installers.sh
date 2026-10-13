@@ -28,7 +28,8 @@ bash "$TMP/plugin-alias/manage-provider.sh" install pi >/dev/null
 mode=$(stat -f %Lp "$OPENCODE_CONFIG_DIR/tui.jsonc" 2>/dev/null || stat -c %a "$OPENCODE_CONFIG_DIR/tui.jsonc")
 [ "$mode" = 600 ] || fail "opencode changed config permissions"
 [ "$(grep -c '^# >>> agent-status.tmux kimi integration$' "$KIMI_CODE_HOME/config.toml")" -eq 1 ] || fail "kimi block duplicated"
-[ "$(grep -c '^\[\[hooks\]\]$' "$KIMI_CODE_HOME/config.toml")" -eq 13 ] || fail "kimi hook map is not exact"
+[ "$(grep -c '^\[\[hooks\]\]$' "$KIMI_CODE_HOME/config.toml")" -eq 14 ] || fail "kimi hook map is not exact"
+grep -A1 '^event = "StopFailure"$' "$KIMI_CODE_HOME/config.toml" | grep -q "' idle\"$" || fail "kimi StopFailure does not end the turn"
 grep -F 'model = "keep"' "$KIMI_CODE_HOME/config.toml" >/dev/null || fail "kimi changed unrelated config"
 [ "$(jq '[.UserPromptSubmit[] | select(.command == "keep")] | length' "$MASTRACODE_HOME/hooks.json")" -eq 1 ] || fail "mastra removed unrelated hook"
 [ "$(jq --arg wrapped "wrapper $MASTRACODE_HOME/hooks/agent-status.tmux.sh extra" '[.UserPromptSubmit[] | select(.command == $wrapped)] | length' "$MASTRACODE_HOME/hooks.json")" -eq 1 ] || fail "mastra removed a non-owned command containing its path"

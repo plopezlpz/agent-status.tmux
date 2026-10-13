@@ -20,7 +20,7 @@ Event-driven status indicators and a navigator for AI coding-agent panes in tmux
 | Kilo Code | Partial lifecycle | plugin; Kilo has no exit event, so the pane is cleared from a process exit/signal handler (untested against a real Kilo); a prompt in another root session (`kilo -c`, picking a session) rebinds the pane; headless commands are detected from argv |
 | Kimi Code | Full lifecycle | native hooks incl. `SessionEnd`; headless runs (`-p`, `acp`, `web`, `rc`) are detected from the kimi process argv |
 | MastraCode | Full lifecycle | native hooks incl. `SessionEnd`; headless `--prompt` runs are detected from argv |
-| Claude Code | Best-effort compatibility | native hooks; Claude has no permission-resolved event |
+| Claude Code | Best-effort compatibility | native hooks; Claude has no interrupt or permission-resolved event, so an Esc interrupt or a denied prompt settles to idle only when Claude's `idle_prompt` notification fires (default 60s); API errors end the turn through `StopFailure` |
 
 Herdr also recognizes Codex, Copilot, Devin, Droid, Qoder, Qwen, Cursor,
 Hermes, Antigravity, Grok, Amp, Kiro, Gemini, Cline, and Maki. They are **not

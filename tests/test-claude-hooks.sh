@@ -20,6 +20,8 @@ jq -e '.hooks.SessionStart[].hooks[].command | select(test("auto-desc.sh clear")
 jq -e '.hooks.UserPromptSubmit[].hooks[].command | select(test("auto-desc.sh set"))' "$CLAUDE_SETTINGS" >/dev/null || fail "UserPromptSubmit missing auto-desc set"
 jq -e '.hooks.UserPromptSubmit[].hooks[].command | select(test("AGENT_STATUS_KIND=claude .*set-state.sh working"))' "$CLAUDE_SETTINGS" >/dev/null || fail "UserPromptSubmit lost typed working state"
 jq -e '.hooks.Stop[].hooks[].command | select(test("set-state.sh finished"))' "$CLAUDE_SETTINGS" >/dev/null || fail "Stop lost completion event"
+jq -e '.hooks.StopFailure[].hooks[].command | select(test("set-state.sh finished"))' "$CLAUDE_SETTINGS" >/dev/null || fail "StopFailure does not end the turn"
+jq -e '.hooks.Notification[] | select(.matcher == "idle_prompt") | .hooks[].command | select(test("set-state.sh idle"))' "$CLAUDE_SETTINGS" >/dev/null || fail "idle_prompt does not close interrupted turns"
 jq -e '.hooks.PermissionDenied[].hooks[].command | select(. == "keep-me")' "$CLAUDE_SETTINGS" >/dev/null || fail "unrelated PermissionDenied hook was removed"
 jq -e '[.hooks.PermissionDenied[].hooks[].command | select(test("agent-status.tmux"))] | length == 0' "$CLAUDE_SETTINGS" >/dev/null || fail "legacy unsupported PermissionDenied hook remains"
 

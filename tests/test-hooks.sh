@@ -182,6 +182,27 @@ claude "$p6" '{"session_id":"c-2","hook_event_name":"SessionStart","source":"com
 [ "$(get "$p6" @agent-state):$(get "$p6" @agent-instance)" = idle:claude:c-2 ] || fail "compaction did not register an unknown pane"
 tmux kill-pane -t "$p6"
 
+# ----- turns that end without Stop ----------------------------------------
+p6=$(tmux split-window -d -P -F '#{pane_id}' -t "$p1")
+claude "$p6" '{"session_id":"c-3","hook_event_name":"SessionStart","source":"startup"}' idle
+# Esc interrupt: no Stop; the idle_prompt notification closes the turn
+# without claiming an unseen completion.
+claude "$p6" '{"session_id":"c-3","hook_event_name":"UserPromptSubmit"}' working
+claude "$p6" '{"session_id":"c-3","hook_event_name":"Notification","notification_type":"idle_prompt","message":"Claude is waiting for your input"}' idle
+[ "$(get "$p6" @agent-state):$(get "$p6" @agent-unseen)" = idle:0 ] || fail "idle_prompt did not close an interrupted turn"
+# A denied permission prompt also ends the turn without Stop.
+claude "$p6" '{"session_id":"c-3","hook_event_name":"PermissionRequest"}' asking
+claude "$p6" '{"session_id":"c-3","hook_event_name":"Notification","notification_type":"idle_prompt"}' idle
+[ "$(get "$p6" @agent-state)" = idle ] || fail "idle_prompt did not close a denied permission prompt"
+# An API error ends the turn with StopFailure: an unseen completion.
+claude "$p6" '{"session_id":"c-3","hook_event_name":"UserPromptSubmit"}' working
+claude "$p6" '{"session_id":"c-3","hook_event_name":"StopFailure","error":"rate_limit"}' finished
+[ "$(get "$p6" @agent-state):$(get "$p6" @agent-unseen)" = idle:1 ] || fail "StopFailure did not finish the turn"
+# A later idle_prompt must not acknowledge that completion.
+claude "$p6" '{"session_id":"c-3","hook_event_name":"Notification","notification_type":"idle_prompt"}' idle
+[ "$(get "$p6" @agent-unseen)" = 1 ] || fail "idle_prompt acknowledged an unseen completion"
+tmux kill-pane -t "$p6"
+
 # ----- locks: stale and wedged holders cannot block hooks -----------------
 holder(){  # holder PANE MODE &: take PANE's lock, record its path, then MODE
   rm -f "$TMP/lockpath"

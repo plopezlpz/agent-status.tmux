@@ -166,6 +166,7 @@ PreCompact||working
 PermissionRequest||blocked
 PermissionResult||working
 Stop||idle
+StopFailure||idle
 Interrupt||idle
 KIMI
         printf '# <<< agent-status.tmux kimi integration\n'
