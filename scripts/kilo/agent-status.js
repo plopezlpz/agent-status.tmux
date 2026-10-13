@@ -1,21 +1,13 @@
 // agent-status.tmux — Kilo lifecycle adapter.
-import { execFile, execFileSync } from "node:child_process";
-const statuses = new Map([["idle", "finished"], ["active", "working"], ["busy", "working"], ["pending", "working"], ["retry", "working"], ["running", "working"], ["streaming", "working"], ["working", "working"]]);
-const childStates = new Map([["permission.asked", "asking"], ["question.asked", "asking"], ["permission.replied", "working"], ["question.replied", "working"], ["question.rejected", "working"]]);
+import { execFileSync } from "node:child_process";
+import { askingEvents, childStates, lifecycle, scriptsDir, sessionID, statusState, workingEvents } from "../opencode/lifecycle.js";
 // Kilo has no TUI selection plugin here, so pane ownership is gated on the
 // command line: headless commands (`kilo run`, `serve`, ...) can inherit
 // TMUX_PANE from an agent pane but must never report or reset it.
 const headless = new Set(["run", "serve", "web", "acp", "mcp", "github", "pr", "export", "import", "debug"]);
-let seq = Date.now() * 1000, scripts, chain = Promise.resolve();
-const childSessions = new Set(), aborted = new Set();
 function interactive() { const command = process.argv.slice(2).find(arg => !arg.startsWith("-")); return !headless.has(command); }
-function dir() { if (scripts !== undefined) return scripts; try { scripts = execFileSync("tmux", ["show-option", "-gqv", "@agent-scripts-dir"], {encoding:"utf8", timeout:2000, stdio:["ignore", "pipe", "ignore"]}).trim(); } catch { scripts=""; } return scripts ||= `${process.env.HOME}/.tmux/plugins/agent-status.tmux/scripts/agent`; }
-// Serialized, bounded, never rejecting, and with stdin closed (see OpenCode).
-function run(name, args) { chain = chain.then(() => new Promise(resolve => { try { execFile(`${dir()}/${name}`, args, {timeout:5000}, () => resolve()).stdin?.end(); } catch { resolve(); } })); return chain; }
-function report(state, id, reset=false) { if (id && (state === "working" || state === "asking")) aborted.delete(id); return run("set-state.sh", [state, "", id || "", String(++seq), "kilo", reset ? "reset" : ""]); }
-function finish(id, reset=false) { return report(id && aborted.has(id) ? "idle" : "finished", id, reset); }
-function sessionID(p) { return typeof p?.sessionID === "string" && p.sessionID || undefined; }
-function stateFromSessionStatus(status) { const kind = typeof status === "string" ? status : status?.type; return typeof kind === "string" ? statuses.get(kind.toLowerCase()) : undefined; }
+const { childSessions, aborted, run, report, finish } = lifecycle("kilo");
+
 export const AgentStatusPlugin = async () => {
   if (!process.env.TMUX_PANE || !interactive()) return {};
   // The root session this process last bound to the pane. `kilo -c` or picking
@@ -33,7 +25,7 @@ export const AgentStatusPlugin = async () => {
   let quit = () => {
     quit = () => {};
     if (!bound) return;
-    try { execFileSync(`${dir()}/clear-state.sh`, ["quit", bound, "kilo"], {timeout:5000, stdio:"ignore"}); } catch {}
+    try { execFileSync(`${scriptsDir()}/clear-state.sh`, ["quit", bound, "kilo"], {timeout:5000, stdio:"ignore"}); } catch {}
   };
   process.once("exit", () => quit());
   for (const signal of ["SIGINT", "SIGTERM"]) {
@@ -63,9 +55,9 @@ export const AgentStatusPlugin = async () => {
       if (type === "session.updated" || type === "session.deleted") return;
       if (type === "session.error" && p.error?.name === "MessageAbortedError") { if (id) aborted.add(id); return; }
       let state;
-      if (type === "session.status") state = stateFromSessionStatus(p.status);
-      else if (["tool.execute.before","tool.execute.after","permission.replied","question.replied","question.rejected","session.compacted"].includes(type)) state = "working";
-      else if (["permission.asked","question.asked","session.error"].includes(type)) state = "asking";
+      if (type === "session.status") state = statusState(p.status);
+      else if (workingEvents.includes(type)) state = "working";
+      else if (askingEvents.includes(type)) state = "asking";
       else if (type === "session.idle") state = "finished";
       if (!state) return;
       const fresh = claim(id, false);

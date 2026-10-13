@@ -38,31 +38,4 @@ headless() {
 
 SCRIPT_DIR=$(tmux show-option -gqv @agent-scripts-dir 2>/dev/null || true)
 : "${SCRIPT_DIR:=${HOME}/.tmux/plugins/agent-status.tmux/scripts/agent}"
-payload=$(cat 2>/dev/null || true)
-instance="" message="" source="" reason=""
-if command -v jq >/dev/null 2>&1; then
-  instance=$(printf '%s' "$payload" | jq -r '.session_id // ""' 2>/dev/null || true)
-  message=$(printf '%s' "$payload" | jq -r '.message // .tool_name // ""' 2>/dev/null || true)
-  source=$(printf '%s' "$payload" | jq -r '.source // ""' 2>/dev/null || true)
-  reason=$(printf '%s' "$payload" | jq -r '.reason // ""' 2>/dev/null || true)
-fi
-case "$action" in
-  session)
-    # A compaction restart (if MastraCode ever reports one) keeps the live turn.
-    [ -n "$instance" ] && [ "$source" != compact ] || exit 0
-    "$SCRIPT_DIR/set-state.sh" idle "" "$instance" "" mastracode reset </dev/null
-    "$SCRIPT_DIR/auto-desc.sh" clear "$source" </dev/null
-    ;;
-  working)
-    printf '%s' "$payload" | "$SCRIPT_DIR/auto-desc.sh" set || true
-    "$SCRIPT_DIR/set-state.sh" working "" "$instance" "" mastracode </dev/null
-    ;;
-  blocked) "$SCRIPT_DIR/set-state.sh" asking "$message" "$instance" "" mastracode </dev/null ;;
-  idle) "$SCRIPT_DIR/set-state.sh" finished "" "$instance" "" mastracode </dev/null ;;
-  # The user's own Esc: settle without claiming an unseen completion.
-  interrupt) "$SCRIPT_DIR/set-state.sh" idle "" "$instance" "" mastracode </dev/null ;;
-  end)
-    [ -n "$instance" ] || exit 0
-    "$SCRIPT_DIR/clear-state.sh" "${reason:-exit}" "$instance" mastracode </dev/null
-    ;;
-esac
+exec "$SCRIPT_DIR/hook-event.sh" mastracode "$action"

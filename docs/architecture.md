@@ -16,7 +16,9 @@ provider lifecycle event
 `finished` is stored as `idle + unseen`; focusing the pane acknowledges it.
 A completion or permission prompt in the pane a terminal-focused client is
 already showing is not notified; a completion keeps the finished marker until
-focus or the next prompt. Plugin tmux hooks (`run-shell -b`) clear panes on `pane-exited`/`pane-died` and reconcile window icons on
+focus or the next prompt. A notification click switches a local client (one
+not running under sshd or mosh-server), preferring the one captured at notify
+time; a remote client such as a phone is never switched. Plugin tmux hooks (`run-shell -b`) clear panes on `pane-exited`/`pane-died` and reconcile window icons on
 `window-layout-changed`/`pane-moved` (kill, break, join, move and swap-pane).
 Authoritative session IDs are provider-qualified, and adapters with an
 in-process event stream submit monotonic sequences so stale reports are
@@ -57,7 +59,7 @@ A future provider adapter must:
 | Kilo Code | plugin; no exit event, so the pane is cleared from a process exit/signal handler; a prompt in another root session (`kilo -c`, picking a session) rebinds the pane; headless commands are detected from argv |
 | Kimi Code | native hooks incl. `SessionEnd`; headless runs (`-p`, `acp`, `web`, `rc`) are detected from the kimi process argv |
 | MastraCode | native hooks incl. `SessionEnd`; headless `--prompt` runs are detected from argv |
-| Claude Code | native hooks; no interrupt or permission-resolved event, so an Esc or a denied prompt settles on `idle_prompt`; API errors end the turn through `StopFailure`; a Stop while background subagents run stays working |
+| Claude Code | native hooks; no interrupt or permission-resolved event, so an Esc or a denied prompt settles on `idle_prompt`; API errors end the turn through `StopFailure`; a Stop while background subagents run stays working; headless runs (`claude -p`, the Agent SDK: `CLAUDE_CODE_ENTRYPOINT=sdk-*`) are ignored |
 
 Hook adapters that cannot read an interactive flag from their payload (Kimi,
 MastraCode) inspect the provider process's argv once per hook, honoring only

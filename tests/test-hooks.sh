@@ -193,6 +193,10 @@ claude "$p6" '{"session_id":"c-3","hook_event_name":"StopFailure","error":"rate_
 # A later idle_prompt must not acknowledge that completion.
 claude "$p6" '{"session_id":"c-3","hook_event_name":"Notification","notification_type":"idle_prompt"}' idle
 [ "$(get "$p6" @agent-unseen)" = 1 ] || fail "idle_prompt acknowledged an unseen completion"
+# A headless claude -p started from the pane reports nothing into it.
+printf '%s\n' '{"session_id":"c-9","hook_event_name":"UserPromptSubmit"}' | CLAUDE_CODE_ENTRYPOINT=sdk-cli TMUX_PANE="$p6" "$SET" working
+printf '%s\n' '{"session_id":"c-9","reason":"other"}' | CLAUDE_CODE_ENTRYPOINT=sdk-cli TMUX_PANE="$p6" "$AGENT/clear-state.sh"
+[ "$(get "$p6" @agent-state):$(get "$p6" @agent-instance)" = idle:claude:c-3 ] || fail "headless claude -p reported into the pane"
 tmux kill-pane -t "$p6"
 
 # ----- locks: stale and wedged holders cannot block hooks -----------------
@@ -357,5 +361,19 @@ p9=$(tmux display -pt other: '#{pane_id}')
 "$AGENT/focus-pane.sh" "$p9" "$SOCK_PATH" /dev/ttys-stale-client
 on_other(){ [ "$(tmux list-clients -F '#{session_name}')" = other ]; }
 eventually on_other || fail "focus-pane with a stale client did not switch the attached client"
+
+# A click switches the local client, never a remote one (a phone over mosh:
+# here a client under a process named mosh-server), even when the remote one
+# was captured at notify time.
+ln -s "$(command -v bash)" "$TMP/mosh-server"
+local_client=$(tmux list-clients -F '#{client_name}')
+outer new-window -d -t o "$TMP/mosh-server -c 'env -u TMUX $REAL_TMUX -S $SOCK_PATH attach -t other; :'"
+both(){ [ "$(tmux list-clients | wc -l | tr -d ' ')" = 2 ]; }
+eventually both || fail "remote test client did not attach"
+remote_client=$(tmux list-clients -F '#{client_name}' | grep -vxF "$local_client")
+"$AGENT/focus-pane.sh" "$p1" "$SOCK_PATH" "$remote_client"
+on(){ tmux list-clients -F '#{client_name} #{session_name}' | grep -qxF "$1 $2"; }
+eventually on "$local_client" t || fail "click did not switch the local client"
+on "$remote_client" other || fail "click switched the remote client"
 
 echo "PASS: hooks"

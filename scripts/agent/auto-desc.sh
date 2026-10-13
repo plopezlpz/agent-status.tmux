@@ -6,6 +6,9 @@ set -eu
 
 [ -z "${TMUX_PANE:-}" ] && exit 0
 [[ "$TMUX_PANE" =~ ^%[0-9]+$ ]] || exit 0
+# A headless run (claude -p, the Agent SDK: entrypoint sdk-*) inherits the
+# pane from whatever started it; the pane's own agent is someone else.
+case "${CLAUDE_CODE_ENTRYPOINT:-}" in sdk-*) exit 0 ;; esac
 cmd="${1:-}"
 # shellcheck source=lib.sh
 . "$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )/lib.sh"

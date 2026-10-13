@@ -6,7 +6,7 @@
 // Run with: bun tests/test-providers.ts   (skipped elsewhere; see tests/run.sh)
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { execFileSync, spawnSync } from "node:child_process";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -31,6 +31,8 @@ printf '%s|<stdin:%s>\\n' "$line" "$stdin" >> "$AGENT_TEST_LOG"
 case " \${AGENT_TEST_FAIL:-} " in *" ${name} "*) exit 1 ;; esac
 `);
   }
+  // The hook adapters' shared body is real; only what it calls is stubbed.
+  copyFileSync(resolve(root, "scripts/agent/hook-event.sh"), resolve(stubs, "hook-event.sh"));
   // Lookups fail (forcing the HOME fallback) except a busy pane state, which
   // an adapter must not copy onto a newly selected session.
   executable(resolve(bin, "tmux"), '#!/bin/sh\ncase "$*" in *@agent-state*) echo working; exit 0 ;; esac\nexit 1\n');
