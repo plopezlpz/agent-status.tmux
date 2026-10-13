@@ -64,16 +64,11 @@ if [ "$raw_state" = finished ] && [ "$background" -gt 0 ]; then
   raw_state=working state=working unseen=0 notify_state="" held=" (background=$background)"
 fi
 
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+# shellcheck source=lib.sh
+. "$SCRIPT_DIR/lib.sh"
 # Keep option values bounded and sequence comparisons inside signed 64-bit.
-instance="${instance:0:256}"
-kind="${kind:0:64}"
-case "$instance" in ""|*[!A-Za-z0-9._:-]*) instance="" ;; esac
-case "$kind" in ""|*[!A-Za-z0-9._-]*) kind="" ;; esac
-# Instance authority is provider-scoped: delayed events from another adapter
-# must never collide merely because two providers chose the same session ID.
-if [ -n "$instance" ] && [ -n "$kind" ]; then
-  case "$instance" in "$kind:"*) ;; *) instance="$kind:$instance" ;; esac
-fi
+agent_identity
 case "$seq" in ""|*[!0-9]*) seq="" ;; esac
 # Transcript (Claude's transcript_path): an absolute .jsonl path, printable only.
 case "$transcript" in /*.jsonl) ;; *) transcript="" ;; esac
@@ -81,9 +76,6 @@ case "$transcript" in *[[:cntrl:]]*) transcript="" ;; esac
 [ "${#transcript}" -le 1024 ] || transcript=""
 [ "${#seq}" -le 18 ] || seq=""
 
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-# shellcheck source=lib.sh
-. "$SCRIPT_DIR/lib.sh"
 agent_lock "pane-${TMUX_PANE#%}"
 
 metadata=$(tmux display -t "$TMUX_PANE" -p $'#{pane_id}\037#{@agent-state}\037#{@agent-unseen}\037#{@agent-instance}\037#{@agent-seq}\037#{@agent-kind}\037#{@agent-state-at}\037#{pane_dead}\037#{@agent-transcript}' 2>/dev/null || true)
@@ -237,5 +229,4 @@ case "$notify_state" in
     ;;
 esac
 
-window_id=$(agent_window_of "$TMUX_PANE")
-[ -n "$window_id" ] && "$SCRIPT_DIR/update-window-icon.sh" "$window_id" || true
+agent_update_window "$TMUX_PANE"

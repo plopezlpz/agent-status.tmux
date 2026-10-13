@@ -27,7 +27,7 @@ agent_lock "window-${window_id#@}"
 
 # UIs watch this cheap global token; update it even when the
 # window's worst-state icon is unchanged (another pane's state changed).
-[ "$mode" = layout ] || tmux set-option -g @agent-revision "$(date +%s).$$.$RANDOM" 2>/dev/null || true
+[ "$mode" = layout ] || agent_bump_revision
 
 best="" top=0 key=""
 while IFS=$'\t' read -r state unseen; do
@@ -70,7 +70,7 @@ if [ -n "$new_icon" ]; then
 else
   tmux set-option -w -t "$window_id" -u @agent-icon 2>/dev/null || true
 fi
-[ "$mode" != layout ] || tmux set-option -g @agent-revision "$(date +%s).$$.$RANDOM" 2>/dev/null || true
+[ "$mode" != layout ] || agent_bump_revision
 agent_unlock
 
 tmux refresh-client -S 2>/dev/null || true

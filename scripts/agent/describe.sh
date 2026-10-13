@@ -20,10 +20,6 @@ SEP=$'\037'
 # go stale, its default alias does not. Empty: PATH only.
 : "${AGENT_PI_FALLBACK_PATH=$HOME/.local/share/fnm/aliases/default/bin}"
 
-bump_revision() {
-  tmux set-option -g @agent-revision "$(date +%s).$$.$RANDOM" 2>/dev/null || true
-}
-
 # pane_alive PANE: display -p succeeds even for a vanished pane, so compare ids.
 pane_alive() {
   [ "$(tmux display -p -t "$1" '#{pane_id}' 2>/dev/null)" = "$1" ]
@@ -73,7 +69,7 @@ set_title() {
   else
     tmux set-option -p -u -t "$target" @agent-description
   fi
-  bump_revision
+  agent_bump_revision
 }
 
 # find_pi: pi on PATH, also trying AGENT_PI_FALLBACK_PATH.
@@ -229,7 +225,7 @@ generate_start() {
   fi
   tmux set-option -p -t "$target" @agent-generating "$token"
   agent_unlock
-  bump_revision
+  agent_bump_revision
   # The server's environment may lack this shell's PATH (pi lives under fnm).
   printf -v path_q '%q' "$PATH"; printf -v self_arg '%q' "$0"
   # run-shell format-expands its command; %q leaves '#' alone, so double it.
@@ -243,7 +239,7 @@ generate_cleanup() {
   ask_cleanup
   [ "$(pane_option "$GEN_PANE" @agent-generating)" != "$GEN_TOKEN" ] \
     || tmux set-option -p -u -t "$GEN_PANE" @agent-generating 2>/dev/null || true
-  bump_revision
+  agent_bump_revision
 }
 
 generate_run() {
