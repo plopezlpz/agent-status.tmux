@@ -3,11 +3,8 @@
 set -eu
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-SEP=$'\037'
-TAB=$'\t'
-# fzf waits ESCDELAY ms (default 100) after Esc for an escape sequence. tmux
-# hands the popup whole sequences already, so a short wait makes Esc close fast.
-export ESCDELAY="${ESCDELAY:-10}"
+# shellcheck source=scripts/nav-lib.sh
+. "$SCRIPT_DIR/nav-lib.sh"
 
 # One tmux lookup per popup. Reloaded list processes inherit this cache and only
 # need the single list-panes snapshot below.
@@ -53,17 +50,6 @@ rank_of() {
   esac
 }
 
-# sgr_of COLOR: tmux colour name or #rrggbb -> SGR foreground parameters.
-sgr_of() {
-  case "$1" in
-    red) SGR=31 ;; green) SGR=32 ;; yellow) SGR=33 ;;
-    blue) SGR=34 ;; magenta) SGR=35 ;; cyan) SGR=36 ;; white) SGR=37 ;;
-    \#[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F])
-      SGR="38;2;$((16#${1:1:2}));$((16#${1:3:2}));$((16#${1:5:2}))" ;;
-    *) SGR="" ;;
-  esac
-}
-
 # icon_of STATE: sets ICON (coloured glyph), LABEL (word) and STATE_SGR.
 icon_of() {
   local icon color
@@ -79,26 +65,6 @@ icon_of() {
 
 window_key() {
   if [ "$3" = 0 ]; then WIN_KEY="$2"; else WIN_KEY="$1"; fi
-}
-
-clean_text() {
-  local text="$1" controls char
-  text=${text//$'\n'/ }; text=${text//$'\r'/ }; text=${text//$'\t'/ }
-  controls=$'\001\002\003\004\005\006\007\010\013\014\016\017\020\021\022\023\024\025\026\027\030\031\032\033\034\035\036\037\177'
-  while [ -n "$controls" ]; do
-    char=${controls%"${controls#?}"}; controls=${controls#?}; text=${text//"$char"/}
-  done
-  utf8_cut 240 "$text"; CLEAN="$CUT"
-}
-
-# utf8_cut N TEXT: the first N characters of TEXT (not bytes, so a multibyte
-# character is never split), even when the caller's locale is not UTF-8.
-utf8_cut() {
-  case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
-    *[Uu][Tt][Ff]-8*|*[Uu][Tt][Ff]8*) ;;
-    *) local LC_ALL=C.UTF-8 2>/dev/null ;;
-  esac
-  CUT=${2:0:$1}
 }
 
 # state_age EPOCH NOW: compact time since the last state change.
@@ -204,13 +170,12 @@ edit_description() {
 # ----- description dialog -------------------------------------------------
 # Ctrl-E opens a small framed dialog centred over the navigator: which agent
 # it is, where, its state, and one text field. Enter saves, Esc cancels.
-key_hint() { printf '\033[38;2;150;166;200m%s\033[0m \033[2m%s\033[0m   ' "$1" "$2"; }
 nav_footer() {
   local f
   if [ "${AGENT_NAV_COMPACT:-0}" = 1 ]; then
-    f="$(key_hint '⏎' jump)$(key_hint '^e' describe)$(key_hint '^/' preview)"
+    f="$(key_hint '⏎' jump)$(nav_tab_hint)$(key_hint '^e' describe)$(key_hint '^/' preview)"
   else
-    f="$(key_hint '⏎' jump)$(key_hint '^e' describe)$(key_hint '^g' generate)$(key_hint '^r' refresh)$(key_hint '^/' preview)$(key_hint esc close)"
+    f="$(key_hint '⏎' jump)$(nav_tab_hint)$(key_hint '^e' describe)$(key_hint '^g' generate)$(key_hint '^r' refresh)$(key_hint '^/' preview)$(key_hint esc close)"
   fi
   printf '%s' "${f%   }"
 }
@@ -397,7 +362,7 @@ summary_label() {
       finished) finished=$((finished + 1)) ;; idle) idle=$((idle + 1)) ;;
     esac
   done < <(tmux list-panes -a -F $'#{pane_id}\037#{@agent-state}\037#{@agent-unseen}' 2>/dev/null)
-  out=$'\033[1m agents \033[0m'
+  out=$(nav_title agents)
   for s in asking working finished idle; do
     case "$s" in asking) n=$waiting ;; working) n=$working ;; finished) n=$finished ;; idle) n=$idle ;; esac
     [ "$n" -gt 0 ] || continue
@@ -405,32 +370,8 @@ summary_label() {
     # Compact: the coloured glyph alone, so the label fits a phone's border.
     if [ "${AGENT_NAV_COMPACT:-0}" = 1 ]; then out="$out $ICON $n "; else out="$out $ICON $n $LABEL "; fi
   done
-  [ "$((waiting + working + finished + idle))" -gt 0 ] || out=$'\033[1m agents \033[0m\033[2m none running \033[0m'
+  [ "$((waiting + working + finished + idle))" -gt 0 ] || out="$(nav_title agents)"$'\033[2m none running \033[0m'
   printf '%s' "$out"
-}
-
-# Preview: a header naming what is shown (live output of which pane, which
-# agent) over a rule, then the pane's live tail with trailing blank rows dropped.
-preview_pane() {
-  local pane="$1"
-  [[ "$pane" =~ ^%[0-9]+$ ]] || return 0
-  local screen where loc kind cmd cols rule body_lines
-  # capture-pane fails for a missing pane (display -p does not).
-  screen=$(tmux capture-pane -e -p -t "$pane" 2>/dev/null) || { printf '\033[2mpane is gone\033[0m\n'; return 0; }
-  where=$(tmux display -p -t "$pane" $'#{session_name}:#{window_index}.#{pane_index}\037#{@agent-kind}\037#{pane_current_command}' 2>/dev/null || true)
-  IFS="$SEP" read -r loc kind cmd <<< "$where"
-  clean_text "$loc · ${kind:-$cmd}"; where="$CLEAN"
-  cols=${FZF_PREVIEW_COLUMNS:-60}
-  printf -v rule '%*s' "$cols" ''
-  printf '\033[1;38;2;150;166;200mlive output\033[0m\033[2m  %s\033[0m\n\033[38;2;72;72;72m%s\033[0m\n' \
-    "$where" "${rule// /─}"
-  body_lines=$(( ${FZF_PREVIEW_LINES:-40} - 2 ))
-  [ "$body_lines" -gt 0 ] || return 0
-  printf '%s\n' "$screen" | awk '
-    { line[NR] = $0; plain = $0; gsub(/\033\[[0-9;:]*[A-Za-z]/, "", plain); gsub(/\033\][^\033]*\033\\/, "", plain)
-      if (plain ~ /[^[:space:]]/) last = NR }
-    END { for (i = 1; i <= last; i++) print line[i] }' \
-    | tail -n "$body_lines"
 }
 
 # prune_descriptions: drop week-old descriptions/markers left by earlier tmux
@@ -497,8 +438,7 @@ esac
 prune_descriptions
 # A popup under 80 columns (a phone) gets compact cards, label and footer.
 # Exported so the --list and --label runs fzf starts render the same way.
-read -r _ cols < <(stty size 2>/dev/null < /dev/tty || echo '24 80')
-AGENT_NAV_COMPACT=0; [ "$cols" -ge 80 ] || AGENT_NAV_COMPACT=1
+nav_compact; AGENT_NAV_COMPACT=$COMPACT
 export AGENT_NAV_COMPACT
 gap=1 padding=0,1 ghost="$NAV_GHOST"
 [ "$AGENT_NAV_COMPACT" = 0 ] || { gap=0 padding=0 ghost='filter agents'; }
@@ -506,33 +446,22 @@ refresh_file=$(mktemp -t agent-status-refresh.XXXXXX)
 trap 'rm -f "$refresh_file" "$refresh_file.preview"' EXIT
 export AGENT_NAV_REFRESH_FILE="$refresh_file"
 refresh_key; printf '%s\n' "$REFRESH_KEY" > "$refresh_file"
-# gruber-darker palette, matching the Neovim floats: bg #181818, panel line
-# #282828, rule #484848, text #e4e4e4, yellow #e1d89e, green #c0d090,
-# niagara #96a6c8.
-sel=$(build_cards | fzf \
-  --with-shell='/bin/sh -c' --sync --read0 --ansi --reverse --no-sort --cycle --track --id-nth=2 \
-  --delimiter="$TAB" --with-nth=4.. \
-  --border=rounded --border-label="$(summary_label)" --border-label-pos=3 --padding="$padding" \
-  --input-border=line --footer-border=line --footer="$(nav_footer)" \
-  --info=inline-right --info-command='printf %s "${FZF_INFO%% +*}"' --prompt='› ' --ghost="$ghost" \
-  --pointer='▌' --highlight-line --gap="$gap" --gap-line=' ' \
+rc=0
+out=$(build_cards | fzf "${NAV_FZF_STYLE[@]}" ${NAV_TAB_OPTS[@]+"${NAV_TAB_OPTS[@]}"} \
+  --sync --read0 --track --id-nth=2 --delimiter="$TAB" --with-nth=4.. \
+  --border-label="$(summary_label)" --padding="$padding" --footer="$(nav_footer)" \
+  --ghost="$ghost" --gap="$gap" --gap-line=' ' \
   --preview="$self_q --preview {2}" \
-  --preview-window='right,50%,border-left,<70(up,50%,border-bottom,hidden)' \
-  --color='bg:#181818,fg:#e4e4e4,bg+:#282828,fg+:#f5f5f5:regular,gutter:#181818' \
-  --color='hl:#c0d090:bold,hl+:#c0d090:bold,pointer:#e1d89e,marker:#96a6c8,spinner:#e1d89e' \
-  --color='prompt:#e1d89e,query:#f5f5f5,ghost:#a0a0a0,info:#565f73,label:#e4e4e4' \
-  --color='border:#484848,separator:#282828,input-border:#282828,footer-border:#282828' \
-  --color='preview-border:#282828,scrollbar:#484848,preview-scrollbar:#484848' \
-  --bind 'ctrl-n,ctrl-j:down' --bind 'ctrl-p,ctrl-k:up' --bind 'ctrl-/:toggle-preview' \
+  --bind 'ctrl-n,ctrl-j:down' --bind 'ctrl-p,ctrl-k:up' \
   --bind "ctrl-e:execute($self_q --dialog {2})+reload-sync($self_q --list)+transform-border-label($self_q --label)" \
   --bind "ctrl-g:execute-silent($self_q --generate {2})+reload-sync($self_q --list)" \
   --bind "ctrl-r:reload-sync($self_q --list)+transform-border-label($self_q --label)" \
-  --bind "every(1):transform($self_q --refresh {2})") || {
-  # 1 = no match, 130 = cancelled; anything else is an fzf error worth seeing.
-  rc=$?; [ "$rc" -eq 1 ] || [ "$rc" -eq 130 ] || tmux display-message "agent navigator: fzf exited $rc"
-  exit 0
-}
+  --bind "every(1):transform($self_q --refresh {2})") || rc=$?
+nav_result "$rc" "$out"; sel="$SEL"
+# 1 = no match, 130 = cancelled; anything else is an fzf error worth seeing.
+case "$rc" in 0) ;; 1|130) exit 0 ;; *) tmux display-message "agent navigator: fzf exited $rc"; exit 0 ;; esac
 
 [ -n "$sel" ] || exit 0
 pane=$(printf '%s' "$sel" | awk -F"$TAB" '{print $2}')
-"$SCRIPT_DIR/agent/focus-pane.sh" "$pane"
+# Jump on the client that opened the popup, not tmux's most recent one.
+"$SCRIPT_DIR/agent/focus-pane.sh" "$pane" "" "${AGENT_NAV_CLIENT:-}"

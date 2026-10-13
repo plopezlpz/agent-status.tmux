@@ -4,7 +4,9 @@ Event-driven status indicators and a navigator for AI coding-agent panes in tmux
 
 - semantic **working / asking / idle** state, with unseen completions shown as **finished**
 - worst-state window icon (asking > working > finished > idle)
-- clickable notifications and a live-updating `prefix A` fzf navigator
+- clickable notifications and a live-updating `prefix A` fzf navigator, with
+  an agents tab and a sessions tab (session/window tree with agent states);
+  `Tab` switches tabs and keeps the query
 - first-prompt labels with persistent `Ctrl-E` overrides and idle age
 - no daemon and no pane-output or process-tree polling
 
@@ -110,7 +112,8 @@ Set options before TPM runs; defaults never replace user overrides.
 | `@agent-icon-asking`, `@agent-color-asking` | `●`, `red` |
 | `@agent-icon-finished`, `@agent-color-finished` | `●`, `cyan` |
 | `@agent-icon-idle`, `@agent-color-idle` | `○`, `green` |
-| `@agent-navigator-key` | `A` |
+| `@agent-navigator-key` | `A` (navigator on its agents tab) |
+| `@agent-sessions-key` | empty (set e.g. `a` to open the navigator on its sessions tab) |
 | `@agent-popup-width`, `@agent-popup-height` | `70%`, `70%` (formats, expanded per client) |
 | `@agent-terminal-app` | empty |
 | `@agent-notify-timeout` | `300` |

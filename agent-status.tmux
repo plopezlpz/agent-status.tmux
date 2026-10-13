@@ -8,7 +8,8 @@
 #     window-scoped option (add `#{?@agent-icon,...}` to your
 #     window-status-format)
 #   - clickable notifications (terminal-notifier / notify-send)
-#   - fzf-based navigator popup over all live agent panes
+#   - fzf-based navigator popup: an agents tab over all live agent panes and
+#     a sessions tab over every session and window
 
 set -eu
 CURRENT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
@@ -32,6 +33,8 @@ tmux set-option -gqo @agent-color-asking   'red'
 tmux set-option -gqo @agent-color-finished 'cyan'
 tmux set-option -gqo @agent-color-idle     'green'
 tmux set-option -gqo @agent-navigator-key 'A'
+# Opens the same popup on its sessions tab. Unbound unless set.
+tmux set-option -gqo @agent-sessions-key  ''
 tmux set-option -gqo @agent-popup-width   '70%'
 tmux set-option -gqo @agent-popup-height  '70%'
 # Model for the navigator's ctrl-g "generate description" (pi --model pattern).
@@ -124,13 +127,20 @@ add_hook window-layout-changed \
 add_hook pane-moved \
   "run-shell -b '$SCRIPTS/agent/update-window-icon.sh \"#{hook_window}\" layout'" 2>/dev/null || true
 
-# ----- binding ---------------------------------------------------------
+# ----- bindings --------------------------------------------------------
 nav_key=$(tmux show-option -gqv @agent-navigator-key)
+sessions_key=$(tmux show-option -gqv @agent-sessions-key)
 popup_w=$(tmux show-option -gqv @agent-popup-width)
 popup_h=$(tmux show-option -gqv @agent-popup-height)
 
 # Borderless popup: fzf draws the single rounded frame, label and footer.
 # run-shell -C expands formats in the size options against the invoking
 # client (display-popup -w/-h take plain sizes), e.g. full screen on a phone.
-tmux bind -N "agent navigator" "$nav_key" \
-  run-shell -C "display-popup -B -E -c #{q:client_name} -w '$popup_w' -h '$popup_h' -s 'bg=#181818,fg=#e4e4e4' \"$SCRIPTS/agent-sessions.sh\""
+# Popup -e values are literal, so the same expansion hands the popup its
+# invoking client and location: the navigator never guesses a client, since
+# another terminal may become active while it is open.
+popup="display-popup -B -E -c #{q:client_name} -w '$popup_w' -h '$popup_h' -s 'bg=#181818,fg=#e4e4e4'"
+popup="$popup -e AGENT_NAV_CLIENT=#{q:client_name} -e AGENT_NAV_SESSION=#{q:session_id} -e AGENT_NAV_WINDOW=#{q:window_id}"
+popup="$popup \"$SCRIPTS/navigator.sh\""
+tmux bind -N "agent navigator" "$nav_key" run-shell -C "$popup agents"
+[ -z "$sessions_key" ] || tmux bind -N "session navigator" "$sessions_key" run-shell -C "$popup sessions"
