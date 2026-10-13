@@ -117,6 +117,7 @@ Set options before TPM runs; defaults never replace user overrides.
 | `@agent-popup-width`, `@agent-popup-height` | `70%`, `70%` (formats, expanded per client) |
 | `@agent-terminal-app` | empty |
 | `@agent-notify-timeout` | `300` |
+| `@agent-notify-team-delay` | `10` (seconds a Claude agent-team lead's finished notification waits while teammates are alive; dropped if the lead resumes; `0` notifies at once) |
 | `@agent-descriptions-dir` | `${XDG_DATA_HOME:-$HOME/.local/share}/tmux/agent-status/descriptions` |
 | `@agent-log` | `${XDG_DATA_HOME:-$HOME/.local/share}/tmux/agent-status/agent.log` |
 

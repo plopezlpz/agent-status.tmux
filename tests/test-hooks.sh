@@ -326,6 +326,32 @@ nstate "$p1" finished "" a-1 53 test
 [ "$(get "$p1" @agent-unseen)" = 1 ] || fail "completion in an unfocused terminal was not unseen"
 eventually notified "$p1" || fail "completion in an unfocused terminal was not notified"
 
+# A Claude agent-team lead's completion waits while teammates are alive and is
+# dropped when the lead resumes, a newer completion supersedes it, or the pane
+# is seen. Without teammates it is immediate.
+tmux set-option -g @agent-notify-team-delay 1
+p10=$(tmux split-window -d -P -F '#{pane_id}' -t "$p1")
+lead(){ printf '{"session_id":"c-10","hook_event_name":"%s","background_tasks":%s}\n' "$2" "${3:-[]}" | \
+  PATH="$TMP/rbin:$PATH" TMUX_PANE="$p10" AGENT_STATUS_KIND=claude "$SET" "$1"; }
+team='[{"id":"t1","type":"teammate","status":"running"}]'
+lead working SessionStart
+lead working UserPromptSubmit
+lead finished Stop "$team"
+[ "$(get "$p10" @agent-state):$(get "$p10" @agent-unseen)" = idle:1 ] || fail "team delay delayed the pane state"
+lead working PreToolUse
+sleep 1.5; ! notified "$p10" || fail "lead completion that resumed within the delay was notified"
+lead finished Stop "$team"
+"$AGENT/clear-finished.sh" "$p10" </dev/null
+sleep 1.5; ! notified "$p10" || fail "lead completion seen within the delay was notified"
+lead working PreToolUse
+lead finished Stop "$team"
+sleep 1.5; notified "$p10" || fail "lead completion that stayed finished was not notified"
+rm -f "$TMP/notified-agent-$p10"
+lead working UserPromptSubmit
+lead finished Stop
+sleep 0.5; notified "$p10" || fail "completion without teammates was delayed"
+tmux kill-pane -t "$p10"
+
 tmux new-session -d -s other
 p9=$(tmux display -pt other: '#{pane_id}')
 "$AGENT/focus-pane.sh" "$p9" "$SOCK_PATH" /dev/ttys-stale-client
