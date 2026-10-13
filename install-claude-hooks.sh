@@ -73,35 +73,34 @@ uninstall_filter="$strip"'
 # Install strips each event's entries, then appends fresh ones.
 # shellcheck disable=SC2016
 install_filter="$strip"'
+  def put($event; entry): .hooks[$event] = ((.hooks[$event] // []) | strip) + [entry];
+  def run($cmd): {type:"command", command:"\($r)/\($cmd)"};
+  def state($s): {type:"command", command:"env AGENT_STATUS_KIND=claude \($r)/set-state.sh \($s)"};
   # Older plugin releases registered PermissionDenied, which fires on auto-mode
   # classifier denials mid-turn and is not a state change. Remove only our old
   # entry and preserve any unrelated user configuration.
   .hooks.PermissionDenied = ((.hooks.PermissionDenied // []) | strip) |
   if (.hooks.PermissionDenied | length) == 0 then del(.hooks.PermissionDenied) else . end |
-  .hooks.SessionStart      = ((.hooks.SessionStart      // []) | strip) + [{hooks:[{type:"command", command:"env AGENT_STATUS_KIND=claude \($r)/set-state.sh idle"}, {type:"command", command:"\($r)/auto-desc.sh clear"}]}] |
-  .hooks.SessionEnd        = ((.hooks.SessionEnd        // []) | strip) + [{hooks:[{type:"command", command:"env AGENT_STATUS_KIND=claude \($r)/clear-state.sh"}]}] |
-  .hooks.UserPromptSubmit  = ((.hooks.UserPromptSubmit  // []) | strip) + [{hooks:[{type:"command", command:"env AGENT_STATUS_KIND=claude \($r)/set-state.sh working"}, {type:"command", command:"\($r)/auto-desc.sh set"}]}] |
-  .hooks.Stop              = ((.hooks.Stop              // []) | strip) + [{hooks:[{type:"command", command:"env AGENT_STATUS_KIND=claude \($r)/set-state.sh finished"}]}] |
+  put("SessionStart"; {hooks:[state("idle"), run("auto-desc.sh clear")]}) |
+  put("SessionEnd"; {hooks:[{type:"command", command:"env AGENT_STATUS_KIND=claude \($r)/clear-state.sh"}]}) |
+  put("UserPromptSubmit"; {hooks:[state("working"), run("auto-desc.sh set")]}) |
+  put("Stop"; {hooks:[state("finished")]}) |
   # A turn that ends in an API error (rate limit, overload, auth) fires
   # StopFailure instead of Stop.
-  .hooks.StopFailure       = ((.hooks.StopFailure       // []) | strip) + [{hooks:[{type:"command", command:"env AGENT_STATUS_KIND=claude \($r)/set-state.sh finished"}]}] |
+  put("StopFailure"; {hooks:[state("finished")]}) |
   # An Esc interrupt fires neither. idle_prompt is sent once the prompt has sat
   # idle (default 60s) with no turn, dialog, or background agent running, so
   # it ends a working/asking state that no Stop will ever close.
-  .hooks.Notification      = ((.hooks.Notification      // []) | strip) + [{matcher:"idle_prompt", hooks:[{type:"command", command:"env AGENT_STATUS_KIND=claude \($r)/set-state.sh idle"}]}] |
-  .hooks.PermissionRequest = ((.hooks.PermissionRequest // []) | strip) + [{hooks:[{type:"command", command:"env AGENT_STATUS_KIND=claude \($r)/set-state.sh asking"}]}] |
-  .hooks.PreToolUse        = ((.hooks.PreToolUse        // []) | strip) + [{hooks:[{type:"command", command:"env AGENT_STATUS_KIND=claude \($r)/set-state.sh working"}]}] |
+  put("Notification"; {matcher:"idle_prompt", hooks:[state("idle")]}) |
+  put("PermissionRequest"; {hooks:[state("asking")]}) |
+  put("PreToolUse"; {hooks:[state("working")]}) |
   # Claude Code has no "permission answered" event. PostToolUse fires after an
   # approved tool runs; a denial ends the turn like an interrupt, so the
   # idle_prompt notification above closes it.
-  .hooks.PostToolUse       = ((.hooks.PostToolUse       // []) | strip) + [{hooks:[{type:"command", command:"env AGENT_STATUS_KIND=claude \($r)/set-state.sh working"}]}]
+  put("PostToolUse"; {hooks:[state("working")]})
 '
 if [ "$ACTION" = install ]; then filter="$install_filter"; else filter="$uninstall_filter"; fi
-if [ "$input" = /dev/null ]; then
-  new=$(printf '{}\n' | jq --arg s "$SCRIPTS" --arg r "$SCRIPTS_REAL" --arg ours "$OURS" "$filter")
-else
-  new=$(jq --arg s "$SCRIPTS" --arg r "$SCRIPTS_REAL" --arg ours "$OURS" "$filter" "$input")
-fi
+new=$({ if [ "$input" = /dev/null ]; then printf '{}\n'; else cat "$input"; fi; } | jq --arg s "$SCRIPTS" --arg r "$SCRIPTS_REAL" --arg ours "$OURS" "$filter")
 tmp=$(mktemp "$SETTINGS.agent-status.XXXXXX")
 trap '[ -z "$tmp" ] || rm -f "$tmp"' EXIT
 if [ -f "$SETTINGS" ]; then cp -p "$SETTINGS" "$tmp"; fi
