@@ -54,7 +54,7 @@ A future provider adapter must:
 | Provider | Integration |
 |---|---|
 | pi | extension; only the TUI (`ctx.mode`) owns the pane |
-| OMP | extension; nested blockers, approvals/ask, settle debounce, retry grace (`HERDR_OMP_IDLE_DEBOUNCE_MS`, `HERDR_OMP_RETRY_GRACE_MS`) |
+| OMP | extension; nested blockers, approvals/ask, settle debounce, retry grace (`AGENT_STATUS_OMP_IDLE_DEBOUNCE_MS`, `AGENT_STATUS_OMP_RETRY_GRACE_MS`; the older `HERDR_OMP_*` names still work) |
 | OpenCode | server + TUI plugins; the TUI selects the pane's root session and clears it on exit; child sessions cannot take root identity; ESC aborts settle idle |
 | Kilo Code | plugin; no exit event, so the pane is cleared from a process exit/signal handler; a prompt in another root session (`kilo -c`, picking a session) rebinds the pane; headless commands are detected from argv |
 | Kimi Code | native hooks incl. `SessionEnd`; headless runs (`-p`, `acp`, `web`, `rc`) are detected from the kimi process argv |
