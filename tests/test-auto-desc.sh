@@ -53,7 +53,7 @@ unset_desc
 echo '{"prompt":"from stdin json"}' | bash "$SCRIPT" set
 [ "$(get)" = "from stdin json" ] || fail "stdin .prompt unused: [$(get)]"
 
-bash "$SCRIPT" clear
+bash "$SCRIPT" clear </dev/null
 [ -z "$(get)" ] || fail "clear did not unset option"
 
 tmux set-option -p -t "$TMUX_PANE" @agent-auto-description "keep me"
