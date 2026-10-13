@@ -8,8 +8,8 @@
 #     window-scoped option (add `#{?@agent-icon,...}` to your
 #     window-status-format)
 #   - clickable notifications (terminal-notifier / notify-send)
-#   - fzf-based navigator popup: an agents tab over all live agent panes and
-#     a sessions tab over every session and window
+#   - agent descriptions (first prompt, overrides, AI-generated) for a UI:
+#     a UI such as corral reads all of the above from tmux options
 
 set -eu
 CURRENT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
@@ -32,12 +32,7 @@ tmux set-option -gqo @agent-color-working  'yellow'
 tmux set-option -gqo @agent-color-asking   'red'
 tmux set-option -gqo @agent-color-finished 'cyan'
 tmux set-option -gqo @agent-color-idle     'green'
-tmux set-option -gqo @agent-navigator-key 'A'
-# Opens the same popup on its sessions tab. Unbound unless set.
-tmux set-option -gqo @agent-sessions-key  ''
-tmux set-option -gqo @agent-popup-width   '70%'
-tmux set-option -gqo @agent-popup-height  '70%'
-# Model for the navigator's ctrl-g "generate description" (pi --model pattern).
+# Model for generated descriptions (describe.sh generate; pi --model pattern).
 tmux set-option -gqo @agent-describe-model 'openai-codex/gpt-6-luna'
 # Pane options hold transient state. Persistent descriptions and the audit log
 # live under XDG_DATA_HOME, like tmux-resurrect.
@@ -70,6 +65,9 @@ done < <(tmux list-panes -a -F $'#{pane_id}\037#{@agent-state}\037#{@agent-state
 while read -r window; do
   [ -z "$window" ] || "$SCRIPTS/agent/update-window-icon.sh" "$window" || true
 done < <(tmux list-windows -a -F '#{window_id}' 2>/dev/null | sort -u)
+
+# Drop week-old description files left by earlier tmux servers.
+"$SCRIPTS/agent/describe.sh" prune || true
 
 # ----- hooks -----------------------------------------------------------
 # Hooks whose command contains this needle are "ours".
@@ -126,21 +124,3 @@ add_hook window-layout-changed \
   "run-shell -b '$SCRIPTS/agent/update-window-icon.sh \"#{hook_window}\" layout'"
 add_hook pane-moved \
   "run-shell -b '$SCRIPTS/agent/update-window-icon.sh \"#{hook_window}\" layout'" 2>/dev/null || true
-
-# ----- bindings --------------------------------------------------------
-nav_key=$(tmux show-option -gqv @agent-navigator-key)
-sessions_key=$(tmux show-option -gqv @agent-sessions-key)
-popup_w=$(tmux show-option -gqv @agent-popup-width)
-popup_h=$(tmux show-option -gqv @agent-popup-height)
-
-# Borderless popup: fzf draws the single rounded frame, label and footer.
-# run-shell -C expands formats in the size options against the invoking
-# client (display-popup -w/-h take plain sizes), e.g. full screen on a phone.
-# Popup -e values are literal, so the same expansion hands the popup its
-# invoking client and location: the navigator never guesses a client, since
-# another terminal may become active while it is open.
-popup="display-popup -B -E -c #{q:client_name} -w '$popup_w' -h '$popup_h' -s 'bg=#181818,fg=#e4e4e4'"
-popup="$popup -e AGENT_NAV_CLIENT=#{q:client_name} -e AGENT_NAV_SESSION=#{q:session_id} -e AGENT_NAV_WINDOW=#{q:window_id}"
-popup="$popup \"$SCRIPTS/navigator.sh\""
-tmux bind -N "agent navigator" "$nav_key" run-shell -C "$popup agents"
-[ -z "$sessions_key" ] || tmux bind -N "session navigator" "$sessions_key" run-shell -C "$popup sessions"

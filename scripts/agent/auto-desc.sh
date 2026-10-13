@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Transient first-prompt navigator label, stored with the pane.
+# Transient first-prompt description, stored with the pane.
 #   auto-desc.sh set [text]   # text from arg; Claude form (no arg): stdin .prompt
 #   auto-desc.sh clear [src]  # Claude form: stdin .source=="compact" -> keep
 set -eu

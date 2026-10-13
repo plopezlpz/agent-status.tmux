@@ -26,13 +26,8 @@ bash "$HERE/test-provider-installers.sh" || rc=1
 bash "$HERE/test-auto-desc.sh" || rc=1
 bash "$HERE/test-state.sh" || rc=1
 bash "$HERE/test-hooks.sh" || rc=1
-bash "$HERE/test-navigator.sh" || rc=1
+bash "$HERE/test-describe.sh" || rc=1
 bash "$HERE/test-claude-hooks.sh" || rc=1
-if command -v python3 >/dev/null 2>&1; then
-  python3 "$HERE/test-tabs.py" || rc=1
-else
-  echo "SKIP: navigator tabs test (python3 not installed)"
-fi
 if command -v bun >/dev/null 2>&1; then
   bun "$HERE/test-extension.ts" || rc=1
   bun "$HERE/test-providers.ts" || rc=1
