@@ -2,8 +2,9 @@
 // @ts-nocheck
 
 const retryable = /overloaded|provider.?returned.?error|rate.?limit|too many requests|429|500|502|503|504|service.?unavailable|server.?error|internal.?error|network.?error|connection.?error|connection.?refused|connection.?lost|websocket.?closed|websocket.?error|other side closed|fetch failed|upstream.?connect|reset before headers|socket hang up|ended without|http2 request did not get a response|timed? out|timeout|terminated|retry delay/i;
+// AGENT_STATUS_OMP_<NAME>, else the HERDR_OMP_<NAME> this adapter took first.
 const duration = (name: string, fallback: number) => {
-	const n = Number.parseInt(process.env[name] || "", 10);
+	const n = Number.parseInt(process.env[`AGENT_STATUS_OMP_${name}`] || process.env[`HERDR_OMP_${name}`] || "", 10);
 	return Number.isFinite(n) && n >= 0 ? n : fallback;
 };
 
@@ -85,9 +86,9 @@ export default function (pi) {
 		clearTimers(); clearFailure(); clearBlocked();
 		if (retryable.test(error)) {
 			retryHold = true; failureMessage = error || "retryable provider error"; void publish();
-			retryTimer = setTimeout(() => { retryHold = false; failure = true; void publish(); }, duration("HERDR_OMP_RETRY_GRACE_MS", 2500)); retryTimer.unref?.();
+			retryTimer = setTimeout(() => { retryHold = false; failure = true; void publish(); }, duration("RETRY_GRACE_MS", 2500)); retryTimer.unref?.();
 		} else {
-			idleTimer = setTimeout(() => { idleTimer = undefined; void publish(); }, duration("HERDR_OMP_IDLE_DEBOUNCE_MS", 250)); idleTimer.unref?.();
+			idleTimer = setTimeout(() => { idleTimer = undefined; void publish(); }, duration("IDLE_DEBOUNCE_MS", 250)); idleTimer.unref?.();
 		}
 	});
 	// OMP emits session_shutdown (no reason field) only when the session is

@@ -7,16 +7,41 @@
 tmux() { command tmux -u "$@"; }
 
 # Pane options owned by a registration; cleared together on exit.
-# shellcheck disable=SC2034 # used by the sourcing scripts
 AGENT_PANE_OPTIONS="@agent-state @agent-unseen @agent-instance @agent-seq @agent-kind @agent-state-at @agent-auto-description @agent-description @agent-generating @agent-transcript @agent-notify-token"
 
-# agent_window_of PANE: print the pane's window id, or nothing once the pane
-# is gone (display -t on a vanished pane silently describes another pane, so
-# every pane query carries #{pane_id} and checks it).
-agent_window_of() {
+# agent_clear_pane PANE: unset the registration's options.
+agent_clear_pane() {
+  local option
+  for option in $AGENT_PANE_OPTIONS; do
+    tmux set-option -p -u -t "$1" "$option" 2>/dev/null || true
+  done
+}
+
+# agent_update_window PANE: re-aggregate the pane's window icon, unless the
+# pane is gone (display -t on a vanished pane silently describes another
+# pane, so every pane query carries #{pane_id} and checks it).
+agent_update_window() {
   local ids
   ids=$(tmux display -t "$1" -p '#{pane_id} #{window_id}' 2>/dev/null || true)
-  if [ "${ids%% *}" = "$1" ]; then printf '%s' "${ids#* }"; fi
+  [ "${ids%% *}" = "$1" ] || return 0
+  "${BASH_SOURCE[0]%/*}/update-window-icon.sh" "${ids#* }" || true
+}
+
+# agent_bump_revision: change the global token UIs watch for any update.
+agent_bump_revision() {
+  tmux set-option -g @agent-revision "$(date +%s).$$.$RANDOM" 2>/dev/null || true
+}
+
+# agent_identity: bound and sanitize $instance and $kind, then scope the
+# instance to its provider ("kind:id"): delayed events from another adapter
+# must never collide merely because two providers chose the same session ID.
+agent_identity() {
+  instance="${instance:0:256}" kind="${kind:0:64}"
+  case "$instance" in ""|*[!A-Za-z0-9._:-]*) instance="" ;; esac
+  case "$kind" in ""|*[!A-Za-z0-9._-]*) kind="" ;; esac
+  if [ -n "$instance" ] && [ -n "$kind" ]; then
+    case "$instance" in "$kind:"*) ;; *) instance="$kind:$instance" ;; esac
+  fi
 }
 
 # agent_log MESSAGE: append a timestamped audit line. Never fails: an

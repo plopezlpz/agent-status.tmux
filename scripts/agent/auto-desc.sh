@@ -28,7 +28,7 @@ case "$cmd" in
       cleaned="$(printf '%s' "$cleaned" | cut -c1-49)…"
     fi
     tmux set-option -p -t "$TMUX_PANE" @agent-auto-description "$cleaned"
-    tmux set-option -g @agent-revision "$(date +%s).$$.$RANDOM" 2>/dev/null || true
+    agent_bump_revision
     ;;
   clear)
     src="${2:-}"
@@ -37,7 +37,7 @@ case "$cmd" in
     fi
     [ "$src" = compact ] && exit 0
     tmux set-option -p -u -t "$TMUX_PANE" @agent-auto-description 2>/dev/null || true
-    tmux set-option -g @agent-revision "$(date +%s).$$.$RANDOM" 2>/dev/null || true
+    agent_bump_revision
     ;;
   *)
     echo "auto-desc: usage: auto-desc.sh set [text] | clear" >&2

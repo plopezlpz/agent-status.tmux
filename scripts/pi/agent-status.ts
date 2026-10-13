@@ -35,10 +35,11 @@ export default function (pi: ExtensionAPI) {
 		return scriptsDir;
 	};
 
-	const run = (script: string, args: string[]): Promise<void> => {
+	// Queue COMMAND (resolved when its turn comes) after earlier updates.
+	const enqueue = (command: () => Promise<string> | string, args: string[]): Promise<void> => {
 		const next = queue.then(async () => {
 			try {
-				await pi.exec(`${await resolveDir()}/${script}`, args, execOptions);
+				await pi.exec(await command(), args, execOptions);
 			} catch {
 				// A status update must never disrupt the agent.
 			}
@@ -46,6 +47,8 @@ export default function (pi: ExtensionAPI) {
 		queue = next;
 		return next;
 	};
+	const run = (script: string, args: string[]) => enqueue(async () => `${await resolveDir()}/${script}`, args);
+	const tmux = (args: string[]) => enqueue(() => "tmux", args);
 
 	const updateInstance = (ctx: any): void => {
 		try {
@@ -53,18 +56,6 @@ export default function (pi: ExtensionAPI) {
 		} catch {
 			// Keep the last known identity.
 		}
-	};
-
-	const tmux = (args: string[]): Promise<void> => {
-		const next = queue.then(async () => {
-			try {
-				await pi.exec("tmux", args, execOptions);
-			} catch {
-				// A status update must never disrupt the agent.
-			}
-		});
-		queue = next;
-		return next;
 	};
 
 	// Record the session file on the pane so describe.sh generate can read the

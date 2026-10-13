@@ -13,6 +13,7 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 # shellcheck source=lib.sh
 . "$SCRIPT_DIR/lib.sh"
 
+# shellcheck disable=SC2034 # kind: read by agent_identity
 reason="${1:-}" instance="${2:-}" kind="${3:-${AGENT_STATUS_KIND:-}}" sep=$'\037'
 # Only the Claude hook form (no arguments) carries a stdin payload; adapters
 # pass arguments and may leave stdin open.
@@ -21,12 +22,7 @@ if [ "$#" -eq 0 ] && [ ! -t 0 ] && command -v jq >/dev/null 2>&1; then
   IFS="$sep" read -r reason instance <<< "$metadata"
 fi
 case "$reason" in clear|resume) exit 0 ;; esac
-instance="${instance:0:256}"
-kind="${kind:0:64}"
-case "$kind" in ""|*[!A-Za-z0-9._-]*) kind="" ;; esac
-if [ -n "$instance" ] && [ -n "$kind" ]; then
-  case "$instance" in "$kind:"*) ;; *) instance="$kind:$instance" ;; esac
-fi
+agent_identity
 
 agent_lock "pane-${TMUX_PANE#%}"
 
@@ -40,12 +36,9 @@ if [ -n "$current_instance" ] && [ "$instance" != "$current_instance" ]; then
 fi
 if [ "$state" = idle ] && [ "$unseen" = 1 ]; then state=finished; fi
 
-for option in $AGENT_PANE_OPTIONS; do
-  tmux set-option -p -u -t "$TMUX_PANE" "$option" 2>/dev/null || true
-done
+agent_clear_pane "$TMUX_PANE"
 agent_unlock
 
 [ -z "$state" ] || agent_log "pane=$TMUX_PANE $state->cleared (reason=${reason:-none})"
 
-window_id=$(agent_window_of "$TMUX_PANE")
-[ -n "$window_id" ] && "$SCRIPT_DIR/update-window-icon.sh" "$window_id" || true
+agent_update_window "$TMUX_PANE"

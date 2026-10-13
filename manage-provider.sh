@@ -3,8 +3,9 @@
 # Usage: manage-provider.sh <install|uninstall> <pi|omp|opencode|kilo|kimi|mastracode|claude>
 set -eu
 ACTION="${1:-}" PROVIDER="${2:-}"
-case "$ACTION:$PROVIDER" in
-  install:pi|install:omp|install:opencode|install:kilo|install:kimi|install:mastracode|install:claude|uninstall:pi|uninstall:omp|uninstall:opencode|uninstall:kilo|uninstall:kimi|uninstall:mastracode|uninstall:claude) ;;
+case "$ACTION" in install|uninstall) ;; *) PROVIDER="" ;; esac
+case "$PROVIDER" in
+  pi|omp|opencode|kilo|kimi|mastracode|claude) ;;
   *) echo "usage: $0 <install|uninstall> <pi|omp|opencode|kilo|kimi|mastracode|claude>" >&2; exit 2 ;;
 esac
 ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
@@ -44,6 +45,9 @@ link_remove() {
   local src="$1" dest="$2"
   if link_points_to "$src" "$dest"; then rm "$dest"; fi
 }
+require_jq() {
+  command -v jq >/dev/null 2>&1 || { echo "agent-status: jq is required${1:+ to edit $1}" >&2; exit 1; }
+}
 require_dir() {
   [ -d "$1" ] && return 0
   echo "agent-status: $PROVIDER config not found at $1; install $PROVIDER first (skipped)" >&2
@@ -81,7 +85,7 @@ validate_marked_block() {
 json_update() {
   local file="$1" filter="$2" tmp
   shift 2
-  command -v jq >/dev/null 2>&1 || { echo "agent-status: jq is required to edit $file" >&2; exit 1; }
+  require_jq "$file"
   require_regular_config "$file"
   tmp=$(mktemp "$file.agent-status.XXXXXX") || exit 1
   if [ -f "$file" ]; then
@@ -114,6 +118,7 @@ case "$PROVIDER" in
   kimi)
     base="${KIMI_CODE_HOME:-$HOME/.kimi-code}"
     src="$ROOT/scripts/kimi/agent-status.sh"; dest="$base/hooks/agent-status.tmux.sh"; config="$base/config.toml"
+    begin='# >>> agent-status.tmux kimi integration' end='# <<< agent-status.tmux kimi integration'
     ;;
   mastracode)
     base="${MASTRACODE_HOME:-$HOME/.mastracode}"
@@ -122,6 +127,8 @@ case "$PROVIDER" in
     events='[{"event":"SessionStart","action":"session"},{"event":"SessionEnd","action":"end"},{"event":"UserPromptSubmit","action":"working"},{"event":"AgentStart","action":"working"},{"event":"PreToolUse","action":"working"},{"event":"PermissionRequest","action":"blocked"},{"event":"PermissionResult","action":"working"},{"event":"SubagentStart","action":"working"},{"event":"SubagentEnd","action":"working"},{"event":"Interrupt","action":"interrupt"},{"event":"AgentEnd","action":"idle"},{"event":"Stop","action":"idle"}]'
     ;;
 esac
+# The adapter's path as a single-quoted shell word, for hook commands.
+cmd_path=$(printf '%s' "$dest" | sed "s/'/'\\\\''/g")
 
 if [ "$ACTION" = install ]; then
   # Explicit test/user destination overrides preserve the old Pi behavior of
@@ -129,7 +136,7 @@ if [ "$ACTION" = install ]; then
   if [ "$PROVIDER" = pi ] && [ -n "${PI_EXTENSIONS_DIR:-}" ]; then :; else require_dir "$base"; fi
   case "$PROVIDER" in
     opencode)
-      command -v jq >/dev/null 2>&1 || { echo "agent-status: jq is required" >&2; exit 1; }
+      require_jq
       require_regular_config "$config"
       if [ -f "$config" ]; then
         jq -e 'type == "object" and ((.plugin // []) | type == "array")' "$config" >/dev/null 2>&1 || { echo "agent-status: refusing invalid JSON/JSONC plugin config $config" >&2; exit 1; }
@@ -140,16 +147,15 @@ if [ "$ACTION" = install ]; then
       link_install "$src" "$dest"; link_install "$tui_src" "$tui_dest"
       ;;
     kimi)
-      command -v jq >/dev/null 2>&1 || { echo "agent-status: jq is required" >&2; exit 1; }
+      require_jq
       require_regular_config "$config"
       original=/dev/null; [ ! -f "$config" ] || original="$config"
-      validate_marked_block "$original" '# >>> agent-status.tmux kimi integration' '# <<< agent-status.tmux kimi integration'
+      validate_marked_block "$original" "$begin" "$end"
       link_validate "$src" "$dest"
       tmp=$(mktemp "$config.agent-status.XXXXXX") || exit 1
-      strip_marked_block "$original" '# >>> agent-status.tmux kimi integration' '# <<< agent-status.tmux kimi integration' > "$tmp"
-      cmd_path=$(printf '%s' "$dest" | sed "s/'/'\\\\''/g")
+      strip_marked_block "$original" "$begin" "$end" > "$tmp"
       {
-        printf '\n# >>> agent-status.tmux kimi integration\n'
+        printf '\n%s\n' "$begin"
         while IFS='|' read -r event matcher action; do
           printf '[[hooks]]\nevent = "%s"\n' "$event"
           [ -z "$matcher" ] || printf 'matcher = "%s"\n' "$matcher"
@@ -171,13 +177,12 @@ Stop||idle
 StopFailure||idle
 Interrupt||interrupt
 KIMI
-        printf '# <<< agent-status.tmux kimi integration\n'
+        printf '%s\n' "$end"
       } >> "$tmp"
       replace_from_file "$config" "$tmp"; rm -f "$tmp"
       link_install "$src" "$dest"
       ;;
     mastracode)
-      cmd_path=$(printf '%s' "$dest" | sed "s/'/'\\\\''/g")
       link_validate "$src" "$dest"
       # shellcheck disable=SC2016 # jq variables, not shell variables
       json_update "$config" 'if type != "object" then error("root must be object") else . end | reduce $events[] as $e (. ; .[$e.event] = (((.[$e.event] // []) | map(select((.command // "") | startswith($command + " ") | not))) + [{type:"command",command:($command + " " + $e.action),timeout:10000}]))' --arg command "'$cmd_path'" --argjson events "$events"
@@ -195,16 +200,15 @@ else
     kimi)
       if [ -e "$config" ] || [ -L "$config" ]; then
         require_regular_config "$config"
-        validate_marked_block "$config" '# >>> agent-status.tmux kimi integration' '# <<< agent-status.tmux kimi integration'
+        validate_marked_block "$config" "$begin" "$end"
         tmp=$(mktemp "$config.agent-status.XXXXXX") || exit 1
-        strip_marked_block "$config" '# >>> agent-status.tmux kimi integration' '# <<< agent-status.tmux kimi integration' > "$tmp"
+        strip_marked_block "$config" "$begin" "$end" > "$tmp"
         replace_from_file "$config" "$tmp"; rm -f "$tmp"
       fi
       link_remove "$src" "$dest"
       ;;
     mastracode)
       if [ -e "$config" ] || [ -L "$config" ]; then
-          cmd_path=$(printf '%s' "$dest" | sed "s/'/'\\\\''/g")
         # shellcheck disable=SC2016 # jq variables, not shell variables
         json_update "$config" 'if type != "object" then error("root must be object") else . end | reduce $events[] as $e (. ; ($command + " ") as $owned | if ((.[$e.event] // []) | type) == "array" and ((.[$e.event] // []) | any((.command // "") | startswith($owned))) then .[$e.event] |= map(select((.command // "") | startswith($owned) | not)) | if (.[$e.event] | length) == 0 then del(.[$e.event]) else . end else . end)' --arg command "'$cmd_path'" --argjson events "$events"
       fi

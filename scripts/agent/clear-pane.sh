@@ -22,9 +22,7 @@ if [ "$cur_pane" != "$pane" ]; then
   state="" unseen=""
 else
   [ -n "$window" ] || window="$pane_window"
-  for option in $AGENT_PANE_OPTIONS; do
-    tmux set-option -p -u -t "$pane" "$option" 2>/dev/null || true
-  done
+  agent_clear_pane "$pane"
 fi
 if [ "$state" = idle ] && [ "$unseen" = 1 ]; then state=finished; fi
 agent_unlock

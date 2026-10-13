@@ -19,5 +19,4 @@ agent_unlock
 
 agent_log "pane=$pane finished->idle (focus)"
 
-window_id=$(agent_window_of "$pane")
-[ -n "$window_id" ] && "$SCRIPT_DIR/update-window-icon.sh" "$window_id" || true
+agent_update_window "$pane"
