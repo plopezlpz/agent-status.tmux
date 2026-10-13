@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Exercise pane-option state, unseen completion, stale-report guards, and rollup.
 set -euo pipefail
+# Run from a headless agent (claude -p), the hooks would ignore every call.
+unset CLAUDE_CODE_ENTRYPOINT
 PLUGIN_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
 SET="$PLUGIN_DIR/scripts/agent/set-state.sh"
 CLEAR="$PLUGIN_DIR/scripts/agent/clear-state.sh"

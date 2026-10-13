@@ -3,6 +3,8 @@
 # stdin handling, compaction, locks, locale, focused completion, notification
 # clicks and log failures on isolated tmux servers.
 set -euo pipefail
+# Run from a headless agent (claude -p), the hooks would ignore every call.
+unset CLAUDE_CODE_ENTRYPOINT
 PLUGIN_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
 AGENT="$PLUGIN_DIR/scripts/agent"
 SET="$AGENT/set-state.sh"
@@ -193,10 +195,18 @@ claude "$p6" '{"session_id":"c-3","hook_event_name":"StopFailure","error":"rate_
 # A later idle_prompt must not acknowledge that completion.
 claude "$p6" '{"session_id":"c-3","hook_event_name":"Notification","notification_type":"idle_prompt"}' idle
 [ "$(get "$p6" @agent-unseen)" = 1 ] || fail "idle_prompt acknowledged an unseen completion"
-# A headless claude -p started from the pane reports nothing into it.
-printf '%s\n' '{"session_id":"c-9","hook_event_name":"UserPromptSubmit"}' | CLAUDE_CODE_ENTRYPOINT=sdk-cli TMUX_PANE="$p6" "$SET" working
-printf '%s\n' '{"session_id":"c-9","reason":"other"}' | CLAUDE_CODE_ENTRYPOINT=sdk-cli TMUX_PANE="$p6" "$AGENT/clear-state.sh"
-[ "$(get "$p6" @agent-state):$(get "$p6" @agent-instance)" = idle:claude:c-3 ] || fail "headless claude -p reported into the pane"
+# A headless claude -p started from the pane reports nothing into it: its
+# SessionStart would take the pane over, and its end (even when it claims the
+# pane's own session) would clear the pane's agent.
+headless(){ printf '%s\n' "$2" | CLAUDE_CODE_ENTRYPOINT=sdk-cli AGENT_STATUS_KIND=claude TMUX_PANE="$1" "${@:3}"; }
+headless "$p6" '{"session_id":"c-9","hook_event_name":"SessionStart","source":"startup"}' "$SET" idle
+headless "$p6" '{"session_id":"c-9","hook_event_name":"UserPromptSubmit"}' "$SET" working
+[ "$(get "$p6" @agent-state):$(get "$p6" @agent-instance)" = idle:claude:c-3 ] || fail "headless claude -p took over the pane"
+headless "$p6" '{"session_id":"c-3","reason":"other"}' "$AGENT/clear-state.sh"
+[ "$(get "$p6" @agent-state):$(get "$p6" @agent-instance)" = idle:claude:c-3 ] || fail "headless claude -p cleared the pane's agent"
+tmux set-option -p -u -t "$p6" @agent-auto-description
+headless "$p6" '{"prompt":"headless task"}' "$AGENT/auto-desc.sh" set
+[ -z "$(get "$p6" @agent-auto-description)" ] || fail "headless claude -p described the pane"
 tmux kill-pane -t "$p6"
 
 # ----- locks: stale and wedged holders cannot block hooks -----------------
