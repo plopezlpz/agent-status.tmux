@@ -18,6 +18,13 @@ SCRIPTS="$CURRENT_DIR/scripts"
 # shellcheck source=scripts/agent/lib.sh
 . "$SCRIPTS/agent/lib.sh"
 
+# The hooks need tmux 3.8 (pane-moved, #{hook_window} on pane-exited). Ask
+# the server for the hook rather than parse version strings (3.8a, next-3.9).
+if ! tmux show-hooks -g pane-moved >/dev/null 2>&1; then
+  tmux display-message "agent-status: needs tmux 3.8 or later (this server is $(tmux display -p '#{version}'))"
+  exit 0
+fi
+
 # ----- defaults (-gqo = set only if unset, so user overrides win) ------
 tmux set-option -gqo @agent-icon-working  '●'
 tmux set-option -gqo @agent-icon-asking   '●'
@@ -122,8 +129,8 @@ add_hook pane-died \
 
 # Reconcile icons when panes leave or join a window: kill-pane, join-pane/
 # move-pane and cross-window swap-pane change both windows' layouts; a window
-# made by break-pane only reports pane-moved (skipped where tmux lacks it).
+# made by break-pane only reports pane-moved.
 add_hook window-layout-changed \
   "run-shell -b '$SCRIPTS/agent/update-window-icon.sh \"#{hook_window}\" layout'"
 add_hook pane-moved \
-  "run-shell -b '$SCRIPTS/agent/update-window-icon.sh \"#{hook_window}\" layout'" 2>/dev/null || true
+  "run-shell -b '$SCRIPTS/agent/update-window-icon.sh \"#{hook_window}\" layout'"
