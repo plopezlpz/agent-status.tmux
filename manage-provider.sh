@@ -10,7 +10,7 @@ esac
 ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
 if [ "$PROVIDER" = claude ]; then
-  exec bash "$ROOT/${ACTION}-claude-hooks.sh"
+  exec bash "$ROOT/install-claude-hooks.sh" "$ACTION"
 fi
 
 canonical_path() {
@@ -118,6 +118,8 @@ case "$PROVIDER" in
   mastracode)
     base="${MASTRACODE_HOME:-$HOME/.mastracode}"
     src="$ROOT/scripts/mastracode/agent-status.sh"; dest="$base/hooks/agent-status.tmux.sh"; config="$base/hooks.json"
+    # Hook event -> adapter action (scripts/agent/hook-event.sh).
+    events='[{"event":"SessionStart","action":"session"},{"event":"SessionEnd","action":"end"},{"event":"UserPromptSubmit","action":"working"},{"event":"AgentStart","action":"working"},{"event":"PreToolUse","action":"working"},{"event":"PermissionRequest","action":"blocked"},{"event":"PermissionResult","action":"working"},{"event":"SubagentStart","action":"working"},{"event":"SubagentEnd","action":"working"},{"event":"Interrupt","action":"interrupt"},{"event":"AgentEnd","action":"idle"},{"event":"Stop","action":"idle"}]'
     ;;
 esac
 
@@ -175,7 +177,6 @@ KIMI
       link_install "$src" "$dest"
       ;;
     mastracode)
-      events='[{"event":"SessionStart","action":"session"},{"event":"SessionEnd","action":"end"},{"event":"UserPromptSubmit","action":"working"},{"event":"AgentStart","action":"working"},{"event":"PreToolUse","action":"working"},{"event":"PermissionRequest","action":"blocked"},{"event":"PermissionResult","action":"working"},{"event":"SubagentStart","action":"working"},{"event":"SubagentEnd","action":"working"},{"event":"Interrupt","action":"interrupt"},{"event":"AgentEnd","action":"idle"},{"event":"Stop","action":"idle"}]'
       cmd_path=$(printf '%s' "$dest" | sed "s/'/'\\\\''/g")
       link_validate "$src" "$dest"
       # shellcheck disable=SC2016 # jq variables, not shell variables
@@ -203,8 +204,7 @@ else
       ;;
     mastracode)
       if [ -e "$config" ] || [ -L "$config" ]; then
-        events='[{"event":"SessionStart","action":"session"},{"event":"SessionEnd","action":"end"},{"event":"UserPromptSubmit","action":"working"},{"event":"AgentStart","action":"working"},{"event":"PreToolUse","action":"working"},{"event":"PermissionRequest","action":"blocked"},{"event":"PermissionResult","action":"working"},{"event":"SubagentStart","action":"working"},{"event":"SubagentEnd","action":"working"},{"event":"Interrupt","action":"interrupt"},{"event":"AgentEnd","action":"idle"},{"event":"Stop","action":"idle"}]'
-        cmd_path=$(printf '%s' "$dest" | sed "s/'/'\\\\''/g")
+          cmd_path=$(printf '%s' "$dest" | sed "s/'/'\\\\''/g")
         # shellcheck disable=SC2016 # jq variables, not shell variables
         json_update "$config" 'if type != "object" then error("root must be object") else . end | reduce $events[] as $e (. ; ($command + " ") as $owned | if ((.[$e.event] // []) | type) == "array" and ((.[$e.event] // []) | any((.command // "") | startswith($owned))) then .[$e.event] |= map(select((.command // "") | startswith($owned) | not)) | if (.[$e.event] | length) == 0 then del(.[$e.event]) else . end else . end)' --arg command "'$cmd_path'" --argjson events "$events"
       fi

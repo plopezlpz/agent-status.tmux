@@ -1,12 +1,18 @@
 #!/usr/bin/env bash
-# Wire the plugin's per-state scripts into Claude Code's hooks config.
+# Wire the plugin's per-state scripts into Claude Code's hooks config, or
+# with `uninstall` remove them.
+# Usage: install-claude-hooks.sh [install|uninstall]
 #
 # Idempotent: any prior hook entries pointing at this plugin's scripts/
-# directory are stripped first, then re-added. Safe to re-run after the
-# plugin updates (e.g., after a TPM update pulls in new commits).
+# directory are stripped first, then (install) re-added. Safe to re-run after
+# the plugin updates (e.g., after a TPM update pulls in new commits). Entries
+# that belong to other tools are never touched.
 #
 # Backs up an existing settings file before writing.
 set -eu
+
+ACTION="${1:-install}"
+case "$ACTION" in install|uninstall) ;; *) echo "usage: $0 [install|uninstall]" >&2; exit 2 ;; esac
 
 PLUGIN_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 SCRIPTS="$PLUGIN_DIR/scripts/agent"
@@ -25,6 +31,9 @@ fi
 
 [ ! -L "$SETTINGS" ] || { echo "agent-status: refusing to edit config symlink $SETTINGS" >&2; exit 1; }
 [ ! -e "$SETTINGS" ] || [ -f "$SETTINGS" ] || { echo "agent-status: refusing non-file config $SETTINGS" >&2; exit 1; }
+if [ "$ACTION" = uninstall ] && [ ! -f "$SETTINGS" ]; then
+  echo "agent-status: $SETTINGS not found, nothing to do"; exit 0
+fi
 # Keep only the newest 3 of our backups (exact mktemp name pattern below).
 prune_backups() {
   local f stamp
@@ -46,15 +55,24 @@ if [ -f "$SETTINGS" ]; then
 fi
 
 # shellcheck disable=SC2016 # jq program, not shell interpolation
-filter='
+strip='
   # strip: drop only the inner hooks pointing at this plugin (keep peers
   # from other tools), then drop entries left with no hooks. The (.hooks //
-  # []) coerce handles a missing/null inner hooks field. Then append fresh.
+  # []) coerce handles a missing/null inner hooks field.
   def strip:
     map(.hooks = ((.hooks // []) | map(select((.command // "") | (contains($s + "/") or contains($r + "/") or test($ours)) | not))))
     | map(select((.hooks // []) | length > 0));
   # Ensure .hooks is an object even if the file has it as null/array/other.
   .hooks |= (if type == "object" then . else {} end) |
+'
+# shellcheck disable=SC2016
+uninstall_filter="$strip"'
+  .hooks |= with_entries(.value |= strip)
+  | .hooks |= with_entries(select(.value | length > 0))
+'
+# Install strips each event's entries, then appends fresh ones.
+# shellcheck disable=SC2016
+install_filter="$strip"'
   # Older plugin releases registered PermissionDenied, which fires on auto-mode
   # classifier denials mid-turn and is not a state change. Remove only our old
   # entry and preserve any unrelated user configuration.
@@ -78,6 +96,7 @@ filter='
   # idle_prompt notification above closes it.
   .hooks.PostToolUse       = ((.hooks.PostToolUse       // []) | strip) + [{hooks:[{type:"command", command:"env AGENT_STATUS_KIND=claude \($r)/set-state.sh working"}]}]
 '
+if [ "$ACTION" = install ]; then filter="$install_filter"; else filter="$uninstall_filter"; fi
 if [ "$input" = /dev/null ]; then
   new=$(printf '{}\n' | jq --arg s "$SCRIPTS" --arg r "$SCRIPTS_REAL" --arg ours "$OURS" "$filter")
 else
@@ -91,5 +110,9 @@ mv "$tmp" "$SETTINGS"
 tmp=""
 prune_backups
 
-echo "agent-status: hooks installed in $SETTINGS"
+if [ "$ACTION" = install ]; then
+  echo "agent-status: hooks installed in $SETTINGS"
+else
+  echo "agent-status: hooks removed from $SETTINGS"
+fi
 [ -z "$backup" ] || echo "agent-status: backup saved to $backup"
