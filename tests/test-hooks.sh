@@ -362,4 +362,18 @@ p9=$(tmux display -pt other: '#{pane_id}')
 on_other(){ [ "$(tmux list-clients -F '#{session_name}')" = other ]; }
 eventually on_other || fail "focus-pane with a stale client did not switch the attached client"
 
+# A click switches the local client, never a remote one (a phone over mosh:
+# here a client under a process named mosh-server), even when the remote one
+# was captured at notify time.
+ln -s "$(command -v bash)" "$TMP/mosh-server"
+local_client=$(tmux list-clients -F '#{client_name}')
+outer new-window -d -t o "$TMP/mosh-server -c 'env -u TMUX $REAL_TMUX -S $SOCK_PATH attach -t other; :'"
+both(){ [ "$(tmux list-clients | wc -l | tr -d ' ')" = 2 ]; }
+eventually both || fail "remote test client did not attach"
+remote_client=$(tmux list-clients -F '#{client_name}' | grep -vxF "$local_client")
+"$AGENT/focus-pane.sh" "$p1" "$SOCK_PATH" "$remote_client"
+on(){ tmux list-clients -F '#{client_name} #{session_name}' | grep -qxF "$1 $2"; }
+eventually on "$local_client" t || fail "click did not switch the local client"
+on "$remote_client" other || fail "click switched the remote client"
+
 echo "PASS: hooks"

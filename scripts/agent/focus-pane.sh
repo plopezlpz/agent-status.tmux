@@ -31,10 +31,32 @@ end run
 APPLESCRIPT
 fi
 
-# The client captured at notify time may be gone (reattached on another tty):
-# fall back to tmux's most recently active client rather than doing nothing.
-if [ -z "$client" ] || ! "${tmux_cmd[@]}" switch-client -c "$client" -t "$session" 2>/dev/null; then
-  "${tmux_cmd[@]}" switch-client -t "$session" 2>/dev/null || true
+# remote PID: the client runs under sshd or mosh-server (a phone, another
+# machine). The click happened at this machine's screen.
+remote() {
+  local pid="$1" depth=0 comm
+  while [ "$depth" -lt 12 ] && [ "${pid:-0}" -gt 1 ]; do
+    comm=$(ps -o comm= -p "$pid" 2>/dev/null) || return 1
+    case "${comm##*/}" in sshd*|mosh-server|etserver) return 0 ;; esac
+    pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+    depth=$((depth + 1))
+  done
+  return 1
+}
+# Focus a local client: the one captured at notify time while it is still
+# attached, else the most recently active. With only remote clients attached,
+# leave their views alone; with none, still select the pane for the next attach.
+pick="" newest=-1 remotes=0
+while read -r name pid activity; do
+  if remote "$pid"; then remotes=$((remotes + 1)); continue; fi
+  if [ "$name" = "$client" ]; then pick="$name"; break; fi
+  case "$activity" in ''|*[!0-9]*) activity=0 ;; esac
+  [ "$activity" -le "$newest" ] || { newest="$activity"; pick="$name"; }
+done < <("${tmux_cmd[@]}" list-clients -F '#{client_name} #{client_pid} #{client_activity}' 2>/dev/null || true)
+if [ -n "$pick" ]; then
+  "${tmux_cmd[@]}" switch-client -c "$pick" -t "$session" 2>/dev/null || exit 0
+elif [ "$remotes" -gt 0 ]; then
+  exit 0
 fi
 "${tmux_cmd[@]}" select-window -t "$window" 2>/dev/null || exit 0
 "${tmux_cmd[@]}" select-pane -t "$pane" 2>/dev/null || true
