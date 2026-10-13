@@ -10,14 +10,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        # tmux before 3.6 escapes the \037 field separators in format output;
+        # Ubuntu 24.04 ships 3.4, 26.04 ships 3.6.
+        os: [ubuntu-26.04, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       # The checkout lands in a directory named agent-status.tmux (the repo
       # name), which test-hooks.sh relies on to tell plugin hooks apart.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      # Ubuntu's tmux (3.4 on 24.04) meets the 3.3 minimum in the README.
       - name: Install tmux, jq and shellcheck (Linux)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y tmux jq shellcheck
