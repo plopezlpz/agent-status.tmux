@@ -51,8 +51,9 @@ add or remove their own entries and refuse to overwrite files they don't own.
 Agents without lifecycle hooks (Codex, Gemini, Cursor and others) are not
 supported: their state can't be known without polling the pane.
 
-Run a nested headless agent with `TMUX_PANE` cleared, or it takes over the
-pane it runs in: `TMUX_PANE= claude -p ...`.
+Headless runs (`claude -p` and the Agent SDK, `kilo run`, `kimi -p`,
+`mastracode --prompt`) are ignored. Run any other nested headless agent with
+`TMUX_PANE` cleared, or it takes over the pane it runs in.
 
 ## Configuration
 
