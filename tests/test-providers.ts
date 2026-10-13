@@ -6,7 +6,7 @@
 // Run with: bun tests/test-providers.ts   (skipped elsewhere; see tests/run.sh)
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { execFileSync, spawnSync } from "node:child_process";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -48,6 +48,14 @@ const check = (ok: boolean, message: string) => { if (!ok) { console.error(`FAIL
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 const tmp = process.env.AGENT_TEST_ROOT, home = process.env.HOME!, log = process.env.AGENT_TEST_LOG!;
 if (!tmp || !home.startsWith(tmp) || process.env.TMUX || !process.env.TMUX_TMPDIR?.startsWith(tmp)) throw new Error("refusing to run outside the isolated environment");
+// An adapter as manage-provider.sh installs it: a symlink in the provider's
+// plugin dir, so its relative import of lifecycle.js must follow the link.
+const installed = (adapter: string, dir: string) => {
+  const dest = resolve(tmp, `config-${adapter}`, dir, "agent-status.tmux.js");
+  mkdirSync(dirname(dest), { recursive: true });
+  try { symlinkSync(resolve(root, `scripts/${adapter}/agent-status.js`), dest); } catch {}
+  return dest;
+};
 {
   let reached = true;
   try { execFileSync("tmux", ["-V"], { stdio: "ignore" }); } catch { reached = false; }
@@ -124,9 +132,16 @@ process.env.HERDR_OMP_RETRY_GRACE_MS = "5";
 }
 
 // ----------------------------------------------------------- OpenCode
+{
+  // OpenCode and Kilo share lifecycle.js; each adapter keeps its own sessions.
+  const { lifecycle } = await import(resolve(root, "scripts/opencode/lifecycle.js"));
+  const a = lifecycle("opencode"), b = lifecycle("kilo");
+  a.childSessions.add("child"); a.aborted.add("aborted");
+  check(!b.childSessions.has("child") && !b.aborted.has("aborted"), "lifecycle() instances keep separate session state");
+}
 process.env.TMUX_PANE = "%2";
 {
-  const { AgentStatusPlugin } = await import(resolve(root, "scripts/opencode/agent-status.js"));
+  const { AgentStatusPlugin } = await import(installed("opencode", "plugins"));
   const plugin = await AgentStatusPlugin();
   const event = (type: string, properties: any) => plugin.event({ event: { type, properties } });
   let sentinel = 0;
@@ -172,7 +187,7 @@ process.env.TMUX_PANE = "%2";
 // --------------------------------------------------------------- Kilo
 process.env.TMUX_PANE = "%3";
 {
-  const { AgentStatusPlugin } = await import(resolve(root, "scripts/kilo/agent-status.js"));
+  const { AgentStatusPlugin } = await import(installed("kilo", "plugin"));
   const argv = process.argv;
   process.argv = [argv[0], argv[1], "run", "do it"];
   check(Object.keys(await AgentStatusPlugin()).length === 0, "Kilo headless `kilo run` registers no hooks");
@@ -216,7 +231,7 @@ process.env.TMUX_PANE = "%3";
   // A restarted `kilo -c` binds its first root event, and unregisters on exit or
   // an unhandled signal (run in child processes: exit handlers end the process).
   const child = resolve(tmp, "kilo-child.mjs");
-  writeFileSync(child, `const { AgentStatusPlugin } = await import(${JSON.stringify(resolve(root, "scripts/kilo/agent-status.js"))});
+  writeFileSync(child, `const { AgentStatusPlugin } = await import(${JSON.stringify(installed("kilo", "plugin"))});
 import { readFileSync } from "node:fs";
 const plugin = await AgentStatusPlugin();
 await plugin.event({ event: { type: "session.status", properties: { sessionID: process.env.KILO_SESSION, status: { type: "busy" } } } });
@@ -328,6 +343,14 @@ for (const [kind, name, headlessArgs, interactiveArgs, moreHeadless, moreInterac
     got = since();
     check(r.status === 0 && got.some(l => l.startsWith(`set-state.sh|working||s1||${kind}|`)), `${kind} a failing auto-desc still reports working`);
   }
+  got = hook("blocked", { session_id: "s1", hook_event_name: "PreToolUse", tool_name: "Bash" });
+  check(got.length === 1 && got[0].startsWith(`set-state.sh|asking|Bash|s1||${kind}|<stdin:closed>`), `${kind} a blocked tool asks, naming the tool`);
+  got = hook("blocked", { session_id: "s1", message: "Allow edit?", tool_name: "Edit" });
+  check(got[0]?.startsWith(`set-state.sh|asking|Allow edit?|s1||${kind}|<stdin:closed>`), `${kind} a blocked message wins over the tool name`);
+  got = hook("idle", { session_id: "s1", hook_event_name: "Stop" });
+  check(got.length === 1 && got[0].startsWith(`set-state.sh|finished||s1||${kind}|<stdin:closed>`), `${kind} Stop finishes the turn`);
+  got = hook("interrupt", { session_id: "s1", hook_event_name: "Interrupt" });
+  check(got.length === 1 && got[0].startsWith(`set-state.sh|idle||s1||${kind}|<stdin:closed>`), `${kind} an interrupt settles idle without a reset`);
   got = hook("end", { session_id: "s1", hook_event_name: "SessionEnd", reason: "exit" });
   check(got.length === 1 && got[0].startsWith(`clear-state.sh|exit|s1|${kind}|`), `${kind} SessionEnd clears its own instance`);
   got = hook("end", { session_id: "s1", hook_event_name: "SessionEnd" });

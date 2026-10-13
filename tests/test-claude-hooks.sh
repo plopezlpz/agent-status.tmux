@@ -29,9 +29,16 @@ bash "$PLUGIN_DIR/install-claude-hooks.sh" >/dev/null
 n=$(jq '[.. | .command? // empty | select(test("auto-desc.sh set"))] | length' "$CLAUDE_SETTINGS")
 [ "$n" -eq 1 ] || fail "auto-desc set duplicated on re-run (n=$n)"
 
-bash "$PLUGIN_DIR/uninstall-claude-hooks.sh" >/dev/null
+# A bad action is refused before the settings are touched.
+cp "$CLAUDE_SETTINGS" "$TMP/before.json"
+rc=0; bash "$PLUGIN_DIR/install-claude-hooks.sh" bogus >/dev/null 2>&1 || rc=$?
+[ "$rc" -eq 2 ] || fail "install-claude-hooks.sh bogus exited $rc, expected 2"
+cmp -s "$CLAUDE_SETTINGS" "$TMP/before.json" || fail "a bad action changed settings"
+
+bash "$PLUGIN_DIR/manage-provider.sh" uninstall claude >/dev/null
 m=$(jq '[.. | .command? // empty | select(test("agent-status.tmux"))] | length' "$CLAUDE_SETTINGS")
 [ "$m" -eq 0 ] || fail "uninstall left $m plugin hooks"
+jq -e '[.hooks.PermissionDenied[].hooks[].command] == ["keep-me"]' "$CLAUDE_SETTINGS" >/dev/null || fail "uninstall removed an unrelated user hook"
 
 # Installing through a symlinked plugin dir (TPM) must replace hooks written
 # under the resolved path, and vice versa, never duplicating them.
