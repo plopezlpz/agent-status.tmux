@@ -2,7 +2,7 @@
 # agent-status.tmux — Kimi Code hook adapter.
 set -eu
 [ -n "${TMUX_PANE:-}" ] || exit 0
-case "${1:-}" in session|working|blocked|idle|end) action="$1" ;; *) exit 0 ;; esac
+case "${1:-}" in session|working|blocked|idle|interrupt|end) action="$1" ;; *) exit 0 ;; esac
 
 # Headless runs (`kimi -p`, `kimi acp|web|rc`) can inherit TMUX_PANE from an
 # agent pane and must not report or steal its identity. Kimi's hook payload has
@@ -67,6 +67,8 @@ case "$action" in
     ;;
   blocked) "$SCRIPT_DIR/set-state.sh" asking "$message" "$instance" "" kimi </dev/null ;;
   idle) "$SCRIPT_DIR/set-state.sh" finished "" "$instance" "" kimi </dev/null ;;
+  # The user's own Esc: settle without claiming an unseen completion.
+  interrupt) "$SCRIPT_DIR/set-state.sh" idle "" "$instance" "" kimi </dev/null ;;
   end)
     [ -n "$instance" ] || exit 0
     "$SCRIPT_DIR/clear-state.sh" "${reason:-exit}" "$instance" kimi </dev/null
