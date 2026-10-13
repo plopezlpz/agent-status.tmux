@@ -10,10 +10,11 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 payload=$(cat 2>/dev/null || true)
 instance="" message="" source="" reason=""
 if command -v jq >/dev/null 2>&1; then
-  instance=$(printf '%s' "$payload" | jq -r '.session_id // ""' 2>/dev/null || true)
-  message=$(printf '%s' "$payload" | jq -r '.message // .tool_name // ""' 2>/dev/null || true)
-  source=$(printf '%s' "$payload" | jq -r '.source // ""' 2>/dev/null || true)
-  reason=$(printf '%s' "$payload" | jq -r '.reason // ""' 2>/dev/null || true)
+  # One line: set-state turns a notification's newlines into spaces and drops
+  # control characters anyway.
+  fields=$(printf '%s' "$payload" | jq -r '[.session_id // "", .source // "", .reason // "", .message // .tool_name // ""]
+    | map(tostring | gsub("\n"; " ") | gsub("\u001f"; "")) | join("\u001f")' 2>/dev/null || true)
+  IFS=$'\037' read -r instance source reason message <<< "$fields"
 fi
 case "$action" in
   session)
