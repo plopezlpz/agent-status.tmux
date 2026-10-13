@@ -39,7 +39,6 @@ TMUX="$(ctl display -pt "$p1" '#{socket_path},#{pid},0')"
 export TMUX
 SOCK_PATH="${TMUX%%,*}"
 tmux set-option -g @agent-log "$TMP/agent.log"
-tmux set-option -g @agent-descriptions-dir "$TMP/descriptions"
 for s in working asking finished idle; do
   tmux set-option -g "@agent-icon-$s" "$s"
   tmux set-option -g "@agent-color-$s" default
@@ -80,21 +79,14 @@ done
 state "$p1" working "" a-1 1 test reset
 p2=$(tmux split-window -d -P -F '#{pane_id}' -t "$p1" 'sleep 1')
 state "$p2" asking "" a-2 1 test reset
-start=$(tmux display -p '#{start_time}')
-mkdir -p "$TMP/descriptions"
-: > "$TMP/descriptions/$start-${p2#%}"
-: > "$TMP/descriptions/.generating-$start-${p2#%}"
-: > "$TMP/descriptions/$start-${p1#%}"
-: > "$TMP/descriptions/unrelated"
+tmux set-option -p -t "$p1" @agent-description 'first title'
+tmux set-option -p -t "$p2" @agent-description 'second title'
 icon_is "$w1" asking || fail "asking pane did not win the rollup"
 gone(){ ! tmux list-panes -a -F '#{pane_id}' | grep -qx "$1"; }
 eventually gone "$p2" || fail "short-lived pane did not exit"
 eventually icon_is "$w1" working || fail "pane-exited did not reaggregate the window"
 [ "$(get "$p1" @agent-state)" = working ] || fail "pane-exited cleared the wrong pane"
-eventually test ! -e "$TMP/descriptions/$start-${p2#%}" || fail "exit left the pane description"
-[ ! -e "$TMP/descriptions/.generating-$start-${p2#%}" ] || fail "exit left the generation marker"
-[ -e "$TMP/descriptions/$start-${p1#%}" ] || fail "exit removed another pane's description"
-[ -e "$TMP/descriptions/unrelated" ] || fail "exit removed an unrelated file"
+[ "$(get "$p1" @agent-description)" = 'first title' ] || fail "pane-exited cleared another pane's title"
 grep -Fx "pane-exited $p2 $w1" "$TMP/hook-window" >/dev/null || fail "pane-exited #{hook_window} is not the pane's window"
 if grep -F "pane=$p2 " "$TMP/agent.log" | grep -F 'cleared (exit)' >/dev/null; then fail "vanished pane logged another pane's state as cleared"; fi
 

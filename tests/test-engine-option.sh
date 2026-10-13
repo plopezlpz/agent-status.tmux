@@ -29,6 +29,9 @@ dir="$(tmux -L "$SOCK" show-option -gqv @agent-scripts-dir 2>/dev/null || true)"
 [ "$(tmux -L "$SOCK" show-option -gqv @agent-icon-idle)" = '○' ] || fail "idle icon is not outlined"
 [ "$(tmux -L "$SOCK" show-option -gqv @agent-color-working)" = yellow ] || fail "working color is not yellow"
 [ "$(tmux -L "$SOCK" show-option -gqv @agent-color-finished)" = cyan ] || fail "done color is not cyan"
-grep -F -- '--bind "every(1):transform' "$PLUGIN_DIR/scripts/agent-sessions.sh" >/dev/null || fail "navigator has no selective live refresh"
-grep -F -- '--track --id-nth=2' "$PLUGIN_DIR/scripts/agent-sessions.sh" >/dev/null || fail "navigator does not retain selection across refreshes"
-echo "PASS: engine advertises @agent-scripts-dir ($dir) and Herdr-style indicators"
+# The suggest command is run by UIs through sh with a pane id appended.
+cmd="$(tmux -L "$SOCK" show-option -gqv @agent-suggest-command 2>/dev/null || true)"
+case "$cmd" in */describe.sh\ suggest) ;; *) fail "@agent-suggest-command is not describe.sh suggest: $cmd" ;; esac
+rc=0; sh -c "$cmd \"\$1\"" sh not-a-pane 2>/dev/null || rc=$?
+[ "$rc" = 2 ] || fail "@agent-suggest-command did not run through sh (status $rc)"
+echo "PASS: engine advertises @agent-scripts-dir ($dir), @agent-suggest-command and Herdr-style indicators"

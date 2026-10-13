@@ -1,13 +1,13 @@
 # agent-status.tmux
 
-Event-driven status indicators and a navigator for AI coding-agent panes in tmux.
+Event-driven status indicators for AI coding-agent panes in tmux, and the
+agent state a UI such as [paddock](https://github.com/plopezlpz/paddock) shows.
 
 - semantic **working / asking / idle** state, with unseen completions shown as **finished**
 - worst-state window icon (asking > working > finished > idle)
-- clickable notifications and a live-updating `prefix A` fzf navigator, with
-  an agents tab and a sessions tab (session/window tree with agent states);
-  `Tab` switches tabs and keeps the query
-- first-prompt labels with persistent `Ctrl-E` overrides and idle age
+- clickable notifications
+- per-pane titles: the first prompt, or one you set or have pi suggest from
+  the conversation (`scripts/agent/describe.sh`)
 - no daemon and no pane-output or process-tree polling
 
 ## Supported providers and fidelity
@@ -83,10 +83,9 @@ unrelated provider configuration and same-named user files.
 
 | Dependency | Minimum / use |
 |---|---|
-| tmux | 3.3 (`display-popup -E`) |
+| tmux | 3.3 |
 | Bash | 3.2 (macOS default) |
 | jq | hook payloads and safe JSON config edits |
-| fzf | 0.74 (`every`, `reload-sync`, and `transform` actions), navigator only |
 | alerter / terminal-notifier / notify-send | optional notifications |
 | pi | 0.84.4 (`ui_prompt_start`/`ui_prompt_end`; `ctx.mode`, `agent_settled`, `ctx.isIdle()` are older); verified with 1.1.0 |
 | OMP | verified with 18.8.9 |
@@ -113,13 +112,10 @@ Set options before TPM runs; defaults never replace user overrides.
 | `@agent-icon-asking`, `@agent-color-asking` | `●`, `red` |
 | `@agent-icon-finished`, `@agent-color-finished` | `●`, `cyan` |
 | `@agent-icon-idle`, `@agent-color-idle` | `○`, `green` |
-| `@agent-navigator-key` | `A` (navigator on its agents tab) |
-| `@agent-sessions-key` | empty (set e.g. `a` to open the navigator on its sessions tab) |
-| `@agent-popup-width`, `@agent-popup-height` | `70%`, `70%` (formats, expanded per client) |
 | `@agent-terminal-app` | empty |
 | `@agent-notify-timeout` | `300` (seconds before an alerter notification closes; `0` = never) |
 | `@agent-notify-team-delay` | `10` (seconds a Claude agent-team lead's notification waits for its teammates; `0` = off) |
-| `@agent-descriptions-dir` | `${XDG_DATA_HOME:-$HOME/.local/share}/tmux/agent-status/descriptions` |
+| `@agent-describe-model` | `openai-codex/gpt-6-luna` (pi model for suggested titles) |
 | `@agent-log` | `${XDG_DATA_HOME:-$HOME/.local/share}/tmux/agent-status/agent.log` |
 
 Installer path overrides mirror provider conventions: pi
@@ -136,8 +132,10 @@ provider lifecycle event
   -> tiny provider adapter
   -> scripts/agent/set-state.sh (provider-neutral sink)
   -> pane options (@agent-state, @agent-unseen, @agent-instance,
-                   @agent-seq, @agent-kind, @agent-state-at)
-  -> push-only window aggregation / notification / navigator
+                   @agent-seq, @agent-kind, @agent-state-at,
+                   @agent-auto-description)
+  -> push-only window aggregation / notification
+  -> @agent-revision bump, for UIs that poll one value instead of the options
 ```
 
 `finished` is stored as `idle + unseen`; focusing the pane acknowledges it.
@@ -145,20 +143,21 @@ A completion in the pane a terminal-focused client is already showing is not
 notified; it keeps the finished marker until focus or the next prompt. Plugin tmux hooks (`run-shell -b`) clear
 panes on `pane-exited`/`pane-died` and reconcile window icons on
 `window-layout-changed`/`pane-moved` (kill, break, join, move and swap-pane).
-While open, the navigator checks a cheap revision token once per second and
-reloads only after a state/description change or at a new idle-age minute,
-without blocking typing; normal status handling remains push-only.
 Authoritative session IDs are provider-qualified, and adapters with an
 in-process event stream submit monotonic sequences so stale reports are
 rejected. Pane and window lock files beside the tmux socket serialize shared
 updates; a lock whose holder died is broken at once and any lock held past
 ~3s is treated as stale, so a killed hook cannot wedge a pane. Tmux pane
-options disappear with panes; only sanitized manual descriptions and the
-transition audit log live on disk. Descriptions are files named
-`<server start_time>-<pane number>` in `@agent-descriptions-dir` (Ctrl-G's
-in-progress marker is `.generating-<same key>`), so a restarted server's
-reused pane IDs never inherit an old title. They are removed when the pane
-exits; the navigator prunes week-old entries left by earlier servers.
+options disappear with panes; only the transition audit log lives on disk.
+
+Titles: `@agent-auto-description` is the first prompt; `@agent-description`
+is a title the user set, which UIs show instead. A UI may set it directly
+(paddock does); scripts can use `describe.sh set PANE [TEXT]` (no TEXT: back
+to automatic). Both are cleared with the other options when the agent exits.
+The plugin sets `@agent-suggest-command` to `describe.sh suggest`: run with a
+pane id appended, it waits for pi and prints a title without setting it, or
+fails with the reason on stderr; a signal stops pi. `describe.sh generate
+PANE` sets one in the background instead (`@agent-generating` marks the run).
 
 A future provider adapter must:
 

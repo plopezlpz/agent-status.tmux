@@ -67,7 +67,7 @@ export default function (pi: ExtensionAPI) {
 		return next;
 	};
 
-	// Record the session file on the pane so the navigator's ctrl-g can read the
+	// Record the session file on the pane so describe.sh generate can read the
 	// conversation (latest prompts) when generating a description. A new session
 	// without a file yet unsets the previous session's path.
 	const updateTranscript = (ctx: any, unsetMissing = false): Promise<void> => {

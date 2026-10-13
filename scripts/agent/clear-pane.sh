@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# tmux pane-exited / pane-died hook: clear retained dead-pane options and the
-# pane's description files, log, and reaggregate.
+# tmux pane-exited / pane-died hook: clear retained dead-pane options, log,
+# and reaggregate.
 # Usage: clear-pane.sh <pane_id> [window_id]
 # By pane-exited the pane is already gone (hence #{hook_pane}/#{hook_window},
 # not #{pane_id}); with remain-on-exit, pane-died fires and the pane remains.
@@ -30,14 +30,5 @@ if [ "$state" = idle ] && [ "$unseen" = 1 ]; then state=finished; fi
 agent_unlock
 
 [ -z "$state" ] || agent_log "pane=$pane $state->cleared (exit)"
-
-# Descriptions are keyed by server start time and pane number.
-info=$(tmux display -p $'#{start_time}\037#{@agent-descriptions-dir}' 2>/dev/null || true)
-IFS="$sep" read -r start_time desc_dir <<< "$info"
-case "$start_time" in ''|*[!0-9]*) ;; *)
-  case "$desc_dir" in /*)
-    rm -f "$desc_dir/$start_time-${pane#%}" "$desc_dir/.generating-$start_time-${pane#%}" 2>/dev/null || true
-  ;; esac
-;; esac
 
 [ -z "$window" ] || "$SCRIPT_DIR/update-window-icon.sh" "$window" || true

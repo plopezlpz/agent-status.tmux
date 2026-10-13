@@ -5,6 +5,7 @@ PLUGIN_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
 SET="$PLUGIN_DIR/scripts/agent/set-state.sh"
 CLEAR="$PLUGIN_DIR/scripts/agent/clear-state.sh"
 SEEN="$PLUGIN_DIR/scripts/agent/clear-finished.sh"
+DESCRIBE="$PLUGIN_DIR/scripts/agent/describe.sh"
 SOCK="agent-status-state-test-$$"
 TMP="$(mktemp -d)"
 fail(){ echo "FAIL: $1" >&2; exit 1; }
@@ -20,9 +21,6 @@ p2="$(ctl split-window -d -P -F '#{pane_id}' -t "$p1")"
 TMUX="$(ctl display -pt "$p1" '#{socket_path},#{pid},0')"
 export TMUX
 tmux set-option -g @agent-log "$TMP/agent.log"
-tmux set-option -g @agent-descriptions-dir "$TMP/descriptions"
-# Navigator description file and generating marker of $p1 (server start + pane id).
-DK="$TMP/descriptions/$(tmux display -p "#{start_time}")-${p1#%}"; DM="${DK%/*}/.generating-${DK##*/}"
 tmux set-option -g @agent-icon-working W
 tmux set-option -g @agent-icon-asking A
 tmux set-option -g @agent-icon-finished F
@@ -36,8 +34,6 @@ tmux set-option -g @agent-color-idle green
 mkdir "$TMP/bin"
 ln -s "$(command -v tmux)" "$TMP/bin/tmux"
 [ -z "$JQ" ] || ln -s "$JQ" "$TMP/bin/jq"
-# Keep fzf reachable so the navigator UI checks below actually run.
-! command -v fzf >/dev/null 2>&1 || ln -s "$(command -v fzf)" "$TMP/bin/fzf"
 export PATH="$TMP/bin:/usr/bin:/bin"
 
 state(){ TMUX_PANE="$1" "$SET" "${@:2}" </dev/null; }
@@ -101,97 +97,18 @@ window=$(tmux display -pt "$p2" '#{window_id}')
 [ -z "$(get "$p2" @agent-state)" ] || fail "pane-exited cleanup left retained state"
 icon_is green I || fail "pane-exited cleanup did not reaggregate window"
 
-tmux set-option -p -t "$p1" @agent-state-at "$(( $(date +%s) - 125 ))"
-cards=$("$PLUGIN_DIR/scripts/agent-sessions.sh" --list | tr '\0' '\n')
-printf '%s' "$cards" | grep -F "$p1" >/dev/null || fail "navigator omitted registered pane"
-printf '%s' "$cards" | grep -F "pi ·" >/dev/null || fail "navigator omitted agent kind"
-printf '%s' "$cards" | grep -F "idle 2m" >/dev/null || fail "navigator omitted idle age"
-case "$cards" in H$'\t'*|*$'\nH\t'*) fail "navigator emitted a selectable group heading" ;; esac
-case "$cards" in *$'\033[32mI\033[0m'*) ;; *) fail "navigator icon is not colored" ;; esac
-if command -v fzf >/dev/null 2>&1; then
-  filtered=$("$PLUGIN_DIR/scripts/agent-sessions.sh" --list | fzf --read0 --ansi --delimiter=$'\t' --with-nth=4.. --filter=pi)
-  printf '%s' "$filtered" | grep -F "$p1" >/dev/null || fail "navigator filtering omitted matching card"
-  folder=$(tmux display -pt "$p1" '#{pane_current_path}'); folder=${folder##*/}
-  filtered=$("$PLUGIN_DIR/scripts/agent-sessions.sh" --list | fzf --read0 --ansi --delimiter=$'\t' --with-nth=4.. --filter="$folder")
-  printf '%s' "$filtered" | grep -F "$p1" >/dev/null || fail "navigator folder filtering omitted grouped agent"
-fi
-refresh_file="$TMP/refresh-key"; : > "$refresh_file"
-action=$(AGENT_NAV_REFRESH_FILE="$refresh_file" "$PLUGIN_DIR/scripts/agent-sessions.sh" --refresh)
-printf '%s' "$action" | grep -F 'reload(' >/dev/null || fail "navigator did not refresh a changed token"
-action=$(AGENT_NAV_REFRESH_FILE="$refresh_file" "$PLUGIN_DIR/scripts/agent-sessions.sh" --refresh)
-[ -z "$action" ] || fail "navigator refreshed an unchanged token"
-tmux set-option -g @agent-revision test-change
-action=$(AGENT_NAV_REFRESH_FILE="$refresh_file" "$PLUGIN_DIR/scripts/agent-sessions.sh" --refresh)
-printf '%s' "$action" | grep -F 'reload(' >/dev/null || fail "navigator ignored a state revision"
-printf '%s' "$action" | grep -F 'transform-border-label(' >/dev/null || fail "navigator refresh did not update the summary label"
-label=$("$PLUGIN_DIR/scripts/agent-sessions.sh" --label)
-case "$label" in *agents*idle*) ;; *) fail "navigator label missing per-state counts: $label" ;; esac
-[ -z "$("$PLUGIN_DIR/scripts/agent-sessions.sh" --preview 'bogus')" ] || fail "navigator previewed an invalid pane id"
-tmux send-keys -t "$p1" 'printf "preview-marker\n"' Enter; sleep 0.3
-"$PLUGIN_DIR/scripts/agent-sessions.sh" --preview "$p1" | grep -F preview-marker >/dev/null || fail "navigator preview omitted pane output"
-tmux set-option -g @agent-color-idle '#95a99f'
-cards=$("$PLUGIN_DIR/scripts/agent-sessions.sh" --list | tr '\0' '\n')
-case "$cards" in *$'\033[38;2;149;169;159mI\033[0m'*) ;; *) fail "navigator ignored a hex state colour" ;; esac
-tmux set-option -g @agent-color-idle green
-# Render the real fzf UI so a rejected option can't silently close the popup.
-if command -v fzf >/dev/null 2>&1; then
-  ui=$(tmux new-window -d -P -F '#{pane_id}' "$PLUGIN_DIR/scripts/agent-sessions.sh; sleep 5")
-  screen=""
-  for _ in 1 2 3 4 5 6 7 8 9 10; do
-    sleep 0.3; screen=$(tmux capture-pane -p -t "$ui" 2>/dev/null || true)
-    case "$screen" in *agents*jump*) break ;; esac
-  done
-  case "$screen" in *agents*jump*) ;; *) fail "navigator fzf UI did not render: $screen" ;; esac
-  tmux kill-pane -t "$ui"
-fi
-mkdir -p "$TMP/descriptions"
-printf 'safe\033[31m label\tdata\n' > "$DK"
-cards=$("$PLUGIN_DIR/scripts/agent-sessions.sh" --list | tr '\0' '\n')
-case "$cards" in *$'safe\033'*) fail "navigator retained description control data" ;; esac
-printf 'legacy traversal bait\n' > "$TMP/descriptions/legacy"
-printf '%s' "$cards" | grep -F 'safe[31m label data' >/dev/null || fail "navigator did not use pane-ID description key"
-# Ctrl-G AI description, with a stub pi: success saves a cleaned title, failure
-# keeps the old one, and the card shows "generating…" while the marker exists.
+# AI title, with a stub pi: success sets a cleaned title, failure keeps the
+# old one.
 mkdir -p "$TMP/fakepi"
 printf '#!/bin/sh\ncat >/dev/null\nprintf "\\n\\"Refactor the VAT rounding\\"\\nextra line\\n"\n' > "$TMP/fakepi/pi"
 chmod +x "$TMP/fakepi/pi"
-PATH="$TMP/fakepi:$PATH" "$PLUGIN_DIR/scripts/agent-sessions.sh" --generate-run "$p1"
-[ "$(cat "$DK")" = 'Refactor the VAT rounding' ] || fail "generated description not saved cleanly"
-[ ! -e "$DM" ] || fail "generation left its marker behind"
+PATH="$TMP/fakepi:$PATH" "$DESCRIBE" run "$p1"
+[ "$(get "$p1" @agent-description)" = 'Refactor the VAT rounding' ] || fail "generated title not set cleanly"
+[ -z "$(get "$p1" @agent-generating)" ] || fail "generation left its marker behind"
 printf '#!/bin/sh\ncat >/dev/null\nexit 1\n' > "$TMP/fakepi/pi"
-PATH="$TMP/fakepi:$PATH" "$PLUGIN_DIR/scripts/agent-sessions.sh" --generate-run "$p1"
-[ "$(cat "$DK")" = 'Refactor the VAT rounding' ] || fail "failed generation changed the description"
-: > "$DM"
-"$PLUGIN_DIR/scripts/agent-sessions.sh" --list | tr '\0' '\n' | grep -F 'generating' >/dev/null || fail "card did not show generation in progress"
-rm -f "$DM" "$DK"
-
-# Ctrl-E description dialog: drive the real fzf dialog in a pane.
-NAV="$PLUGIN_DIR/scripts/agent-sessions.sh"
-dialog() {  # dialog KEYS...: open the dialog for $p1, send keys, wait for exit
-  local d
-  d=$(tmux new-window -d -P -F '#{pane_id}' "$NAV --dialog $p1")
-  sleep 0.6; tmux send-keys -t "$d" "$@"
-  for _ in 1 2 3 4 5 6 7 8 9 10; do sleep 0.2; tmux display -p -t "$d" '' >/dev/null 2>&1 && tmux list-panes -a -F '#{pane_id}' | grep -qx "$d" || return 0; done
-  tmux kill-pane -t "$d" 2>/dev/null; fail "description dialog did not close"
-}
-if command -v fzf >/dev/null 2>&1; then
-  d=$(tmux new-window -d -P -F '#{pane_id}' "$NAV --dialog $p1; sleep 5")
-  screen=""
-  for _ in 1 2 3 4 5 6 7 8 9 10; do
-    sleep 0.3; screen=$(tmux capture-pane -p -t "$d" 2>/dev/null || true)
-    case "$screen" in *'describe agent'*save*) break ;; esac
-  done
-  case "$screen" in *'describe agent'*pi*save*) ;; *) fail "description dialog did not render: $screen" ;; esac
-  tmux kill-pane -t "$d"
-  dialog C-u 'renamed (agent)' Enter
-  [ "$(cat "$DK")" = 'renamed (agent)' ] || fail "dialog did not save the description"
-  dialog C-u 'discard me' Escape
-  [ "$(cat "$DK")" = 'renamed (agent)' ] || fail "cancelled dialog changed the description"
-  dialog C-u Enter
-  [ ! -e "$DK" ] || fail "blank dialog did not clear the description override"
-fi
-if "$PLUGIN_DIR/scripts/agent-sessions.sh" --edit '../../escape' </dev/null >/dev/null 2>&1; then fail "navigator accepted traversal edit key"; fi
-[ ! -e "$TMP/escape" ] || fail "navigator description escaped storage directory"
+PATH="$TMP/fakepi:$PATH" "$DESCRIBE" run "$p1"
+[ "$(get "$p1" @agent-description)" = 'Refactor the VAT rounding' ] || fail "failed generation changed the title"
+tmux set-option -p -u -t "$p1" @agent-description
 
 if [ -n "$JQ" ]; then
   printf '%s\n' '{"session_id":"claude-1","hook_event_name":"SessionStart"}' | \
@@ -225,7 +142,7 @@ if [ -n "$JQ" ]; then
     TMUX_PANE="$p1" AGENT_STATUS_KIND=claude "$SET" finished
   [ "$(get "$p1" @agent-state):$(get "$p1" @agent-unseen)" = idle:1 ] || fail "final Stop did not complete the pane"
 
-  # Claude's transcript_path is recorded for ctrl-g; non-.jsonl or relative
+  # Claude's transcript_path is recorded for generated descriptions; non-.jsonl or relative
   # paths are ignored.
   printf '%s\n' '{"session_id":"claude-1","hook_event_name":"UserPromptSubmit","transcript_path":"relative.jsonl"}' | \
     TMUX_PANE="$p1" AGENT_STATUS_KIND=claude "$SET" working
@@ -234,7 +151,7 @@ if [ -n "$JQ" ]; then
     TMUX_PANE="$p1" AGENT_STATUS_KIND=claude "$SET" finished
   [ "$(get "$p1" @agent-transcript)" = "$TMP/claude.jsonl" ] || fail "Claude transcript path not recorded"
 
-  # ctrl-g sends the latest real prompts (not tool results, meta, sidechain or
+  # Generation sends the latest real prompts (not tool results, meta, sidechain or
   # synthetic messages) and the latest assistant text to pi.
   {
     echo 'partial line cut by tail'
@@ -251,24 +168,24 @@ if [ -n "$JQ" ]; then
   } > "$TMP/claude.jsonl"
   mkdir -p "$TMP/fakepi"
   printf '#!/bin/sh\ncat > "%s"\necho "Fix VAT rounding"\n' "$TMP/pi-input" > "$TMP/fakepi/pi"; chmod +x "$TMP/fakepi/pi"
-  PATH="$TMP/fakepi:$PATH" "$PLUGIN_DIR/scripts/agent-sessions.sh" --generate-run "$p1"
-  grep -F 'now fix the VAT rounding' "$TMP/pi-input" >/dev/null || fail "ctrl-g did not send the latest prompt"
-  grep -F 'Rounding fixed in computeVat.' "$TMP/pi-input" >/dev/null || fail "ctrl-g did not send the latest assistant reply"
-  if grep -E 'TOOL OUTPUT|META PROMPT|SIDECHAIN|SYNTHETIC' "$TMP/pi-input" >/dev/null; then fail "ctrl-g sent non-conversation entries"; fi
-  [ "$(cat "$DK")" = 'Fix VAT rounding' ] || fail "transcript-based description not saved"
-  rm -f "$DK"
+  PATH="$TMP/fakepi:$PATH" "$DESCRIBE" run "$p1"
+  grep -F 'now fix the VAT rounding' "$TMP/pi-input" >/dev/null || fail "generation did not send the latest prompt"
+  grep -F 'Rounding fixed in computeVat.' "$TMP/pi-input" >/dev/null || fail "generation did not send the latest assistant reply"
+  if grep -E 'TOOL OUTPUT|META PROMPT|SIDECHAIN|SYNTHETIC' "$TMP/pi-input" >/dev/null; then fail "generation sent non-conversation entries"; fi
+  [ "$(get "$p1" @agent-description)" = 'Fix VAT rounding' ] || fail "transcript-based title not set"
   # pi session files use {"type":"message","message":{"role":...}} entries.
   printf '%s\n' '{"type":"session","version":3,"id":"x"}' \
     '{"type":"message","message":{"role":"user","content":[{"type":"text","text":"pi: tidy the billing tests"}]}}' \
     '{"type":"custom_message","content":"SYNTHETIC"}' \
     '{"type":"message","message":{"role":"assistant","content":[{"type":"thinking","thinking":"THINKING"},{"type":"text","text":"Tests tidied."}]}}' \
     > "$TMP/pi.jsonl"
-  ctx=$("$PLUGIN_DIR/scripts/agent-sessions.sh" --context "$TMP/pi.jsonl")
+  ctx=$("$DESCRIBE" context "$TMP/pi.jsonl")
   case "$ctx" in *'pi: tidy the billing tests'*'Tests tidied.'*) ;; *) fail "pi session context not read: $ctx" ;; esac
   case "$ctx" in *THINKING*|*SYNTHETIC*) fail "pi context included thinking or custom entries" ;; esac
 
   printf '%s\n' '{"reason":"other","session_id":"claude-1"}' | TMUX_PANE="$p1" AGENT_STATUS_KIND=claude "$CLEAR"
   [ -z "$(get "$p1" @agent-transcript)" ] || fail "clear left the transcript path"
+  [ -z "$(get "$p1" @agent-description)" ] || fail "the agent's exit left its title"
   printf '%s\n' '{"session_id":"claude-1","hook_event_name":"SessionStart"}' | \
     TMUX_PANE="$p1" AGENT_STATUS_KIND=claude "$SET" idle
 

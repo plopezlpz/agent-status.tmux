@@ -3,7 +3,7 @@
 # Usage: update-window-icon.sh <window_id> [layout]
 # `layout` (window-layout-changed / pane-moved hooks) only reconciles: it
 # exits after one tmux call unless the window's agent panes changed since the
-# cached @agent-icon-key, and redraws the navigator only when the icon changes.
+# cached @agent-icon-key, and bumps @agent-revision only when the icon changes.
 set -eu
 
 window_id="${1:-}" mode="${2:-}"
@@ -25,8 +25,8 @@ fi
 
 agent_lock "window-${window_id#@}"
 
-# Navigator reloads watch this cheap global token; update it even when the
-# window's worst-state icon is unchanged (another card may have changed).
+# UIs watch this cheap global token; update it even when the
+# window's worst-state icon is unchanged (another pane's state changed).
 [ "$mode" = layout ] || tmux set-option -g @agent-revision "$(date +%s).$$.$RANDOM" 2>/dev/null || true
 
 best="" top=0 key=""
