@@ -26,7 +26,7 @@ bash "$TMP/plugin-alias/manage-provider.sh" install pi >/dev/null
 [ -L "$OPENCODE_CONFIG_DIR/plugins/agent-status.tmux.js" ] || fail "opencode plugin missing"
 [ "$(jq '[.plugin[] | select(. == "./agent-status-tui.js")] | length' "$OPENCODE_CONFIG_DIR/tui.jsonc")" -eq 1 ] || fail "opencode config duplicated"
 [ "$(jq -r .theme "$OPENCODE_CONFIG_DIR/tui.jsonc")" = safe ] || fail "opencode changed unrelated config"
-mode=$(stat -f %Lp "$OPENCODE_CONFIG_DIR/tui.jsonc" 2>/dev/null || stat -c %a "$OPENCODE_CONFIG_DIR/tui.jsonc")
+mode=$(stat -c %a "$OPENCODE_CONFIG_DIR/tui.jsonc" 2>/dev/null || stat -f %Lp "$OPENCODE_CONFIG_DIR/tui.jsonc")
 [ "$mode" = 600 ] || fail "opencode changed config permissions"
 [ "$(grep -c '^# >>> agent-status.tmux kimi integration$' "$KIMI_CODE_HOME/config.toml")" -eq 1 ] || fail "kimi block duplicated"
 [ "$(grep -c '^\[\[hooks\]\]$' "$KIMI_CODE_HOME/config.toml")" -eq 14 ] || fail "kimi hook map is not exact"
