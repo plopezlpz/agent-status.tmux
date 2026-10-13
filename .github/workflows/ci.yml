@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      # The checkout lands in a directory named agent-status.tmux (the repo
+      # name), which test-hooks.sh relies on to tell plugin hooks apart.
+      - uses: actions/checkout@v4
+
+      # Ubuntu's tmux (3.4 on 24.04) meets the 3.3 minimum in the README.
+      - name: Install tmux, jq and shellcheck (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y tmux jq shellcheck
+      - name: Install tmux, jq and shellcheck (macOS)
+        if: runner.os == 'macOS'
+        run: brew install tmux jq shellcheck
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Versions
+        run: tmux -V; jq --version; shellcheck --version | head -2; bun --version; bash --version | head -1
+
+      - name: Lint
+        run: |
+          scripts=$(git ls-files '*.sh' agent-status.tmux)
+          for f in $scripts; do bash -n "$f"; done
+          # shellcheck disable=SC2086
+          shellcheck -S warning $scripts
+
+      - name: Test
+        run: bash tests/run.sh
