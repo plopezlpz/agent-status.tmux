@@ -114,6 +114,20 @@ add_hook() {
   tmux set-hook -ga "$name" "$cmd"
 }
 
+# Opt-in: with @agent-icon-in-status on, put the window icon in front of both
+# window status formats, so a config needs no format edits. A format that
+# already shows @agent-icon is left alone, so a reload never adds it twice. Set
+# your own formats before this plugin loads.
+if [ "$(tmux show-option -gqv @agent-icon-in-status)" = on ]; then
+  for _fmt in window-status-format window-status-current-format; do
+    _cur=$(tmux show-option -gwqv "$_fmt")
+    case "$_cur" in
+      *@agent-icon*) ;;
+      *) tmux set-option -gw "$_fmt" "#{?@agent-icon,#{@agent-icon} ,}$_cur" ;;
+    esac
+  done
+fi
+
 # All hooks use run-shell -b so a slow script never blocks tmux's command queue.
 # Mark an unseen idle completion as seen when the pane gets focus.
 add_hook pane-focus-in \

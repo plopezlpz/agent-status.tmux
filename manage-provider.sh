@@ -1,16 +1,49 @@
 #!/usr/bin/env bash
 # Install/uninstall lifecycle adapters without touching unrelated provider config.
-# Usage: manage-provider.sh <install|uninstall> <pi|omp|opencode|kilo|kimi|mastracode|claude>
+# Usage: manage-provider.sh <install|uninstall> [--yes | pi|omp|opencode|kilo|kimi|mastracode|claude]
+# Without a provider it finds the supported agents on this machine and, in a
+# terminal, asks before hooking them up (--yes doesn't ask). The rest are skipped.
+#   manage-provider.sh found <provider>   exit 0 if that agent is installed (its config home exists)
 set -eu
 ACTION="${1:-}" PROVIDER="${2:-}"
-case "$ACTION" in install|uninstall) ;; *) PROVIDER="" ;; esac
-case "$PROVIDER" in
-  pi|omp|opencode|kilo|kimi|mastracode|claude) ;;
-  *) echo "usage: $0 <install|uninstall> <pi|omp|opencode|kilo|kimi|mastracode|claude>" >&2; exit 2 ;;
-esac
+PROVIDERS="pi omp opencode kilo kimi mastracode claude"
+USAGE="usage: $0 <install|uninstall> [--yes | ${PROVIDERS// /|}]"
+case "$ACTION" in install|uninstall|found) ;; *) echo "$USAGE" >&2; exit 2 ;; esac
 ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
+if [ "$ACTION" != found ] && { [ -z "$PROVIDER" ] || [ "$PROVIDER" = --yes ] || [ "$PROVIDER" = -y ]; }; then
+  [ $# -le 2 ] || { echo "$USAGE" >&2; exit 2; }
+  found=""
+  for p in $PROVIDERS; do
+    if bash "$ROOT/manage-provider.sh" found "$p"; then found="$found $p"; fi
+  done
+  found=${found# }
+  if [ -z "$found" ]; then
+    echo "agent-status: no supported agent found (looked for ${PROVIDERS// /, })"
+    exit 0
+  fi
+  list=${found// /, }
+  if [ "$ACTION" = install ] && [ -z "$PROVIDER" ] && [ -t 0 ] && [ -t 1 ]; then
+    printf 'agent-status: found %s.\nHook them up? [Y/n] ' "$list"
+    read -r ans || ans=n
+    case "$ans" in '' | y* | Y*) ;; *) echo "Nothing changed."; exit 0 ;; esac
+  fi
+  rc=0
+  for p in $found; do bash "$ROOT/manage-provider.sh" "$ACTION" "$p" || rc=1; done
+  if [ "$ACTION" = install ] && [ "$rc" -eq 0 ]; then
+    echo "agent-status: hooked up $list; restart them to pick up their hooks."
+  fi
+  exit "$rc"
+fi
+
+case "$PROVIDER" in
+  pi|omp|opencode|kilo|kimi|mastracode|claude) ;;
+  *) echo "$USAGE" >&2; exit 2 ;;
+esac
+
 if [ "$PROVIDER" = claude ]; then
+  # Claude's installer would create ~/.claude/settings.json, so "found" means its home exists.
+  if [ "$ACTION" = found ]; then [ -d "$(dirname "${CLAUDE_SETTINGS:-$HOME/.claude/settings.json}")" ]; exit; fi
   exec bash "$ROOT/install-claude-hooks.sh" "$ACTION"
 fi
 
@@ -127,6 +160,11 @@ case "$PROVIDER" in
     events='[{"event":"SessionStart","action":"session"},{"event":"SessionEnd","action":"end"},{"event":"UserPromptSubmit","action":"working"},{"event":"AgentStart","action":"working"},{"event":"PreToolUse","action":"working"},{"event":"PermissionRequest","action":"blocked"},{"event":"PermissionResult","action":"working"},{"event":"SubagentStart","action":"working"},{"event":"SubagentEnd","action":"working"},{"event":"Interrupt","action":"interrupt"},{"event":"AgentEnd","action":"idle"},{"event":"Stop","action":"idle"}]'
     ;;
 esac
+if [ "$ACTION" = found ]; then
+  # An explicit Pi extensions dir counts as installed, as it does for install.
+  if [ "$PROVIDER" = pi ] && [ -n "${PI_EXTENSIONS_DIR:-}" ]; then exit 0; fi
+  [ -d "$base" ]; exit
+fi
 # The adapter's path as a single-quoted shell word, for hook commands.
 cmd_path=$(printf '%s' "$dest" | sed "s/'/'\\\\''/g")
 

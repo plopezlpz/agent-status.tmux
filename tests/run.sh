@@ -25,6 +25,8 @@ trap cleanup EXIT
 bash "$HERE/test-engine-option.sh" || rc=1
 bash "$HERE/test-installer.sh" || rc=1
 bash "$HERE/test-provider-installers.sh" || rc=1
+bash "$HERE/test-install-all.sh" || rc=1
+bash "$HERE/test-icon-in-status.sh" || rc=1
 bash "$HERE/test-auto-desc.sh" || rc=1
 bash "$HERE/test-state.sh" || rc=1
 bash "$HERE/test-hooks.sh" || rc=1

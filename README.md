@@ -16,25 +16,29 @@ With [TPM]:
 
 ```tmux
 set -g @plugin 'plopezlpz/agent-status.tmux'
+set -g @agent-icon-in-status on   # the icon in front of each window name
 run '~/.tmux/plugins/tpm/tpm'
 ```
 
-Run `prefix I`, then hook up each agent you use and restart it:
+Run `prefix I`, then hook up your agents and restart them:
 
 ```bash
-bash ~/.tmux/plugins/agent-status.tmux/manage-provider.sh install claude
-# providers: pi omp opencode kilo kimi mastracode claude
+bash ~/.tmux/plugins/agent-status.tmux/manage-provider.sh install
 ```
 
-Add the icon to both window status formats:
+It lists the supported agents it finds on this machine and asks before hooking
+them up (`--yes` doesn't ask); the others are skipped.
+`manage-provider.sh install claude` does just one, and `manage-provider.sh uninstall`
+(with or without a name) undoes it. Installers only add or remove their own
+entries and refuse to overwrite files they don't own.
+
+Rather place the icon yourself? Leave `@agent-icon-in-status` off and add
+`#{?@agent-icon,#{@agent-icon} ,}` to your window status formats, e.g.:
 
 ```tmux
 setw -g window-status-format         "#{?@agent-icon,#{@agent-icon} ,}#I:#W "
 setw -g window-status-current-format "#{?@agent-icon,#{@agent-icon} ,}#I:#W "
 ```
-
-`manage-provider.sh uninstall <provider>` undoes an install. Installers only
-add or remove their own entries and refuse to overwrite files they don't own.
 
 ## Providers
 
@@ -65,6 +69,7 @@ Set options before TPM runs.
 | `@agent-icon-asking`, `@agent-color-asking` | `●`, `red` |
 | `@agent-icon-finished`, `@agent-color-finished` | `●`, `cyan` |
 | `@agent-icon-idle`, `@agent-color-idle` | `○`, `green` |
+| `@agent-icon-in-status` | `off` (`on`: put the icon in front of both window status formats; set your own formats before the plugin loads) |
 | `@agent-terminal-app` | empty (macOS app to raise on a notification click, e.g. `Ghostty`) |
 | `@agent-notify-timeout` | `300` (seconds before an alerter notification closes; `0` = never) |
 | `@agent-notify-team-delay` | `10` (seconds a Claude agent-team lead's notification waits for its teammates; `0` = off) |
