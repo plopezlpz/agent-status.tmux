@@ -6,11 +6,31 @@
 provider lifecycle event
   -> tiny provider adapter
   -> scripts/agent/set-state.sh (provider-neutral sink)
-  -> pane options (@agent-state, @agent-unseen, @agent-instance,
-                   @agent-seq, @agent-kind, @agent-state-at,
-                   @agent-auto-description)
+  -> pane options (below)
   -> window icon / notification
 ```
+
+| Pane option | Value |
+|---|---|
+| `@agent-state` | `working`, `asking` or `idle` |
+| `@agent-unseen` | `1` while an idle completion is not seen yet (shown as finished), else `0` |
+| `@agent-state-at` | when the state last changed, Unix seconds |
+| `@agent-kind` | the provider: `pi`, `omp`, `opencode`, `kilo`, `kimi`, `mastracode`, `claude` or `codex` |
+| `@agent-instance` | the provider-qualified session id (`kind:id`) |
+| `@agent-seq` | the last accepted sequence number from an in-process adapter |
+| `@agent-auto-description` | the first prompt (or the session's own title), at most 50 characters |
+| `@agent-description` | a title the user set (by a UI or `describe.sh set`) |
+| `@agent-transcript` | the session's `.jsonl` (Claude, Codex, pi); `describe.sh` reads Claude's and pi's for title suggestions |
+| `@agent-asks` | internal: open Claude and Codex permission prompts and dialogs, space-separated |
+| `@agent-settled` | internal: the `@agent-unseen` value to restore when an ask on a settled pane ends (a Codex subagent's, a Claude dialog between turns) |
+| `@agent-subagents` | internal: Kimi subagents started in the current turn |
+| `@agent-notify-token` | internal: cancels a delayed notification |
+
+All of them are unset together when the agent exits. Window option:
+`@agent-icon`. Global options, set on every load: `@agent-icon-format` (the
+icon's tmux format), `@agent-suggest-command` (the title-suggestion command)
+and `@agent-scripts-dir` (this checkout's `scripts/agent`, for adapters and
+other tools' installers, such as paddock's).
 
 `finished` is stored as `idle + unseen`; focusing the pane acknowledges it.
 A completion or permission prompt is not notified when the most recently
@@ -18,8 +38,8 @@ active client is showing its pane with terminal focus; other clients don't
 count, since one left attached elsewhere (a phone over mosh) never reports
 losing focus. A completion keeps the finished marker until focus or the next
 prompt. A notification click switches a local client (one not running under
-sshd or mosh-server), preferring the one captured at notify time; a remote
-client such as a phone is never switched. The click also marks the pane
+sshd, mosh-server or etserver), preferring the one captured at notify time; a
+remote client such as a phone is never switched. The click also marks the pane
 seen, which focus alone does not while another client already shows it.
 
 A state change is one chained tmux write (pane options, the window icon), so
@@ -53,20 +73,29 @@ is a title the user set, which UIs show instead. A UI may set it directly
 to automatic). Both are cleared with the other options when the agent exits.
 The plugin sets `@agent-suggest-command` to `describe.sh suggest`: run with a
 pane id appended, it waits for pi and prints a title without setting it, or
-fails with the reason on stderr; a signal stops pi.
+fails with the reason on stderr; a signal stops pi. pi runs for at most
+`AGENT_DESCRIBE_TIMEOUT` seconds (default 120; enforced with coreutils
+`timeout` or perl when either is installed); paddock gives up after 30. If pi
+is not on the `PATH` that `describe.sh` runs with, the directory in
+`AGENT_PI_FALLBACK_PATH` is tried too (default: fnm's default alias,
+`~/.local/share/fnm/aliases/default/bin`; empty: `PATH` only).
 
 A future provider adapter must:
 
 1. have native full-lifecycle authority (do not infer semantic state);
-2. map native events directly to `working`, `asking`, `finished`, or initial
-   `idle` through `set-state.sh`;
+2. map native events directly to `working`, `asking`, `finished`, or `idle`
+   through `set-state.sh`; `idle` means waiting with nothing new to show (a
+   new session, or a turn the user interrupted or aborted), so it never
+   claims an unseen completion;
 3. pass `instance`, monotonic `seq` when events share a process, and a stable
    lowercase `kind`; use `reset` only at authoritative root-session selection;
 4. send first native prompt text to `auto-desc.sh set`, and clear it for a new
    session;
 5. avoid blocking or breaking the provider when status reporting fails.
    Always pass positional arguments: `set-state.sh` reads a stdin payload
-   only in the single-argument hook form Claude and Codex hooks use.
+   only in the single-argument hook form Claude and Codex hooks use;
+6. on a real exit, run `clear-state.sh <reason> <instance> <kind>`; the
+   reasons `clear` and `resume` keep the pane registered.
 
 ## Providers in detail
 
@@ -120,3 +149,15 @@ Providers whose config directory is missing are skipped (Claude's
 `settings.json` is created).
 `install-claude-hooks.sh [install|uninstall]` is what `manage-provider.sh`
 runs for Claude.
+
+`manage-provider.sh found <provider>` exits 0 when that agent is installed,
+meaning its config directory exists (for Claude, the directory holding its
+`settings.json`; for pi, a set `PI_EXTENSIONS_DIR` also counts). It exits 1
+when the agent is not installed, and 2 on a usage error (an unknown action or
+provider). A bare `manage-provider.sh install|uninstall` uses it to pick the
+agents to hook up. paddock's installer depends on it too. On a first install
+in a terminal, it reads `@agent-scripts-dir`, finds `manage-provider.sh`
+beside it and runs `found claude`. Exit 2 means this agent-status.tmux can't
+list agents. Otherwise it runs `manage-provider.sh install`, which finds the
+agents and asks before hooking them up. So keep `found` and its exit
+statuses stable.
