@@ -22,7 +22,7 @@ provider lifecycle event
 | `@agent-description` | a title the user set (by a UI or `describe.sh set`) |
 | `@agent-transcript` | the session's `.jsonl` (Claude, Codex, pi); `describe.sh` reads Claude's and pi's for title suggestions |
 | `@agent-asks` | internal: open Claude and Codex permission prompts and dialogs, space-separated |
-| `@agent-settled` | internal: the `@agent-unseen` value to restore when an ask on a settled pane ends (a Codex subagent's, a Claude dialog between turns) |
+| `@agent-settled` | internal: the `@agent-unseen` value to restore when an ask on a settled pane ends (a Codex subagent's, a Claude dialog between turns); focusing the pane sets it to 0 |
 | `@agent-subagents` | internal: Kimi subagents started in the current turn |
 | `@agent-notify-token` | internal: cancels a delayed notification |
 
@@ -57,8 +57,8 @@ run it after their pane write; the plugin's `pane-exited`,
 (kill, break, join, move and swap-pane), through `run-shell -C`, which expands
 the id without a process, and only when the icon changes, since every option
 write redraws every client. Every window is recomputed on load. The
-`pane-focus-in` hook checks for an unseen completion in tmux and runs a script
-only to clear one; `pane-died` clears a remain-on-exit pane (`run-shell -b`).
+`pane-focus-in` hook checks for an unseen completion in tmux, or one an ask
+holds in `@agent-settled`, and runs a script only to clear one; `pane-died` clears a remain-on-exit pane (`run-shell -b`).
 
 Authoritative session IDs are provider-qualified, and adapters with an
 in-process event stream submit monotonic sequences so stale reports are

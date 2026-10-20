@@ -138,9 +138,10 @@ background() {
   local s=${1//\\/\\\\}; s=${s//\"/\\\"}; s=${s//\$/\\\$}
   BG="run-shell -b \"$s\""
 }
-# Mark an unseen idle completion as seen when the pane gets focus.
+# Mark an unseen idle completion as seen when the pane gets focus, and one
+# held while a late ask shows (@agent-settled).
 script clear-finished.sh; background "$SCRIPT #{pane_id}"
-add_hook pane-focus-in "if -F '#{&&:#{==:#{@agent-state},idle},#{==:#{@agent-unseen},1}}' { $BG }"
+add_hook pane-focus-in "if -F '#{||:#{&&:#{==:#{@agent-state},idle},#{==:#{@agent-unseen},1}},#{&&:#{==:#{@agent-state},asking},#{==:#{@agent-settled},1}}}' { $BG }"
 
 # Recompute the window icon when panes leave or join a window: kill-pane,
 # join-pane/move-pane and cross-window swap-pane change both windows'

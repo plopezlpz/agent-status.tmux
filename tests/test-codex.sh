@@ -237,6 +237,12 @@ ev blocked PermissionRequest '"agent_id":"a3","agent_type":"default","tool_name"
 [ "$(shown):$(get @agent-settled)" = "asking:0:a3/Bash:1" ] || fail "a late subagent's ask: $(shown) $(get @agent-settled)"
 ev working PostToolUse '"agent_id":"a3","agent_type":"default","tool_name":"Bash","tool_input":{"command":"rm w"},"tool_use_id":"s2","tool_response":"ok"'
 [ "$(shown):$(get @agent-settled)" = "idle:1::" ] || fail "a late subagent's answered ask did not settle the pane: $(shown) $(get @agent-settled)"
+# Focusing the pane to answer one sees the completion it holds.
+ev blocked PermissionRequest '"agent_id":"a3","agent_type":"default","tool_name":"Bash","tool_input":{"command":"rm t"}'
+"$ROOT/scripts/agent/clear-finished.sh" "$p1" </dev/null
+[ "$(shown):$(get @agent-settled)" = "asking:0:a3/Bash:0" ] || fail "focus during a late subagent's ask: $(shown) $(get @agent-settled)"
+ev working PostToolUse '"agent_id":"a3","agent_type":"default","tool_name":"Bash","tool_input":{"command":"rm t"},"tool_use_id":"s4","tool_response":"ok"'
+[ "$(shown):$(get @agent-settled)" = "idle:0::" ] || fail "a completion seen during a late subagent's ask came back: $(shown) $(get @agent-settled)"
 # A prompt meanwhile resumes the pane itself.
 ev blocked PermissionRequest '"agent_id":"a3","agent_type":"default","tool_name":"Bash","tool_input":{"command":"rm v"}'
 ev working UserPromptSubmit '"prompt":"next"'

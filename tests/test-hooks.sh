@@ -90,7 +90,7 @@ done
 # Scripts run in the background, and only when there is work: a routine
 # focus change, layout change or pane exit starts no process at all.
 tmux show-hooks -g pane-died | grep -F "run-shell -b \"'$AGENT/clear-pane.sh'" | grep -F '#{hook_pane}' >/dev/null || fail "pane-died hook is not run-shell -b with #{hook_pane}"
-tmux show-hooks -g pane-focus-in | grep -F 'if-shell -F "#{&&:#{==:#{@agent-state},idle},#{==:#{@agent-unseen},1}}"' | grep -F "run-shell -b \"'$AGENT/clear-finished.sh'" >/dev/null || fail "pane-focus-in does not check for an unseen completion in tmux"
+tmux show-hooks -g pane-focus-in | grep -F 'if-shell -F "#{||:#{&&:#{==:#{@agent-state},idle},#{==:#{@agent-unseen},1}},#{&&:#{==:#{@agent-state},asking},#{==:#{@agent-settled},1}}}"' | grep -F "run-shell -b \"'$AGENT/clear-finished.sh'" >/dev/null || fail "pane-focus-in does not check for an unseen completion in tmux"
 # The icon hooks name the hook's window and write only a changed icon.
 for h in pane-exited window-layout-changed pane-moved; do
   line=$(tmux show-hooks -g "$h" | grep -F '@agent-icon-format')
@@ -363,6 +363,12 @@ ev ElicitationResult working '"mcp_server_name":"tracker","action":"cancel","mod
 [ "$(shown):$(get "$p6" @agent-unseen):$(get "$p6" @agent-settled)" = "idle::1:" ] || fail "an answered elicitation between turns did not settle the pane: $(shown)"
 ev ElicitationResult working '"mcp_server_name":"tracker","action":"cancel","mode":"form"'
 [ "$(shown):$(get "$p6" @agent-unseen)" = "idle::1" ] || fail "a late elicitation answer woke the pane: $(shown)"
+# Focusing the pane to answer one sees the completion it holds.
+ev Elicitation asking '"mcp_server_name":"tracker","message":"Pick a project","mode":"form"'
+"$AGENT/clear-finished.sh" "$p6" </dev/null
+[ "$(shown):$(get "$p6" @agent-settled)" = "asking:/:0" ] || fail "focus during an elicitation between turns changed the ask: $(shown)"
+ev ElicitationResult working '"mcp_server_name":"tracker","action":"accept","mode":"form"'
+[ "$(shown):$(get "$p6" @agent-unseen):$(get "$p6" @agent-settled)" = "idle::0:" ] || fail "a completion seen during an elicitation came back: $(shown) $(get "$p6" @agent-unseen)"
 # Later prompts keep the title; a new session clears it, a compaction doesn't.
 ev UserPromptSubmit working '"prompt":"something else"'
 [ "$(get "$p6" @agent-auto-description)" = "check the logs" ] || fail "a later prompt replaced the title"
@@ -544,6 +550,13 @@ seen(){ [ "$(get "$p8" @agent-unseen)" = 0 ]; }
 eventually seen || fail "focusing a finished pane did not mark it seen"
 eventually icon_is "$p8" idle || fail "focusing a finished pane did not recompute its icon"
 tmux select-window -t "$p1"
+# So does focusing it while a late ask holds its completion (@agent-settled).
+tmux set-option -p -t "$p8" @agent-state asking \; set-option -p -t "$p8" @agent-settled 1
+tmux select-window -t "$p8"
+settled_seen(){ [ "$(get "$p8" @agent-settled)" = 0 ]; }
+eventually settled_seen || fail "focusing a pane whose ask holds a completion did not mark it seen"
+tmux select-window -t "$p1"
+tmux set-option -p -t "$p8" @agent-state idle \; set-option -p -u -t "$p8" @agent-settled
 # The message is one line without control characters, cut to 240 characters
 # (not bytes, whatever the locale).
 rm -f "$TMP/message"

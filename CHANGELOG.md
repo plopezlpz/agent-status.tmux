@@ -9,7 +9,7 @@ Notable changes to agent-status.tmux, newest first. The format follows [Keep a C
 ### Added
 
 - Codex support. `manage-provider.sh install codex` adds hooks to `${CODEX_HOME:-~/.codex}/hooks.json`. Codex runs a hook only after you trust it (`/hooks`), so the installer edits the file in place and other tools' hooks keep the place Codex trusts them by.
-- Codex: a permission prompt, a question from the model, or a request for more permissions (`request_permissions`) shows as asking. A prompt stays asking while parallel shell calls keep running, until its own call returns. An Esc settles idle, and a subagent that outlives its parent's turn doesn't wake the settled pane. `codex exec`, `codex review` and Codex's other headless commands are ignored.
+- Codex: a permission prompt, a question from the model, or a request for more permissions (`request_permissions`) shows as asking. A prompt stays asking while parallel shell calls keep running, until its own call returns. An Esc settles idle, and a subagent that outlives its parent's turn doesn't wake the settled pane: only its asks show, and going to the pane to answer one marks the finished turn seen. `codex exec`, `codex review` and Codex's other headless commands are ignored.
 - The README explains why a session in Codex's shared background server can't report into its pane, so in tmux Codex runs as `codex --no-daemon`.
 
 ### Changed
@@ -49,7 +49,7 @@ Notable changes to agent-status.tmux, newest first. The format follows [Keep a C
 - pi, OMP, OpenCode and Kilo use only the start of a long prompt for the pane's title, so a huge pasted prompt no longer leaves the pane without a title.
 - Claude Code: a subagent's open permission prompt no longer ends when the main thread launches or gets back another Agent call. It ends when that subagent stops (new `SubagentStop` hook) or when the foreground Agent call that ran it returns.
 - Claude Code: a read-only tool that starts beside one waiting for permission no longer drops the pane from "asking".
-- Claude Code: an MCP server's form or browser-URL request shows as "asking" until you answer it (new `Elicitation` and `ElicitationResult` hooks). A request that comes between turns leaves the pane as it was once answered.
+- Claude Code: an MCP server's form or browser-URL request shows as "asking" until you answer it (new `Elicitation` and `ElicitationResult` hooks). A request that comes between turns leaves the pane as it was once answered, except that a finished turn counts as seen if you went to the pane to answer it.
 - Claude Code: a sandboxed command's network-request prompt shows as "asking" (new `permission_prompt` notification hook).
 - Claude Code: text pasted into the first prompt is left out of the pane title.
 
