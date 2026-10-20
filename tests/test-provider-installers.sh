@@ -59,6 +59,20 @@ for home in "$KIMI_CODE_HOME" "$MASTRACODE_HOME"; do
   [ ! -e "$home/hooks/agent-status.tmux.sh" ] || fail "${home##*/} uninstall kept the old adapter link"
 done
 
+# Without OPENCODE_CONFIG_DIR or KILO_CONFIG_DIR, OpenCode and Kilo read
+# $XDG_CONFIG_HOME/<name>, as the installer does.
+(
+  unset OPENCODE_CONFIG_DIR KILO_CONFIG_DIR
+  export XDG_CONFIG_HOME="$TMP/xdg"; mkdir -p "$XDG_CONFIG_HOME/opencode" "$XDG_CONFIG_HOME/kilo"
+  for provider in opencode kilo; do
+    bash "$ROOT/manage-provider.sh" found "$provider" || fail "$provider under XDG_CONFIG_HOME not found"
+    bash "$ROOT/manage-provider.sh" install "$provider" >/dev/null
+  done
+  [ -L "$XDG_CONFIG_HOME/opencode/plugins/agent-status.tmux.js" ] || fail "opencode not installed under XDG_CONFIG_HOME"
+  [ -L "$XDG_CONFIG_HOME/kilo/plugin/agent-status.tmux.js" ] || fail "kilo not installed under XDG_CONFIG_HOME"
+  [ ! -e "$HOME/.config" ] || fail "an installer wrote to ~/.config despite XDG_CONFIG_HOME"
+)
+
 # Invalid or ambiguously marked configs fail before any adapter link is made.
 tuple_oc="$TMP/tuple-opencode"; mkdir -p "$tuple_oc"; printf '{"plugin":[["./agent-status-tui.js",{"enabled":true}],"keep"]}\n' > "$tuple_oc/tui.jsonc"
 OPENCODE_CONFIG_DIR="$tuple_oc" bash "$ROOT/manage-provider.sh" install opencode >/dev/null

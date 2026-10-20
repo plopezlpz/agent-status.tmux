@@ -145,12 +145,12 @@ case "$PROVIDER" in
     src="$ROOT/scripts/omp/agent-status.ts"; dest="${OMP_EXTENSIONS_DIR:-$base/agent/extensions}/agent-status.ts"
     ;;
   opencode)
-    base="${OPENCODE_CONFIG_DIR:-$HOME/.config/opencode}"
+    base="${OPENCODE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/opencode}"
     src="$ROOT/scripts/opencode/agent-status.js"; dest="$base/plugins/agent-status.tmux.js"
     tui_src="$ROOT/scripts/opencode/agent-status-tui.js"; tui_dest="$base/agent-status-tui.js"; config="$base/tui.jsonc"
     ;;
   kilo)
-    base="${KILO_CONFIG_DIR:-$HOME/.config/kilo}"
+    base="${KILO_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/kilo}"
     src="$ROOT/scripts/kilo/agent-status.js"; dest="$base/plugin/agent-status.tmux.js"
     ;;
   kimi)

@@ -95,7 +95,8 @@ whose command-line prompt starts with a headless subcommand's name (`codex
 
 Installer path overrides follow each provider's conventions: pi
 `PI_CODING_AGENT_DIR`, `PI_EXTENSIONS_DIR`; OMP `PI_CONFIG_DIR`,
-`OMP_EXTENSIONS_DIR`; `OPENCODE_CONFIG_DIR`, `KILO_CONFIG_DIR`,
+`OMP_EXTENSIONS_DIR`; `OPENCODE_CONFIG_DIR`, `KILO_CONFIG_DIR` (else
+`$XDG_CONFIG_HOME/opencode`, `$XDG_CONFIG_HOME/kilo`),
 `KIMI_CODE_HOME`, `MASTRACODE_HOME`, `CODEX_HOME`, and Claude's `CLAUDE_CONFIG_DIR` (or
 `CLAUDE_SETTINGS`, the settings file itself). Providers whose
 config directory is missing are skipped (Claude's `settings.json` is created).

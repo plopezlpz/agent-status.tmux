@@ -8,7 +8,7 @@ TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 fail(){ echo "FAIL: $1" >&2; exit 1; }
 command -v jq >/dev/null 2>&1 || { echo "SKIP: install all (jq missing)"; exit 0; }
 unset PI_EXTENSIONS_DIR PI_CODING_AGENT_DIR PI_CONFIG_DIR OMP_EXTENSIONS_DIR OPENCODE_CONFIG_DIR \
-  KILO_CONFIG_DIR KIMI_CODE_HOME MASTRACODE_HOME CLAUDE_SETTINGS CLAUDE_CONFIG_DIR CODEX_HOME
+  KILO_CONFIG_DIR KIMI_CODE_HOME MASTRACODE_HOME CLAUDE_SETTINGS CLAUDE_CONFIG_DIR CODEX_HOME XDG_CONFIG_HOME
 
 # Only Kilo, Claude and Codex are installed.
 export HOME="$TMP/home"; mkdir -p "$HOME/.config/kilo" "$HOME/.claude" "$HOME/.codex"
