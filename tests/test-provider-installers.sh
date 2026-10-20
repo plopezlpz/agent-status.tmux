@@ -13,8 +13,9 @@ export KILO_CONFIG_DIR="$TMP/kilo"; mkdir -p "$KILO_CONFIG_DIR"
 export KIMI_CODE_HOME="$TMP/kimi"; mkdir -p "$KIMI_CODE_HOME"; echo 'model = "keep"' > "$KIMI_CODE_HOME/config.toml"
 export MASTRACODE_HOME="$TMP/mastra"; mkdir -p "$MASTRACODE_HOME"
 # Includes an Interrupt entry from an older event map and a release that ran a
-# symlinked adapter, and a Stop entry from a moved checkout: all are replaced.
-jq -n --arg wrapped "wrapper $MASTRACODE_HOME/hooks/agent-status.tmux.sh extra" --arg old "'$MASTRACODE_HOME/hooks/agent-status.tmux.sh' idle" '{UserPromptSubmit:[{type:"command",command:"keep"},{type:"command",command:$wrapped}],Interrupt:[{type:"command",command:$old}],Stop:[{type:"command",command:"'"'/moved/agent-status.tmux/scripts/agent/hook-event.sh' mastracode idle"'"}]}' > "$MASTRACODE_HOME/hooks.json"
+# symlinked adapter, and a Stop entry (no longer hooked) from a moved
+# checkout: all are replaced. The user's own SessionEnd hook stays, after ours.
+jq -n --arg wrapped "wrapper $MASTRACODE_HOME/hooks/agent-status.tmux.sh extra" --arg old "'$MASTRACODE_HOME/hooks/agent-status.tmux.sh' idle" '{UserPromptSubmit:[{type:"command",command:"keep"},{type:"command",command:$wrapped}],Interrupt:[{type:"command",command:$old}],Stop:[{type:"command",command:"'"'/moved/agent-status.tmux/scripts/agent/hook-event.sh' mastracode idle"'"}],SessionEnd:[{type:"command",command:"user-end"}]}' > "$MASTRACODE_HOME/hooks.json"
 for home in "$KIMI_CODE_HOME" "$MASTRACODE_HOME"; do
   mkdir -p "$home/hooks"; ln -s "$ROOT/scripts/${home##*/}/agent-status.sh" "$home/hooks/agent-status.tmux.sh"
 done
@@ -34,10 +35,12 @@ bash "$TMP/plugin-alias/manage-provider.sh" install pi >/dev/null
 mode=$(stat -c %a "$OPENCODE_CONFIG_DIR/tui.jsonc" 2>/dev/null || stat -f %Lp "$OPENCODE_CONFIG_DIR/tui.jsonc")
 [ "$mode" = 600 ] || fail "opencode changed config permissions"
 [ "$(grep -c '^# >>> agent-status.tmux kimi integration$' "$KIMI_CODE_HOME/config.toml")" -eq 1 ] || fail "kimi block duplicated"
-[ "$(grep -c '^\[\[hooks\]\]$' "$KIMI_CODE_HOME/config.toml")" -eq 14 ] || fail "kimi hook map is not exact"
+[ "$(grep -c '^\[\[hooks\]\]$' "$KIMI_CODE_HOME/config.toml")" -eq 15 ] || fail "kimi hook map is not exact"
 grep -A1 '^event = "StopFailure"$' "$KIMI_CODE_HOME/config.toml" | grep -q "' kimi idle\"$" || fail "kimi StopFailure does not end the turn"
 grep -F 'model = "keep"' "$KIMI_CODE_HOME/config.toml" >/dev/null || fail "kimi changed unrelated config"
-[ "$(grep -cF "command = \"'$ROOT/scripts/agent/hook-event.sh' kimi " "$KIMI_CODE_HOME/config.toml")" -eq 14 ] || fail "kimi hooks do not run hook-event.sh"
+[ "$(grep -cF "command = \"'$ROOT/scripts/agent/hook-event.sh' kimi " "$KIMI_CODE_HOME/config.toml")" -eq 15 ] || fail "kimi hooks do not run hook-event.sh"
+# Turns kimi starts itself (a background task's result, a goal) work too.
+grep -A2 '^event = "TurnStarted"$' "$KIMI_CODE_HOME/config.toml" | grep -q "' kimi working\"$" || fail "kimi TurnStarted does not report working"
 # A reinstall keeps the old adapter link for agents still running the old hooks.
 for home in "$KIMI_CODE_HOME" "$MASTRACODE_HOME"; do
   [ "$(readlink "$home/hooks/agent-status.tmux.sh")" = "$ROOT/scripts/${home##*/}/agent-status.sh" ] || fail "${home##*/} reinstall removed the old adapter link"
@@ -48,6 +51,10 @@ grep -A1 '^event = "Interrupt"$' "$KIMI_CODE_HOME/config.toml" | grep -q "' kimi
 [ "$(jq --arg wrapped "wrapper $MASTRACODE_HOME/hooks/agent-status.tmux.sh extra" '[.UserPromptSubmit[] | select(.command == $wrapped)] | length' "$MASTRACODE_HOME/hooks.json")" -eq 1 ] || fail "mastra removed a non-owned command containing its path"
 [ "$(jq 'keys | length' "$MASTRACODE_HOME/hooks.json")" -eq 12 ] || fail "mastra hook map is not exact"
 [ "$(jq --arg hook "'$ROOT/scripts/agent/hook-event.sh' mastracode " '[.[][] | select(.command | startswith($hook))] | length' "$MASTRACODE_HOME/hooks.json")" -eq 12 ] || fail "mastra hooks do not run hook-event.sh, once per event"
+# MastraCode exits without waiting for SessionEnd hooks: only the first runs.
+[ "$(jq -c '[.SessionEnd[].command | split(" ") | last]' "$MASTRACODE_HOME/hooks.json")" = '["end","user-end"]' ] || fail "mastra SessionEnd is not first"
+jq -e 'has("Stop") | not' "$MASTRACODE_HOME/hooks.json" >/dev/null || fail "mastra still hooks Stop"
+[ "$(jq -c '[.Notification[].command | split(" ") | last]' "$MASTRACODE_HOME/hooks.json")" = '["blocked"]' ] || fail "mastra Notification does not ask"
 
 for provider in pi omp opencode kilo kimi mastracode; do bash "$ROOT/manage-provider.sh" uninstall "$provider" >/dev/null; done
 [ ! -e "$PI_EXTENSIONS_DIR/agent-status.ts" ] || fail "pi link remained"
@@ -56,7 +63,8 @@ for link in plugins/agent-status.tmux.js plugins/agent-status.tmux agent-status-
 done
 [ "$(jq -r .theme "$OPENCODE_CONFIG_DIR/tui.jsonc")" = safe ] || fail "opencode uninstall changed unrelated config"
 [ "$(jq -r '.UserPromptSubmit[0].command' "$MASTRACODE_HOME/hooks.json")" = keep ] || fail "mastra uninstall removed user hook"
-[ "$(jq -c 'keys' "$MASTRACODE_HOME/hooks.json")" = '["UserPromptSubmit"]' ] || fail "mastra uninstall left hooks behind"
+[ "$(jq -c 'keys' "$MASTRACODE_HOME/hooks.json")" = '["SessionEnd","UserPromptSubmit"]' ] || fail "mastra uninstall left hooks behind"
+[ "$(jq -c '.SessionEnd' "$MASTRACODE_HOME/hooks.json")" = '[{"type":"command","command":"user-end"}]' ] || fail "mastra uninstall changed the user's SessionEnd hook"
 [ "$(jq --arg wrapped "wrapper $MASTRACODE_HOME/hooks/agent-status.tmux.sh extra" '[.UserPromptSubmit[] | select(.command == $wrapped)] | length' "$MASTRACODE_HOME/hooks.json")" -eq 1 ] || fail "mastra uninstall removed non-owned command"
 ! grep -q 'agent-status.tmux kimi integration' "$KIMI_CODE_HOME/config.toml" || fail "kimi block remained"
 for home in "$KIMI_CODE_HOME" "$MASTRACODE_HOME"; do
@@ -108,6 +116,23 @@ KIMI_CODE_HOME="$stable_kimi" bash "$ROOT/manage-provider.sh" install kimi >/dev
 cmp -s "$stable_kimi/config.toml" "$TMP/stable-kimi.once" || fail "kimi reinstall is not byte-stable"
 KIMI_CODE_HOME="$stable_kimi" bash "$ROOT/manage-provider.sh" uninstall kimi >/dev/null
 cmp -s "$stable_kimi/config.toml" "$TMP/stable-kimi.orig" || fail "kimi uninstall did not restore the original config"
+# Kimi rewrites its whole config.toml when it adds a top-level key after our
+# block, dropping comments and so our markers: uninstall and reinstall still
+# find our tables, and nothing else.
+lost_kimi="$TMP/lost-kimi"; mkdir -p "$lost_kimi"; printf 'model = "keep"\n' > "$lost_kimi/config.toml"
+KIMI_CODE_HOME="$lost_kimi" bash "$ROOT/manage-provider.sh" install kimi >/dev/null
+{
+  printf 'default_model = "k2"\nmodel = "keep"\n\n[[hooks]]\nevent = "Stop"\ncommand = "notify-send done"\n'
+  grep -v '^# [<>]\{3\} agent-status.tmux kimi integration$' "$lost_kimi/config.toml" | sed '/^model = "keep"$/d; /^$/d; s/^\[\[hooks\]\]$/\n&/'
+  printf '\n# mine\n[thinking]\nenabled = true\n'
+} > "$TMP/lost.toml"
+cat "$TMP/lost.toml" > "$lost_kimi/config.toml"
+[ "$(grep -c "hook-event.sh' kimi" "$lost_kimi/config.toml")" -eq 15 ] || fail "kimi rewritten-config fixture is wrong"
+KIMI_CODE_HOME="$lost_kimi" bash "$ROOT/manage-provider.sh" install kimi >/dev/null
+[ "$(grep -c "hook-event.sh' kimi" "$lost_kimi/config.toml")" -eq 15 ] || fail "kimi reinstall over unmarked hooks duplicated them"
+KIMI_CODE_HOME="$lost_kimi" bash "$ROOT/manage-provider.sh" uninstall kimi >/dev/null
+printf 'default_model = "k2"\nmodel = "keep"\n\n[[hooks]]\nevent = "Stop"\ncommand = "notify-send done"\n\n# mine\n[thinking]\nenabled = true\n' > "$TMP/lost.want"
+cmp -s "$lost_kimi/config.toml" "$TMP/lost.want" || fail "kimi uninstall of unmarked hooks: $(diff "$TMP/lost.want" "$lost_kimi/config.toml")"
 bad_mastra="$TMP/bad-mastra"; mkdir -p "$bad_mastra"; printf '[]\n' > "$bad_mastra/hooks.json"
 if MASTRACODE_HOME="$bad_mastra" bash "$ROOT/manage-provider.sh" install mastracode >/dev/null 2>&1; then fail "mastra accepted non-object config"; fi
 

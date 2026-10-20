@@ -1,4 +1,5 @@
-// Behavioural tests for the OMP, OpenCode, Kilo, Kimi, and MastraCode adapters.
+// Behavioural tests for the OMP, OpenCode and Kilo adapters (the Kimi and
+// MastraCode hooks: test-hook-event.sh).
 // The adapters run from a copy of the plugin whose state scripts are
 // argv-logging stubs (each adapter runs the scripts of its own checkout); no
 // provider, live tmux server, or LLM is involved.
@@ -33,8 +34,6 @@ printf '%s|<stdin:%s>\\n' "$line" "$stdin" >> "$AGENT_TEST_LOG"
 case " \${AGENT_TEST_FAIL:-} " in *" ${name} "*) exit 1 ;; esac
 `);
   }
-  // The hook command is real; only what it calls is stubbed.
-  copyFileSync(resolve(checkout, "scripts/agent/hook-event.sh"), resolve(stubs, "hook-event.sh"));
   // Lookups fail except a busy pane state, which an adapter must not copy onto
   // a newly selected session.
   executable(resolve(bin, "tmux"), '#!/bin/sh\ncase "$*" in *@agent-state*) echo working; exit 0 ;; esac\nexit 1\n');
@@ -463,75 +462,6 @@ process.env.TMUX_PANE = "%7";
   check(got.length === 1 && got[0].startsWith("clear-state.sh|quit|R3|opencode|"), "OpenCode 2 TUI cleanup clears the bound root synchronously");
   check(process.listenerCount("exit") === exitListeners, "OpenCode 2 TUI cleanup removes its exit cleanup");
   check(Object.values(handlers).every(list => list.length === 0), "OpenCode 2 TUI cleanup unsubscribes its events");
-}
-
-// ------------------------------------------------- Kimi / MastraCode hooks
-for (const [kind, name, headlessArgs, interactiveArgs, moreHeadless, moreInteractive] of [
-  ["kimi", "kimi", ["-p", "summarize"], ["--yolo"], [["-m", "k2", "-p", "x"], ["--prompt=x"], ["acp"], ["-S", "-p", "x"]], [["fix the -p flag"], ["--model", "web"], ["-S", "s1", "--yolo"]]],
-  ["mastracode", "mastracode", ["--prompt", "summarize"], [], [["-p", "x"], ["--prompt=x"]], [["fix the -p flag"]]],
-] as const) {
-  // The hook command, as manage-provider.sh installs it.
-  const script = resolve(root, "scripts/agent/hook-event.sh");
-  const provider = resolve(tmp, `provider-${kind}`); mkdirSync(provider, { recursive: true });
-  // A fake provider binary that runs the hook as its child, like the real CLI.
-  executable(resolve(provider, name), `#!/bin/bash\n"$HOOK_SCRIPT" ${kind} "$HOOK_ACTION" < "$HOOK_INPUT"\n`);
-  const env = { ...process.env, TMUX_PANE: "%5" };
-  const hook = (action: string, payload: object, via?: readonly string[]) => {
-    const input = resolve(tmp, "hook-input.json"); writeFileSync(input, JSON.stringify(payload));
-    const r = via
-      ? spawnSync(resolve(provider, name), [...via], { env: { ...env, HOOK_SCRIPT: script, HOOK_ACTION: action, HOOK_INPUT: input }, encoding: "utf8" })
-      : spawnSync(script, [kind, action], { env, input: JSON.stringify(payload), encoding: "utf8" });
-    check(r.status === 0, `${kind} ${action} hook exits 0 (${r.stderr})`);
-    return since();
-  };
-  since();
-  let got = hook("session", { session_id: "s1", hook_event_name: "SessionStart", source: "startup" });
-  check(got[0]?.startsWith(`set-state.sh|idle||s1||${kind}|reset|`), `${kind} SessionStart resets to idle`);
-  check(got[1]?.startsWith("auto-desc.sh|clear|startup|"), `${kind} SessionStart passes its real source to auto-desc`);
-  got = hook("session", { session_id: "s1", hook_event_name: "SessionStart", source: "compact" });
-  check(got.length === 0, `${kind} compact SessionStart neither resets nor clears`);
-  got = hook("working", { session_id: "s1", hook_event_name: "UserPromptSubmit", prompt: "hi" }, interactiveArgs);
-  check(got.some(l => l.startsWith(`set-state.sh|working||s1||${kind}|`)), `${kind} interactive process reports`);
-  check(got[0]?.startsWith("auto-desc.sh|set|hi|<stdin:closed>") === true, `${kind} a prompt submit passes the prompt to auto-desc`);
-  got = hook("working", { session_id: "s1", hook_event_name: "PreToolUse", tool_name: "Bash" });
-  check(got.length === 1 && got[0].startsWith(`set-state.sh|working||s1||${kind}|`), `${kind} a tool event runs no auto-desc`);
-  got = hook("session", { session_id: "h1", hook_event_name: "SessionStart", source: "startup" }, headlessArgs);
-  check(got.length === 0, `${kind} headless process never resets the pane`);
-  got = hook("working", { session_id: "h1", hook_event_name: "UserPromptSubmit", prompt: "hi" }, headlessArgs);
-  check(got.length === 0, `${kind} headless process never reports`);
-  for (const args of moreHeadless) {
-    got = hook("working", { session_id: "h1", hook_event_name: "UserPromptSubmit", prompt: "hi" }, args);
-    check(got.length === 0, `${kind} ${JSON.stringify(args)} is headless`);
-  }
-  for (const args of moreInteractive) {
-    got = hook("working", { session_id: "s1", hook_event_name: "UserPromptSubmit", prompt: "hi" }, args);
-    check(got.some(l => l.startsWith(`set-state.sh|working||s1||${kind}|`)), `${kind} ${JSON.stringify(args)} is interactive`);
-  }
-  {
-    const r = spawnSync(script, [kind, "working"], { env: { ...env, AGENT_TEST_FAIL: "auto-desc.sh" }, input: JSON.stringify({ session_id: "s1", prompt: "hi" }), encoding: "utf8" });
-    got = since();
-    check(r.status === 0 && got.some(l => l.startsWith(`set-state.sh|working||s1||${kind}|`)), `${kind} a failing auto-desc still reports working`);
-  }
-  got = hook("blocked", { session_id: "s1", hook_event_name: "PreToolUse", tool_name: "Bash" });
-  check(got.length === 1 && got[0].startsWith(`set-state.sh|asking|Bash|s1||${kind}|<stdin:closed>`), `${kind} a blocked tool asks, naming the tool`);
-  got = hook("blocked", { session_id: "s1", message: "Allow edit?", tool_name: "Edit" });
-  check(got[0]?.startsWith(`set-state.sh|asking|Allow edit?|s1||${kind}|<stdin:closed>`), `${kind} a blocked message wins over the tool name`);
-  got = hook("idle", { session_id: "s1", hook_event_name: "Stop" });
-  check(got.length === 1 && got[0].startsWith(`set-state.sh|finished||s1||${kind}|<stdin:closed>`), `${kind} Stop finishes the turn`);
-  got = hook("interrupt", { session_id: "s1", hook_event_name: "Interrupt" });
-  check(got.length === 1 && got[0].startsWith(`set-state.sh|idle||s1||${kind}|<stdin:closed>`), `${kind} an interrupt settles idle without a reset`);
-  got = hook("end", { session_id: "s1", hook_event_name: "SessionEnd", reason: "exit" });
-  check(got.length === 1 && got[0].startsWith(`clear-state.sh|exit|s1|${kind}|`), `${kind} SessionEnd clears its own instance`);
-  got = hook("end", { session_id: "s1", hook_event_name: "SessionEnd" });
-  check(got[0]?.startsWith(`clear-state.sh|exit|s1|${kind}|`), `${kind} SessionEnd without a reason still quits`);
-  {
-    // Hooks installed by older releases run a symlink to the adapter shim.
-    const legacy = resolve(tmp, `legacy-${kind}/agent-status.tmux.sh`);
-    mkdirSync(dirname(legacy), { recursive: true }); symlinkSync(resolve(root, `scripts/${kind}/agent-status.sh`), legacy);
-    const r = spawnSync(legacy, ["blocked"], { env, input: JSON.stringify({ session_id: "s1", tool_name: "Edit" }), encoding: "utf8" });
-    got = since();
-    check(r.status === 0 && got.length === 1 && got[0].startsWith(`set-state.sh|asking|Edit|s1||${kind}|`), `${kind} a hook installed by an older release still reports (${r.stderr})`);
-  }
 }
 
 if (failures) process.exit(1);

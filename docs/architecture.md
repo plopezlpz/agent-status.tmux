@@ -76,8 +76,8 @@ A future provider adapter must:
 | OMP | extension; nested blockers, approvals/ask, settle debounce, retry grace (`AGENT_STATUS_OMP_IDLE_DEBOUNCE_MS`, `AGENT_STATUS_OMP_RETRY_GRACE_MS`) |
 | OpenCode | 1.x: server + TUI plugins; the TUI binds the pane to the root session it shows (`set-state.sh` `bind`, which keeps a pane the server plugin bound first to that session) and clears it on exit; a child session reports only its blockers, as its root; an Esc, a rejected permission or question, and an Esc on a `!` shell command settle idle; headless commands are detected from the thread and argv. 2.x: one shared background service runs every session and belongs to no pane, so a TUI plugin (a plugin directory) reports alone, from the service's events, for the active tab's root session; the 1.x server plugin loads there as a no-op |
 | Kilo Code | plugin; the pane is cleared from its `dispose` hook (the default TUI runs it in a worker, where exit handlers never run) or, in `--mini`, a process exit/signal handler; a prompt in another root session (`kilo -c`, picking a session) rebinds the pane; a child session reports only its blockers, as its root; `offline` asks; headless commands (including a `kilo daemon`, so the TUIs attached to one) are detected from the thread and argv |
-| Kimi Code | native hooks incl. `SessionEnd`; headless runs (`-p`, `acp`, `web`, `rc`) are detected from the kimi process argv |
-| MastraCode | native hooks incl. `SessionEnd`; headless `--prompt` runs are detected from argv |
+| Kimi Code | native hooks incl. `SessionEnd`; kimi retitles its process `kimi-code` (cut to its command line's length), so its argv is gone: a run reports only while the kimi process is its terminal's foreground job, which a headless one started by another agent's tool (`-p`, `acp`) is not (one started in a shell or an editor is); the prompt arrives as content parts, whose text names the pane; `TurnStarted` shows turns kimi starts itself (a background task's result) working; a subagent's turn ends with its own `Stop`, `StopFailure` or `Interrupt` under the session's id, so `@agent-subagents` counts the subagents started (`SubagentStart`) and each end while one runs is taken as a subagent's, the last as the turn's (a prompt or a new session starts the count over); the session starts at the first message, so a kimi shows from then; the installer also finds its hook tables when kimi has rewritten `config.toml` without our markers |
+| MastraCode | native hooks incl. `SessionEnd`; the session id follows the thread (`session-init` until the first prompt creates one, then each `/new` or switch, with no new `SessionStart`), so the MastraCode process (its pid) is the identity; only the TUI fires `SessionStart`, so an event reports only into the pane its process registered, which leaves headless runs (`--prompt`, a prompt argument, `--acp`), whose tool hooks still fire, out; `AgentEnd` ends a run (`aborted` settles idle, `suspended` waits on the user, whose question or approval asks through `Notification` or `PermissionRequest`); MastraCode runs only the first `SessionEnd` hook and may exit before it does, so ours goes first and also clears a registration whose process is gone |
 | Codex | native hooks in `hooks.json` run `hook-event.sh codex`, which hands the payload to the hook form of `set-state.sh`/`clear-state.sh` (kind `codex`), so asks work as for Claude, with these differences: Codex runs an agent's shell calls in parallel, all named `Bash`, and its `PermissionRequest` has no call id, so an ask is keyed by a hash of the call's command and ends with that call's `PostToolUse` (a `write_stdin` ask with the `Bash` one) or a call that starts a few seconds after the ask (its siblings start with it; a denied call returns nothing); a subagent's ask also ends with its `SubagentStop`; a subagent's events never wake a settled pane, since a subagent may outlive its parent's turn, and only its asks show there, the pane settling again (`@agent-settled` keeps the unseen value) when they end; the model's `request_user_input` question asks, `Interrupt` settles idle and `SessionEnd` clears; `SessionStart` fires only at the first prompt, and a turn that ends in an error fires no event; headless runs (`exec`, `review`, `app-server`, including the shared background server whose hooks carry the environment of whichever terminal started it) are detected from the nearest codex process's argv; trust is keyed by each hook's place in the file, so the installer edits it in place |
 | Claude Code | native hooks, one `set-state.sh` process per event (it also keeps the first prompt); no interrupt or permission-resolved event, so an Esc or a denied prompt settles on `idle_prompt`; a permission prompt stays asking through the tool hooks of parallel tools and subagents until the agent that asked proceeds (`@agent-asks`); API errors end the turn through `StopFailure`; a Stop while background subagents run stays working; headless runs (`claude -p`, the Agent SDK: `CLAUDE_CODE_ENTRYPOINT=sdk-*`) are ignored |
 
@@ -86,19 +86,22 @@ plugins are symlinks into it and find `scripts/agent` beside their real path,
 and Kimi, MastraCode and Codex hooks run `scripts/agent/hook-event.sh` by
 its path.
 `hook-event.sh` cannot read an interactive flag from the payload, so it
-inspects the provider process's argv once per hook, honoring only options
-before the first non-option word; a headless run it cannot recognize may
-still report into the pane it inherited. Where `/proc/<pid>/cmdline` exists
-it reads the real argv; elsewhere `ps` drops quoting, so an interactive run
-whose command-line prompt starts with a headless subcommand's name (`codex
-"review my change"`) is taken as headless and does not report.
+inspects the provider process's argv (Kimi: its process group) once per
+hook, honoring only options before the first non-option word; a headless
+run it cannot recognize may still report into the pane it inherited. Where
+`/proc/<pid>/cmdline` exists it reads the real argv; elsewhere `ps` drops
+quoting, so an interactive run whose command-line prompt starts with a
+headless subcommand's name (`codex "review my change"`) is taken as
+headless and does not report.
 
 Installer path overrides follow each provider's conventions: pi
 `PI_CODING_AGENT_DIR`, `PI_EXTENSIONS_DIR`; OMP `PI_CONFIG_DIR`,
 `OMP_EXTENSIONS_DIR`; `OPENCODE_CONFIG_DIR`, `KILO_CONFIG_DIR` (else
 `$XDG_CONFIG_HOME/opencode`, `$XDG_CONFIG_HOME/kilo`),
-`KIMI_CODE_HOME`, `MASTRACODE_HOME`, `CODEX_HOME`, and Claude's `CLAUDE_CONFIG_DIR` (or
-`CLAUDE_SETTINGS`, the settings file itself). Providers whose
-config directory is missing are skipped (Claude's `settings.json` is created).
+`KIMI_CODE_HOME`, `CODEX_HOME`, and Claude's `CLAUDE_CONFIG_DIR` (or
+`CLAUDE_SETTINGS`, the settings file itself). `MASTRACODE_HOME` is the
+installer's own, for tests: MastraCode always reads `~/.mastracode`.
+Providers whose config directory is missing are skipped (Claude's
+`settings.json` is created).
 `install-claude-hooks.sh [install|uninstall]` is what `manage-provider.sh`
 runs for Claude.

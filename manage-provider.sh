@@ -113,6 +113,26 @@ strip_marked_block() {
     { print }
     END { if (blank) print "" }' "$1"
 }
+# strip_kimi_hooks: stdin without our [[hooks]] tables. Kimi rewrites its
+# whole config.toml when a line-wise edit won't do (adding a top-level key
+# after our block), which drops every comment, so our markers; the tables
+# stay, now unmarked.
+strip_kimi_hooks() {
+  awk -v q="'" '
+    function flush(  i, last) {
+      if (ours) {
+        # Keep comments that follow the table: they may head the next one.
+        for (i = 1; i <= n; i++) if (buf[i] !~ /^[[:space:]]*(#|$)/) last = i
+        for (i = last + 1; i <= n; i++) if (buf[i] ~ /^[[:space:]]*#/) print buf[i]
+      } else for (i = 1; i <= n; i++) print buf[i]
+      n = 0; ours = 0; hooks = 0
+    }
+    /^[[:space:]]*\[/ { flush(); hooks = ($0 ~ /^[[:space:]]*\[\[[[:space:]]*hooks[[:space:]]*\]\][[:space:]]*(#.*)?$/) }
+    !hooks { print; next }
+    { buf[++n] = $0 }
+    $0 ~ ("^[[:space:]]*command[[:space:]]*=[[:space:]]*\".*/scripts/agent/hook-event\\.sh" q " kimi [a-z]+\"[[:space:]]*$") { ours = 1 }
+    END { flush() }'
+}
 # Markers must pair in order; anything else would make strip eat user lines.
 validate_marked_block() {
   awk -v begin="$2" -v end="$3" '
@@ -163,6 +183,7 @@ case "$PROVIDER" in
     begin='# >>> agent-status.tmux kimi integration' end='# <<< agent-status.tmux kimi integration'
     ;;
   mastracode)
+    # MastraCode always reads ~/.mastracode: MASTRACODE_HOME is ours, for tests.
     base="${MASTRACODE_HOME:-$HOME/.mastracode}"
     config="$base/hooks.json"
     # Our entries: hook-event.sh from any checkout, or the old symlink.
@@ -172,8 +193,10 @@ case "$PROVIDER" in
       if type != "object" then error("root must be object") else . end
       | with_entries(if (.value | type) == "array" and any(.value[]; ours)
           then .value |= map(select(ours | not)) | select(.value | length > 0) else . end)'
-    # Hook event -> hook-event.sh action.
-    events='[{"event":"SessionStart","action":"session"},{"event":"SessionEnd","action":"end"},{"event":"UserPromptSubmit","action":"working"},{"event":"AgentStart","action":"working"},{"event":"PreToolUse","action":"working"},{"event":"PermissionRequest","action":"blocked"},{"event":"PermissionResult","action":"working"},{"event":"SubagentStart","action":"working"},{"event":"SubagentEnd","action":"working"},{"event":"Interrupt","action":"interrupt"},{"event":"AgentEnd","action":"idle"},{"event":"Stop","action":"idle"}]'
+    # Hook event -> hook-event.sh action. MastraCode exits without waiting
+    # for its SessionEnd hooks, which run one after another, so only the
+    # first one runs: ours goes first.
+    events='[{"event":"SessionStart","action":"session"},{"event":"SessionEnd","action":"end","first":true},{"event":"UserPromptSubmit","action":"working"},{"event":"AgentStart","action":"working"},{"event":"PreToolUse","action":"working"},{"event":"PermissionRequest","action":"blocked"},{"event":"PermissionResult","action":"working"},{"event":"Notification","action":"blocked"},{"event":"SubagentStart","action":"working"},{"event":"SubagentEnd","action":"working"},{"event":"Interrupt","action":"interrupt"},{"event":"AgentEnd","action":"idle"}]'
     ;;
   codex)
     base="${CODEX_HOME:-$HOME/.codex}"
@@ -320,7 +343,7 @@ if [ "$ACTION" = install ]; then
       original=/dev/null; [ ! -f "$config" ] || original="$config"
       validate_marked_block "$original" "$begin" "$end"
       tmp=$(mktemp "$config.agent-status.XXXXXX") || exit 1
-      strip_marked_block "$original" "$begin" "$end" > "$tmp"
+      strip_marked_block "$original" "$begin" "$end" | strip_kimi_hooks > "$tmp"
       {
         printf '\n%s\n' "$begin"
         while IFS='|' read -r event matcher action; do
@@ -332,6 +355,7 @@ if [ "$ACTION" = install ]; then
 SessionStart||session
 SessionEnd||end
 UserPromptSubmit||working
+TurnStarted|^(?!user$).*$|working
 PreToolUse|^(?!AskUserQuestion$).*$|working
 PreToolUse|^AskUserQuestion$|blocked
 PostToolUse|^AskUserQuestion$|working
@@ -350,7 +374,8 @@ KIMI
       ;;
     mastracode)
       # shellcheck disable=SC2016 # jq variables, not shell variables
-      json_update "$config" "$strip"' | reduce $events[] as $e (.; .[$e.event] = (.[$e.event] // []) + [{type:"command",command:"\($hook) \($e.action)",timeout:10000}])' --arg hook "$hook" --arg legacy "$(sh_word "$dest")" --argjson events "$events"
+      json_update "$config" "$strip"' | reduce $events[] as $e (.; {type:"command",command:"\($hook) \($e.action)",timeout:10000} as $h
+        | .[$e.event] = if $e.first then [$h] + (.[$e.event] // []) else (.[$e.event] // []) + [$h] end)' --arg hook "$hook" --arg legacy "$(sh_word "$dest")" --argjson events "$events"
       ;;
     codex) codex_update install ;;
     *) link_install "$src" "$dest" ;;
@@ -381,7 +406,7 @@ else
         require_regular_config "$config"
         validate_marked_block "$config" "$begin" "$end"
         tmp=$(mktemp "$config.agent-status.XXXXXX") || exit 1
-        strip_marked_block "$config" "$begin" "$end" > "$tmp"
+        strip_marked_block "$config" "$begin" "$end" | strip_kimi_hooks > "$tmp"
         replace_from_file "$config" "$tmp"; rm -f "$tmp"
       fi
       link_remove "$src" "$dest"
