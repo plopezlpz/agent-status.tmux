@@ -71,10 +71,11 @@ carry the tmux server's local time with its UTC offset
 | MastraCode | runs only the first `SessionEnd` hook, so the installer puts its own first | 0.47.1 (no turn run) |
 | Kilo Code | a TUI attached to a `kilo daemon`, or `kilo attach`, doesn't report: run it with `KILO_NO_DAEMON=1` while a daemon runs; suggestion and network prompts don't show as asking | 7.8.15 (no turn run) |
 | Claude Code | an Esc or a denied prompt shows idle only after Claude's `idle_prompt` (about 60s); an approved tool shows asking until it returns; a turn that ends while a cloud session runs for it shows finished | 2.1.296, 2.1.304 (2.1.304 turns not run live) |
-| Codex | run it as `codex --no-daemon` and trust its hooks once (see below); shows from the first prompt; a turn that ends in an error stays working until the next prompt | 0.163.0 (hooks load; not run live) |
+| Codex | run it as `codex --no-daemon` and trust its hooks once (see below); shows from the first prompt; a turn that ends in an error stays working until the next prompt | 0.163.0 (no turn run) |
 
-Agents without lifecycle hooks (Gemini, Cursor and others) are not
-supported: their state can't be known without polling the pane.
+Other agents, such as Gemini CLI and Cursor's agent, have no adapter yet.
+Agents without lifecycle hooks can't have one: their state can't be known
+without polling the pane.
 
 Headless runs (`claude -p` and the Agent SDK, `opencode run` and `serve`,
 `kilo run` and `serve`, `kimi -p` run by another agent, `mastracode
@@ -93,10 +94,15 @@ Codex runs a hook only once you have trusted it. After installing (and after
 an update that changes a hook), Codex says "Hooks need review" when it starts:
 choose "Review hooks", or run `/hooks`, and trust the `hook-event.sh` ones.
 
-By default Codex runs its sessions, and so their hooks, in a shared background
-server, with the environment of the terminal that started it: a hook there
-can't tell which pane it belongs to, so it reports nothing. Run Codex in tmux
-without it, e.g. with an alias:
+By default (since 0.157) every `codex` attaches to one shared background
+server that runs its session, and so its hooks. A hook there has the
+environment of whichever terminal started the server, and its payload names
+no terminal, so it can't tell which pane is its own; it reports nothing.
+Nothing else ties a session to its pane: its working directory may be that
+of several panes; its id is in the pane title only if you add `thread-id` to
+Codex's `tui.terminal_title`; and the server ends it only 30 minutes (by
+default) after its `codex` quits, so the pane would go on showing Codex that long. Run Codex in
+tmux without the server, e.g. with an alias:
 
 ```bash
 alias codex='codex --no-daemon'
