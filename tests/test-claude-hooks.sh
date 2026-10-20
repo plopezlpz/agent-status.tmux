@@ -61,17 +61,22 @@ bash "$PLUGIN_DIR/install-claude-hooks.sh" >/dev/null
 bash "$TMP/tpm/agent-status.tmux/install-claude-hooks.sh" >/dev/null
 n=$(jq '[.hooks.Stop[].hooks[].command | select(test("set-state.sh. finished"))] | length' "$CLAUDE_SETTINGS")
 [ "$n" -eq 1 ] || fail "symlinked install duplicated Stop hook (n=$n)"
-# Entries left under other spellings (old symlink installs, a moved clone) are
-# replaced when installing from the real path; a sibling user hook is kept.
+# Entries left under other spellings (old symlink installs, a moved clone, the
+# pre-0.2 plugin name) are replaced when installing from the real path; a
+# sibling user hook is kept.
 jq --arg l "$TMP/tpm/agent-status.tmux/scripts/agent" --arg sib "$PLUGIN_DIR/scripts/agent-sessions.sh" \
   '.hooks.Stop += [{hooks:[{type:"command",command:($l + "/set-state.sh finished")},
                           {type:"command",command:"/old/clone/agent-status.tmux/scripts/agent/set-state.sh finished"},
+                          {type:"command",command:"/old/plugins/claude-agent-status.tmux/scripts/agent/set-state.sh finished"},
                           {type:"command",command:$sib}]}]' "$CLAUDE_SETTINGS" > "$TMP/seeded.json"
 cat "$TMP/seeded.json" > "$CLAUDE_SETTINGS"
 bash "$PLUGIN_DIR/install-claude-hooks.sh" >/dev/null
 n=$(jq '[.hooks.Stop[].hooks[].command | select(test("set-state.sh.? finished"))] | length' "$CLAUDE_SETTINGS")
 [ "$n" -eq 1 ] || fail "install from real path kept hooks under other spellings (n=$n)"
 jq -e --arg sib "$PLUGIN_DIR/scripts/agent-sessions.sh" '[.. | .command? // empty | select(. == $sib)] | length == 1' "$CLAUDE_SETTINGS" >/dev/null || fail "install stripped a sibling user hook"
+jq '.hooks.SessionEnd += [{hooks:[{type:"command",command:"/old/plugins/claude-agent-status.tmux/scripts/agent/clear-state.sh"}]}]' \
+  "$CLAUDE_SETTINGS" > "$TMP/seeded.json"
+cat "$TMP/seeded.json" > "$CLAUDE_SETTINGS"
 bash "$TMP/tpm/agent-status.tmux/install-claude-hooks.sh" uninstall >/dev/null
 m=$(jq '[.. | .command? // empty | select(test("scripts/agent/"))] | length' "$CLAUDE_SETTINGS")
 [ "$m" -eq 0 ] || fail "symlinked uninstall left $m plugin hooks"

@@ -20,8 +20,9 @@ SCRIPTS="$PLUGIN_DIR/scripts/agent"
 # so installs through a symlinked plugin dir (e.g. TPM) never duplicate.
 SCRIPTS_REAL="$( cd "$SCRIPTS" && pwd -P )"
 # Path-independent match for entries written under any other spelling
-# (old installs through a symlink, a moved clone), quoted or not.
-OURS="/agent-status\\.tmux/scripts/agent/(set-state|clear-state|auto-desc)\\.sh([' ]|\$)"
+# (old installs through a symlink, a moved clone, the plugin's pre-0.2 name
+# claude-agent-status.tmux), quoted or not.
+OURS="/(claude-)?agent-status\\.tmux/scripts/agent/(set-state|clear-state|auto-desc)\\.sh([' ]|\$)"
 SETTINGS="${CLAUDE_SETTINGS:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json}"
 
 if ! command -v jq >/dev/null 2>&1; then
