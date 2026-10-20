@@ -138,17 +138,25 @@ case "$unseen" in 0|1) ;; *) unseen=0 ;; esac
 # coming while a dialog is open, so an ask holds the pane asking until the
 # turn ends or the agent that asked proceeds: its asked tool returns, or it
 # starts another. @agent-asks lists the open ones as "<agent_id>/<tool>".
+# A main-thread Task/Agent that returns with no subagent left running ends
+# the subagents' asks too: hook sets without PostToolUseFailure never report
+# an approved tool that failed.
 asks="$prev_asks"
 if [ -n "$hook_name" ] && [ -z "$compact" ]; then
   case "$raw_state" in
     asking) case " $asks " in *" $agent/$tool "*) ;; *) asks="${asks:+$asks }$agent/$tool" ;; esac ;;
     working)
+      subagents_done=""
+      case "$hook_name:$agent:$tool" in
+        PostToolUse*::Task|PostToolUse*::Agent) [ "$background" -gt 0 ] || subagents_done=1 ;;
+      esac
       asks=""
       for ask in $prev_asks; do
         case "$hook_name:$ask" in
-          UserPromptSubmit:*|PreToolUse:"$agent/"*|Stop*:"$agent/"*|PostToolUse*:"$agent/$tool") ;;
-          *) asks="${asks:+$asks }$ask" ;;
+          UserPromptSubmit:*|PreToolUse:"$agent/"*|Stop*:"$agent/"*|PostToolUse*:"$agent/$tool") continue ;;
         esac
+        [ -z "$subagents_done" ] || [ -z "${ask%%/*}" ] || continue
+        asks="${asks:+$asks }$ask"
       done
       [ -z "$asks" ] || state=asking
       ;;

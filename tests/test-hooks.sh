@@ -275,7 +275,7 @@ tmux kill-window -t "$w7"
 # ----- a permission prompt outlasts other tools' hooks --------------------
 p6=$(tmux split-window -d -P -F '#{pane_id}' -t "$p1")
 ev(){ claude "$p6" "{\"session_id\":\"c-4\",\"hook_event_name\":\"$1\"${3:+,$3}}" "$2"; }
-tool(){ ev "$1" "$2" "\"tool_name\":\"$3\"${4:+,\"agent_id\":\"$4\"}"; }
+tool(){ ev "$1" "$2" "\"tool_name\":\"$3\"${4:+,\"agent_id\":\"$4\"}${5:+,$5}"; }
 shown(){ printf '%s:%s' "$(get "$p6" @agent-state)" "$(get "$p6" @agent-asks)"; }
 ev SessionStart idle '"source":"startup"'
 # One hook process per event: set-state keeps the first prompt as the title.
@@ -300,6 +300,17 @@ tool PostToolUseFailure working WebFetch
 tool PermissionRequest asking Edit a3
 tool PreToolUse working Grep a3
 [ "$(shown)" = "working:" ] || fail "the asking agent's next tool did not end its ask: $(shown)"
+# Hooks without PostToolUseFailure miss a subagent's approved tool failing:
+# the main thread's Task returning ends that ask, unless a background
+# subagent (here the one just launched) may still be asking.
+tool PermissionRequest asking Bash a5
+tool PermissionRequest asking WebFetch
+tool PostToolUse working Task '' '"background_tasks":[{"id":"a6","type":"subagent","status":"running"}]'
+[ "$(shown)" = "asking:a5/Bash /WebFetch" ] || fail "a background Task launch ended a subagent's ask: $(shown)"
+tool PostToolUse working Agent '' '"background_tasks":[]'
+[ "$(shown)" = "asking:/WebFetch" ] || fail "a returned Task did not end its subagent's ask: $(shown)"
+tool PostToolUse working WebFetch
+[ "$(shown)" = "working:" ] || fail "the approved WebFetch did not end its ask: $(shown)"
 # A Stop held by a background subagent that asks keeps the pane asking; the
 # final Stop ends every ask.
 tool PermissionRequest asking Bash a4
