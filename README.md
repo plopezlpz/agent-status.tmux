@@ -62,7 +62,7 @@ UTC offset (`2026-10-20T11:09:03+0300`) instead of UTC (`...Z`).
 
 | Provider | Notes | Verified with |
 |---|---|---|
-| pi | | 1.1.0 (needs 0.84.4+) |
+| pi | before 1.1.0 an Esc shows as finished | 1.1.0, 1.3.0 (needs 0.84.4+; 1.3 turns not run live) |
 | OMP (Oh My Pi) | | 18.8.9 |
 | OpenCode | 1.x: `tui.jsonc` must be plain JSON (comments make install refuse). 2.x: the pane shows the active tab's session; `opencode mini` doesn't report | 1.19.3, 2.0.32 (2.x turns not run live) |
 | Kimi Code | shows from the first message (or `/title`, `/new`, a resumed session); a question the model asks in the background shows as working, or finished once the turn ends; a kimi killed by a signal stays listed until the pane's next agent starts | 2.2.0 (no turn run) |

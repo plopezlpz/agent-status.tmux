@@ -77,6 +77,9 @@ process.env.TMUX_PANE = "%1";
 		"ui_prompt_end",
 		"session_shutdown",
 		"before_agent_start",
+		"session_before_compact",
+		"session_compact",
+		"session_compact_failed",
 	]) {
 		check(typeof handlers[ev] === "function", `registers ${ev}`);
 	}
@@ -123,6 +126,38 @@ process.env.TMUX_PANE = "%1";
 	handlers.ui_prompt_end({});
 	await flush();
 	check(lastState(calls) === "idle", "ui_prompt_end while settled -> idle");
+
+	// An Esc settles the run without a completion.
+	handlers.agent_start({}, ctx("pi-1", false));
+	handlers.agent_settled({ aborted: true }, ctx("pi-1", true));
+	await flush();
+	check(lastState(calls) === "idle", "agent_settled aborted -> idle, not finished");
+
+	// A /compact outside a run works, then settles idle; one inside a run
+	// changes nothing.
+	handlers.session_before_compact({ reason: "manual" });
+	await flush();
+	check(lastState(calls) === "working", "manual compaction -> working");
+	handlers.session_compact({ reason: "manual" });
+	await flush();
+	check(lastState(calls) === "idle", "compaction done -> idle");
+	handlers.session_before_compact({ reason: "manual" });
+	handlers.session_compact_failed({ reason: "manual", aborted: true });
+	await flush();
+	check(lastState(calls) === "idle", "compaction failed or cancelled -> idle");
+	handlers.agent_start({}, ctx("pi-1", false));
+	handlers.session_before_compact({ reason: "threshold" });
+	handlers.session_compact({ reason: "threshold" });
+	await flush();
+	check(lastState(calls) === "working", "compaction inside a run keeps working");
+	handlers.agent_settled({}, ctx("pi-1", true));
+	await flush();
+
+	// Only the start of a long prompt goes to argv.
+	handlers.before_agent_start({ prompt: "x".repeat(300_000) });
+	await flush();
+	const longSet = calls.filter((c) => c.cmd.endsWith("auto-desc.sh") && c.args[0] === "set").at(-1);
+	check(longSet?.args[1].length === 2000, "before_agent_start passes only the prompt's start");
 
 	const before = stateCalls(calls).length;
 	await handlers.session_start({ reason: "reload" }, ctx("pi-1", true));

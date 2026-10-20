@@ -19,6 +19,7 @@ export default function (pi: ExtensionAPI) {
 	let seq = Date.now() * 1000;
 	let rootSession = false;
 	let agentActive = false;
+	let compacting = false;
 	let blockedCount = 0;
 	let lastState = "";
 	let transcript = "";
@@ -102,6 +103,7 @@ export default function (pi: ExtensionAPI) {
 			return;
 		}
 		agentActive = false;
+		compacting = false;
 		blockedCount = 0;
 		await set("idle", "", true);
 		await run("auto-desc.sh", ["clear", "pi"]);
@@ -111,8 +113,10 @@ export default function (pi: ExtensionAPI) {
 
 	// Turn-path handlers queue their updates without awaiting them, so a slow
 	// status script never delays the agent; the queue preserves their order.
+	// Only the prompt's start can name the pane; a whole pasted file must not
+	// reach argv.
 	pi.on("before_agent_start", (event) => {
-		if (rootSession && event.prompt) void run("auto-desc.sh", ["set", event.prompt]);
+		if (rootSession && event.prompt) void run("auto-desc.sh", ["set", event.prompt.slice(0, 2000)]);
 	});
 
 	pi.on("agent_start", (_event, ctx) => {
@@ -132,14 +136,29 @@ export default function (pi: ExtensionAPI) {
 	pi.on("ui_prompt_end", () => {
 		if (!rootSession) return;
 		blockedCount = Math.max(0, blockedCount - 1);
-		if (blockedCount === 0) void set(agentActive ? "working" : "idle");
+		if (blockedCount === 0) void set(agentActive || compacting ? "working" : "idle");
 	});
 
-	pi.on("agent_settled", (_event, ctx) => {
+	// An Esc (aborted, pi 1.1.0+) is no completion.
+	pi.on("agent_settled", (event, ctx) => {
 		if (!rootSession || ctx?.isIdle?.() !== true) return;
 		agentActive = false;
-		void set("finished");
+		void set(event?.aborted ? "idle" : "finished");
 	});
+
+	// A /compact runs outside any agent run; one inside a run is already working.
+	pi.on("session_before_compact", () => {
+		if (!rootSession || agentActive) return;
+		compacting = true;
+		if (blockedCount === 0) void set("working");
+	});
+	const compacted = () => {
+		if (!compacting) return;
+		compacting = false;
+		if (!agentActive && blockedCount === 0) void set("idle");
+	};
+	pi.on("session_compact", compacted);
+	pi.on("session_compact_failed", compacted);
 
 	pi.on("session_shutdown", async (event) => {
 		if (rootSession && event.reason === "quit") await run("clear-state.sh", ["quit", instance, "pi"]);

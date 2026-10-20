@@ -72,7 +72,7 @@ A future provider adapter must:
 
 | Provider | Integration |
 |---|---|
-| pi | extension; only the TUI (`ctx.mode`) owns the pane |
+| pi | extension; only the TUI (`ctx.mode`) owns the pane; an Esc settles idle (`agent_settled.aborted`, pi 1.1.0+); a `/compact` outside a run shows working |
 | OMP | extension; nested blockers, approvals/ask, settle debounce, retry grace (`AGENT_STATUS_OMP_IDLE_DEBOUNCE_MS`, `AGENT_STATUS_OMP_RETRY_GRACE_MS`) |
 | OpenCode | 1.x: server + TUI plugins; the TUI binds the pane to the root session it shows (`set-state.sh` `bind`, which keeps a pane the server plugin bound first to that session) and clears it on exit; a child session reports only its blockers, as its root; an Esc, a rejected permission or question, and an Esc on a `!` shell command settle idle; headless commands are detected from the thread and argv. 2.x: one shared background service runs every session and belongs to no pane, so a TUI plugin (a plugin directory) reports alone, from the service's events, for the active tab's root session; the 1.x server plugin loads there as a no-op |
 | Kilo Code | plugin; the pane is cleared from its `dispose` hook (the default TUI runs it in a worker, where exit handlers never run) or, in `--mini`, a process exit/signal handler; a prompt in another root session (`kilo -c`, picking a session) rebinds the pane; a child session reports only its blockers, as its root; `offline` asks; headless commands (including a `kilo daemon`, so the TUIs attached to one) are detected from the thread and argv |
