@@ -77,7 +77,6 @@ const waitFor = async (pattern: string, timeout = 5000) => {
 // ---------------------------------------------------------------- OMP
 process.env.TMUX_PANE = "%1";
 process.env.AGENT_STATUS_OMP_IDLE_DEBOUNCE_MS = "0";
-process.env.AGENT_STATUS_OMP_RETRY_GRACE_MS = "5";
 {
   const calls: {cmd:string,args:string[],options?:any}[] = [];
   const handlers: Record<string, Function> = {};
@@ -108,18 +107,39 @@ process.env.AGENT_STATUS_OMP_RETRY_GRACE_MS = "5";
   check(states().at(-1) === "asking", "OMP idle blocker asks");
   eventHandlers["herdr:blocked"]({active:false}); await tick();
   check(states().at(-1) === "idle", "OMP unblock after completion settles idle, not finished");
-  // Abort while asking: the blocker never resolves, so agent_end must clear it.
+  // An Esc while asking: the blocker never resolves, so agent_end must clear
+  // it, and the run settles idle, not finished.
   await handlers.agent_start({}, ctx); await handlers.tool_approval_requested({reason:"allow?"},ctx);
-  await handlers.agent_end({messages:[]}); await tick(5);
-  check(states().at(-1) === "finished", "OMP abort while blocked does not stay asking");
+  await handlers.agent_end({messages:[{role:"user"},{role:"assistant",stopReason:"aborted"}]}); await tick(5);
+  check(states().at(-1) === "idle", "OMP Esc while blocked settles idle, not asking or finished");
+  // A plan review asks; a replacement review resolves the old one.
+  await handlers.plan_review_requested({reviewId:"r1",title:"Refactor"},ctx); await tick();
+  check(calls.filter(c=>c.cmd.endsWith("set-state.sh")).at(-1)?.args.slice(0,2).join("|") === "asking|Plan review: Refactor", "OMP plan review asks");
+  await handlers.plan_review_requested({reviewId:"r2",title:"Refactor v2"},ctx); await handlers.plan_review_requested({reviewId:"r2",title:"Refactor v2"},ctx);
+  await handlers.plan_review_resolved({reviewId:"r1"},ctx); await tick();
+  check(states().at(-1) === "asking", "OMP replaced plan review keeps asking");
+  await handlers.plan_review_resolved({reviewId:"r2",choice:"execute"},ctx); await tick();
+  check(states().at(-1) === "idle", "OMP resolved plan review settles idle");
   await handlers.agent_start({}, ctx); await tick();
   check(states().at(-1) === "working", "OMP agent_start resets stale blockers");
-  // A blocker during the retry grace must not cancel the retry expiry.
-  await handlers.agent_end({messages:[{role:"assistant",stopReason:"error",errorMessage:"429 rate limit"}]});
-  await tick(1); check(states().at(-1) === "working", "OMP retry grace remains working");
+  // omp retries before a terminal agent_end: any provider error then asks with its text.
+  await handlers.agent_end({messages:[{role:"assistant",stopReason:"error",errorMessage:"401 invalid x-api-key"}]}); await tick(5);
+  check(calls.filter(c=>c.cmd.endsWith("set-state.sh")).at(-1)?.args.slice(0,2).join("|") === "asking|401 invalid x-api-key", "OMP terminal error asks with its message");
   await handlers.tool_execution_start({toolName:"ask",args:{questions:"not-an-array"}},ctx);
-  await handlers.tool_execution_end({toolName:"ask"},ctx);
-  await tick(15); check(states().at(-1) === "asking", "OMP retry expiry asks for attention after a blocker");
+  await handlers.tool_execution_end({toolName:"ask"},ctx); await tick();
+  check(calls.filter(c=>c.cmd.endsWith("set-state.sh")).at(-1)?.args.slice(0,2).join("|") === "asking|401 invalid x-api-key", "OMP error still asks after a blocker");
+  // An Esc during a retry's backoff ends on the error being retried: idle.
+  await handlers.agent_start({},ctx); await handlers.auto_retry_end({success:false,attempt:1,finalError:"Retry cancelled"});
+  await handlers.agent_end({messages:[{role:"assistant",stopReason:"error",errorMessage:"429 rate limit"}]}); await tick(5);
+  check(states().at(-1) === "idle", "OMP cancelled retry settles idle");
+  // A continuation that never starts (a cancelled background job) settles
+  // once nothing is left to resume the run.
+  let running = [{id:"job"}];
+  const waiting = {...ctx, isIdle:()=>true, hasPendingMessages:()=>false, getAsyncJobSnapshot:()=>({running,recent:[],delivery:{queued:0,delivering:false,pendingJobIds:[]}})};
+  await handlers.agent_start({},ctx); await handlers.agent_end({willContinue:true,awaitingAsyncWork:true,messages:[{role:"assistant",stopReason:"stop"}]}, waiting);
+  await tick(1100); check(states().at(-1) === "working", "OMP awaiting a running background job stays working");
+  running = [];
+  await tick(2200); check(states().at(-1) === "finished", "OMP settles when the awaited job ends without a wake");
   await handlers.agent_start({},ctx); await tick();
   await handlers.tool_execution_start({toolName:"ask",args:{questions:[{},{question:"Which?"}]}},ctx); await tick();
   check(calls.filter(c=>c.cmd.endsWith("set-state.sh")).at(-1)?.args[1] === "Which?", "OMP ask forwards the first question");
@@ -127,10 +147,17 @@ process.env.AGENT_STATUS_OMP_RETRY_GRACE_MS = "5";
   const clearsBefore = descs().length;
   await handlers.session_switch({reason:"new"}, ctx); await tick();
   check(states().at(-1) === "idle" && descs().length === clearsBefore + 1 && descs().at(-1) === "clear", "OMP session_switch resets and clears the label");
+  // A /btw branch starts a new session with only session_branch: the pane follows it.
+  const branched = {...ctx, sessionManager:{getSessionId:()=>"branch-id"}};
+  await handlers.agent_start({}, ctx); await handlers.session_branch({reason:"btw"}, branched); await tick();
+  const rebound = calls.filter(c=>c.cmd.endsWith("set-state.sh")).at(-1)?.args ?? [];
+  check(rebound[0] === "idle" && rebound[2] === "branch-id" && rebound[5] === "reset" && descs().at(-1) === "clear", "OMP session_branch rebinds the pane idle and clears the label");
+  await handlers.agent_start({}, branched); await tick();
+  check(calls.filter(c=>c.cmd.endsWith("set-state.sh")).at(-1)?.args.slice(0,3).join("|") === "working||branch-id", "OMP branched session reports");
   const shutdown = handlers.session_shutdown({});
   check(shutdown instanceof Promise, "OMP session_shutdown returns its clear for OMP to await");
   await shutdown;
-  check(calls.at(-1)?.cmd.endsWith("clear-state.sh") === true && calls.at(-1)?.args.join(" ") === "quit same-id omp", "OMP shutdown clears its own instance");
+  check(calls.at(-1)?.cmd.endsWith("clear-state.sh") === true && calls.at(-1)?.args.join(" ") === "quit branch-id omp", "OMP shutdown clears its own instance");
   check(calls.every(c => typeof c.options?.timeout === "number"), "OMP bounds every exec with a timeout");
 }
 

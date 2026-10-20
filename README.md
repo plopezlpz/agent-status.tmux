@@ -53,17 +53,19 @@ bash ~/.tmux/plugins/agent-status.tmux/manage-provider.sh install
 Older releases' `install-pi-extension.sh`, `uninstall-pi-extension.sh` and
 `uninstall-claude-hooks.sh` are gone: use `manage-provider.sh install pi`,
 `manage-provider.sh uninstall pi` and `manage-provider.sh uninstall claude`.
-OMP no longer reads `HERDR_OMP_IDLE_DEBOUNCE_MS` or `HERDR_OMP_RETRY_GRACE_MS`:
-set `AGENT_STATUS_OMP_IDLE_DEBOUNCE_MS` and `AGENT_STATUS_OMP_RETRY_GRACE_MS`
-instead. `@agent-log` lines now carry the tmux server's local time with its
-UTC offset (`2026-10-20T11:09:03+0300`) instead of UTC (`...Z`).
+OMP no longer reads `HERDR_OMP_IDLE_DEBOUNCE_MS`: set
+`AGENT_STATUS_OMP_IDLE_DEBOUNCE_MS` instead. `AGENT_STATUS_OMP_RETRY_GRACE_MS`
+(`HERDR_OMP_RETRY_GRACE_MS` before) is gone: OMP retries before it ends a
+turn, so a turn that ends in an error asks at once. `@agent-log` lines now
+carry the tmux server's local time with its UTC offset
+(`2026-10-20T11:09:03+0300`) instead of UTC (`...Z`).
 
 ## Providers
 
 | Provider | Notes | Verified with |
 |---|---|---|
 | pi | before 1.1.0 an Esc shows as finished | 1.1.0, 1.3.0 (needs 0.84.4+; 1.3 turns not run live) |
-| OMP (Oh My Pi) | | 18.8.9 |
+| OMP (Oh My Pi) | a dialog from an extension or MCP server shows as working | 18.8.9, 18.12.3 (18.12 turns not run live) |
 | OpenCode | 1.x: `tui.jsonc` must be plain JSON (comments make install refuse). 2.x: the pane shows the active tab's session; `opencode mini` doesn't report | 1.19.3, 2.0.32 (2.x turns not run live) |
 | Kimi Code | shows from the first message (or `/title`, `/new`, a resumed session); a question the model asks in the background shows as working, or finished once the turn ends; a kimi killed by a signal stays listed until the pane's next agent starts | 2.2.0 (no turn run) |
 | MastraCode | runs only the first `SessionEnd` hook, so the installer puts its own first | 0.47.1 (no turn run) |
