@@ -8,7 +8,7 @@ Notable changes to agent-status.tmux, newest first. The format follows [Keep a C
 
 ### Added
 
-- Codex support. `manage-provider.sh install codex` adds hooks to `${CODEX_HOME:-~/.codex}/hooks.json`. Codex runs a hook only after you trust it (`/hooks`), so the installer edits the file in place and other tools' hooks keep the place Codex trusts them by.
+- Codex support. `manage-provider.sh install codex` adds hooks to `${CODEX_HOME:-~/.codex}/hooks.json`. Codex runs a hook only after you trust it (`/hooks`), so the installer edits the file in place and other tools' hooks keep the place Codex trusts them by, even after an uninstall.
 - Codex: a permission prompt, a question from the model, or a request for more permissions (`request_permissions`) shows as asking. A prompt stays asking while parallel shell calls keep running, until its own call returns. An Esc settles idle, and a subagent that outlives its parent's turn doesn't wake the settled pane: only its asks show, and going to the pane to answer one marks the finished turn seen. `codex exec`, `codex review` and Codex's other headless commands are ignored.
 - The README explains why a session in Codex's shared background server can't report into its pane, so in tmux Codex runs as `codex --no-daemon`.
 

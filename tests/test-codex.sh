@@ -69,12 +69,21 @@ CODEX_HOME="$CODEX_HOME" bash "$TMP/alias/manage-provider.sh" install codex >/de
 [ "$(keyed "$H")" = "$(keyed "$TMP/later.json")" ] || fail "a reinstall from another path moved other tools' hooks"
 jq -e --arg c "'$TMP/alias/scripts/agent/hook-event.sh' codex idle" '.hooks.Stop[1].hooks[0].command == $c' "$H" >/dev/null || fail "our Stop group was not replaced in place"
 [ "$(jq '[.. | .command? // empty | select(test("hook-event\\.sh. codex"))] | length' "$H")" = 9 ] || fail "a reinstall duplicated our hooks"
-# Uninstalling moves that later hook up: say so, since Codex asks again.
+# Uninstalling leaves an empty placeholder group where ours was, so that
+# later hook keeps its key and Codex its trust.
 out=$(bash "$ROOT/manage-provider.sh" uninstall codex)
-case "$out" in *"1 hook(s) of other tools moved"*) ;; *) fail "uninstall did not warn about the moved hook: $out" ;; esac
-jq 'del(.hooks.Stop[1])' "$TMP/later.json" | jq -e --slurpfile now "$H" '.hooks.Stop | map(select(.hooks[0].command | test("hook-event") | not)) == $now[0].hooks.Stop' >/dev/null || fail "uninstall changed other Stop hooks"
-jq '.hooks.Stop |= map(select(.hooks[0].command != "later-tool"))' "$H" > "$TMP/x" && cat "$TMP/x" > "$H"
-cmp -s "$H" "$TMP/orig.json" || fail "uninstall did not restore the original bytes"
+case "$out" in *"other tools moved"*) fail "uninstall moved another tool's hook: $out" ;; esac
+[ "$(keyed "$H")" = "$(keyed "$TMP/later.json")" ] || fail "uninstall moved other tools' hooks"
+jq '.hooks.Stop[1] = {hooks: []} | .hooks |= (map_values(map(select(.hooks[0].command // "" | test("hook-event") | not))) | with_entries(select(.value != [])))' "$TMP/later.json" \
+  | jq -e --slurpfile now "$H" '. == $now[0]' >/dev/null || fail "uninstall did not leave just a placeholder: $(jq -c .hooks "$H")"
+# A reinstall takes the placeholder back.
+install
+jq -e --arg c "'$HOOK' codex idle" '.hooks.Stop[1].hooks[0].command == $c and (.hooks.Stop | length) == 3' "$H" >/dev/null || fail "a reinstall did not take the placeholder: $(jq -c .hooks.Stop "$H")"
+[ "$(keyed "$H")" = "$(keyed "$TMP/later.json")" ] || fail "a reinstall into a placeholder moved other tools' hooks"
+# With nothing after it, our group goes, and so do placeholders left before it.
+jq '.hooks.Stop |= map(select(.hooks[0].command != "later-tool")) | .hooks.Stop |= .[:1] + [{hooks: []}] + .[1:]' "$H" > "$TMP/x" && cat "$TMP/x" > "$H"
+install uninstall
+cmp -s "$H" "$TMP/orig.json" || fail "uninstall did not restore the original bytes: $(jq -c .hooks.Stop "$H")"
 out=$(bash "$ROOT/manage-provider.sh" uninstall codex)
 case "$out" in *"has no agent-status hooks"*) ;; *) fail "a second uninstall changed something: $out" ;; esac
 cmp -s "$H" "$TMP/orig.json" || fail "a second uninstall changed hooks.json"

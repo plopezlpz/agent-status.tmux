@@ -172,8 +172,9 @@ alias codex='codex --no-daemon'
 `--no-daemon`: with the alias, run them as `command codex agents`.
 
 The installer edits `${CODEX_HOME:-~/.codex}/hooks.json` in place, so other
-tools' hooks keep the place Codex trusts them by. Uninstalling moves up any
-hook added after ours, and Codex asks to review those again. The file is
+tools' hooks keep the place Codex trusts them by. Uninstalling leaves an
+empty group (`{"hooks": []}`) where one of ours had hooks after it, so they
+keep theirs too; installing again reuses it. The file is
 written in jq's layout (2-space indent), so a file formatted otherwise is
 reformatted; the old file is kept as `hooks.json.bak-*`.
 

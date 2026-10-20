@@ -233,7 +233,10 @@ fi
 # is new or changed until the user trusts it. So the groups are edited in
 # place: an unchanged reinstall writes nothing, a changed command replaces our
 # group where it is, a new one goes last, and other tools' groups keep their
-# index whenever possible. Interrupt and SessionEnd allow at most 3 seconds.
+# index whenever possible. A group of ours that other groups follow is left
+# as an empty placeholder ({"hooks": []}, which Codex accepts) to hold their
+# index; a new group of ours takes the first placeholder. Interrupt and
+# SessionEnd allow at most 3 seconds.
 codex_groups() {
   local hook
   hook="$(sh_word "$ROOT/scripts/agent/hook-event.sh") codex"
@@ -254,8 +257,11 @@ CODEX_OURS='def ours: type == "object" and ((.command // "") | type == "string" 
 # shellcheck disable=SC2016
 codex_filter="$CODEX_OURS"'
   def pure: owned and all(.hooks[]; ours);
-  # Drop our handlers and the groups they leave empty; nothing else changes.
-  def strip: map(if owned then .hooks |= map(select(ours | not)) | select(.hooks | length > 0) else . end);
+  def placeholder: . == {hooks: []};
+  # Drop our handlers; a group they leave empty becomes a placeholder.
+  def strip: map(if owned then .hooks |= map(select(ours | not)) | if .hooks == [] then {hooks: []} else . end else . end);
+  # Placeholders hold no index once nothing follows them.
+  def trim: until(length == 0 or (.[-1] | placeholder | not); .[:-1]);
   if type != "object" then error("root must be an object") else . end
   | if (.hooks // {} | type) != "object" then error("hooks must be an object") else . end
   | if any(.hooks // {} | .[]; type != "array") then error("each event must be an array") else . end
@@ -263,14 +269,15 @@ codex_filter="$CODEX_OURS"'
   | reduce (.hooks // {} | keys_unsorted[]) as $e (.;
       if $install and $groups[$e] != null then . else
         (.hooks[$e] | any(.[]; owned)) as $had
-        | .hooks[$e] |= strip
+        | if $had then .hooks[$e] |= (strip | trim) else . end
         | if $had and (.hooks[$e] | length) == 0 then del(.hooks[$e]) else . end end)
   | if $install then
       reduce ($groups | to_entries[]) as $g (.;
         (.hooks[$g.key] // []) as $a
         | ([$a | to_entries[] | select(.value | pure) | .key] | first) as $i
-        | .hooks[$g.key] = (if $i == null then ($a | strip) + [$g.value]
-            else ($a[:$i] | strip) + [$g.value] + ($a[$i + 1:] | strip) end))
+        | .hooks[$g.key] = (if $i != null then ($a[:$i] | strip) + [$g.value] + ($a[$i + 1:] | strip)
+            else ($a | strip) as $s | ([$s | to_entries[] | select(.value | placeholder) | .key] | first) as $p
+              | if $p == null then $s + [$g.value] else $s[:$p] + [$g.value] + $s[$p + 1:] end end | trim))
     else . end'
 # codex_moved OLD NEW: how many other tools' hooks NEW moves to another key.
 codex_moved() {
