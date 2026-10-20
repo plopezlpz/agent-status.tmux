@@ -50,6 +50,10 @@ and hooks from an earlier release keep working until you do:
 bash ~/.tmux/plugins/agent-status.tmux/manage-provider.sh install
 ```
 
+Older releases' `install-pi-extension.sh`, `uninstall-pi-extension.sh` and
+`uninstall-claude-hooks.sh` are gone: use `manage-provider.sh install pi`,
+`manage-provider.sh uninstall pi` and `manage-provider.sh uninstall claude`.
+
 ## Providers
 
 | Provider | Notes | Verified with |
