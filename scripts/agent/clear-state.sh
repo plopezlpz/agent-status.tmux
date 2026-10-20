@@ -22,8 +22,10 @@ agent_identity
 
 agent_lock "pane-${TMUX_PANE#%}"
 
-IFS="$sep" read -r cur_pane state unseen current_instance log_file log_time <<< "$(tmux display -t "$TMUX_PANE" -p "#{pane_id}$sep#{@agent-state}$sep#{@agent-unseen}$sep#{@agent-instance}$sep$AGENT_LOG_FIELDS" 2>/dev/null || true)"
+IFS="$sep" read -r cur_pane state unseen current_instance current_kind log_file log_time <<< "$(tmux display -t "$TMUX_PANE" -p "#{pane_id}$sep#{@agent-state}$sep#{@agent-unseen}$sep#{@agent-instance}$sep#{@agent-kind}$sep$AGENT_LOG_FIELDS" 2>/dev/null || true)"
 [ "$cur_pane" = "$TMUX_PANE" ] || exit 0
+# Earlier releases stored a Claude session id unscoped, without a kind.
+if [ -z "$current_kind" ] && [ -n "$kind" ] && [ "$kind:$current_instance" = "$instance" ]; then current_instance="$instance"; fi
 # Once a pane has an authoritative instance, identity-less or stale shutdowns
 # fail closed. Pane-exited cleanup remains the fallback when payload parsing is unavailable.
 if [ -n "$current_instance" ] && [ "$instance" != "$current_instance" ]; then

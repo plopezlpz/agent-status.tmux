@@ -113,13 +113,17 @@ if [ -n "$compact" ] && [ -n "$prev_state" ]; then
   state="$prev_state" unseen="${prev_unseen:-0}" raw_state=compact
 fi
 case "$prev_seq" in ""|*[!0-9]*) prev_seq="" ;; esac
+# Earlier releases stored a Claude session id unscoped, without a kind: the
+# same agent. The write below upgrades it.
+same="$prev_instance"
+if [ -z "$prev_kind" ] && [ -n "$kind" ] && [ "$kind:$prev_instance" = "$instance" ]; then same="$instance"; fi
 
 # Only an explicit session reset may replace a known agent instance. Reports
 # without identity remain accepted for backwards-compatible/manual adapters.
-if [ -n "$instance" ] && [ -n "$prev_instance" ] && [ "$instance" != "$prev_instance" ] && [ "$reset" != reset ]; then
+if [ -n "$instance" ] && [ -n "$same" ] && [ "$instance" != "$same" ] && [ "$reset" != reset ]; then
   exit 0
 fi
-if [ "$reset" != reset ] && [ -n "$seq" ] && [ -n "$prev_seq" ] && [ "$instance" = "$prev_instance" ] && [ "$seq" -le "$prev_seq" ]; then
+if [ "$reset" != reset ] && [ -n "$seq" ] && [ -n "$prev_seq" ] && [ "$instance" = "$same" ] && [ "$seq" -le "$prev_seq" ]; then
   exit 0
 fi
 

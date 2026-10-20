@@ -201,6 +201,21 @@ if [ -n "$JQ" ]; then
   [ "$(get "$p1" @agent-instance)" = claude:claude-1 ] || fail "identity-less shutdown failed open"
   printf '%s\n' '{"reason":"other","session_id":"claude-1"}' | AGENT_STATUS_KIND=claude TMUX_PANE="$p1" "$CLEAR"
   [ -z "$(get "$p1" @agent-instance)" ] || fail "qualified Claude shutdown did not clear"
+
+  # Earlier releases stored a Claude session id unscoped, with no kind. After
+  # an update, that session's hooks still apply; another session's do not.
+  legacy(){ tmux set-option -p -t "$p1" @agent-state working \; set-option -p -t "$p1" @agent-instance claude-1 \; set-option -p -u -t "$p1" @agent-kind; }
+  legacy
+  printf '%s\n' '{"session_id":"claude-2","hook_event_name":"Stop"}' | TMUX_PANE="$p1" "$SET" finished
+  [ "$(get "$p1" @agent-state)" = working ] || fail "another session's Stop applied to an unscoped instance"
+  printf '%s\n' '{"session_id":"claude-1","hook_event_name":"Stop"}' | TMUX_PANE="$p1" "$SET" finished
+  [ "$(get "$p1" @agent-state):$(get "$p1" @agent-unseen)" = idle:1 ] || fail "Stop dropped for an unscoped instance"
+  [ "$(get "$p1" @agent-instance):$(get "$p1" @agent-kind)" = claude:claude-1:claude ] || fail "unscoped instance not upgraded"
+  legacy
+  printf '%s\n' '{"reason":"other","session_id":"claude-2"}' | TMUX_PANE="$p1" "$CLEAR"
+  [ "$(get "$p1" @agent-instance)" = claude-1 ] || fail "another session's shutdown cleared an unscoped instance"
+  printf '%s\n' '{"reason":"other","session_id":"claude-1"}' | TMUX_PANE="$p1" "$CLEAR"
+  [ -z "$(get "$p1" @agent-instance)" ] || fail "shutdown did not clear an unscoped instance"
 fi
 
 echo "PASS: pane state"
