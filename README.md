@@ -32,7 +32,8 @@ asks before hooking them up (`--yes` doesn't ask); the others are skipped.
 `manage-provider.sh install claude` does just one, and `manage-provider.sh uninstall`
 (with or without a name) undoes it. Installers only add or remove their own
 entries and refuse to overwrite files they don't own. Codex needs more
-setup: see [Codex](#codex).
+setup: see [Codex](#codex). Gemini CLI runs hooks only in folders you
+trust: see [Gemini CLI](#gemini-cli).
 
 TPM may keep plugins in `~/.config/tmux/plugins/` instead of
 `~/.tmux/plugins/`; adjust the paths if so. Without TPM, clone the repo:
@@ -73,6 +74,9 @@ bash ~/.tmux/plugins/agent-status.tmux/manage-provider.sh install
 ```
 
 What changed in each release: [CHANGELOG.md](CHANGELOG.md).
+
+From 0.5.0: Gemini CLI is new. The installer hooks it up; restart running
+Gemini sessions afterwards. See [Gemini CLI](#gemini-cli).
 
 From 0.4.0: the installer adds the new Claude Code hooks (until then, MCP
 forms and sandbox network prompts don't show as asking), the OpenCode 2.x
@@ -129,8 +133,9 @@ agents.
 | Kilo Code | a TUI attached to a `kilo daemon`, or `kilo attach`, doesn't report: run it with `KILO_NO_DAEMON=1` while a daemon runs; suggestion and network prompts don't show as asking | 7.8.15 (no turn run) |
 | Claude Code | an Esc or a denied prompt shows idle only after Claude's `idle_prompt` (about 60s); an approved tool shows asking until it returns; a turn that ends while a cloud session runs for it shows finished | 2.1.296, 2.1.304 (2.1.304 turns not run live) |
 | Codex | run it as `codex --no-daemon` and trust its hooks once (see below); shows from the first prompt; a turn that ends in an error stays working until the next prompt | 0.163.0 (no turn run) |
+| Gemini CLI | reports only in trusted folders; a denied or cancelled confirmation shows asking, and an Esc while a tool runs working, until the next prompt; an approved tool shows asking until it returns; an Esc while the model answers shows finished (see below) | 0.64.0 (no turn run) |
 
-Other agents, such as Gemini CLI and Cursor's agent, have no adapter yet.
+Other agents, such as Cursor's agent, have no adapter yet.
 Agents without lifecycle hooks can't have one: their state can't be known
 without polling the pane.
 
@@ -138,7 +143,8 @@ Headless runs (`claude -p` and the Agent SDK, pi and OMP outside their TUI,
 `opencode run`, `serve` and OpenCode's other non-interactive commands, the
 same for Kilo (`kilo run`, `serve`, `remote`, ...), `kimi -p` or `kimi acp`
 run by another agent, `mastracode --prompt`, a prompt argument or `--acp`,
-`codex exec`, `codex review` and Codex's other non-interactive commands) are
+`codex exec`, `codex review` and Codex's other non-interactive commands,
+`gemini -p` and `gemini --acp`, and a `gemini` run by another agent) are
 ignored. Kimi hides its arguments, so a kimi reports only as the foreground
 job of its terminal: a `kimi -p` or `kimi acp` you start yourself in a shell
 or an editor reports into that pane. Run any other nested headless agent
@@ -186,6 +192,46 @@ Codex hooks can't tell everything apart:
   subcommand's name (`codex "review my change"`) reads as that headless
   subcommand, and the session doesn't report. Type the first prompt in
   Codex instead. Linux reads the real arguments from `/proc`.
+
+### Gemini CLI
+
+The installer adds one hook per event, named `agent-status`, to
+`${GEMINI_CLI_HOME:-~}/.gemini/settings.json`, after other tools' hooks.
+Gemini reads comments in that file but jq can't keep them, so a file with
+comments is refused. It is written in jq's layout (2-space indent), and the
+old file is kept as `settings.json.bak-*`. Antigravity also keeps its files
+in `~/.gemini`, so Gemini CLI counts as installed once it has run (its
+`installation_id`) or has a `settings.json`.
+
+Restart running Gemini sessions after installing: they read hooks at start,
+and one that was already running can drop the new hooks when it next saves
+a setting (run the installer again if they are gone). Gemini runs hooks only
+in folders you trust, so a session in an untrusted folder doesn't report.
+`/hooks disable agent-status` in Gemini turns them all off. While a hook
+runs, and for a few seconds after, Gemini's status line reads "Executing
+Hook: agent-status". If you run `gemini hooks migrate --from-claude` in your
+home directory, it copies the Claude hooks into Gemini's settings, where they
+would report Gemini as Claude: installing (or uninstalling) removes them.
+
+A prompt given on the command line (`gemini "fix it"`, `-i`) stays
+interactive and reports. A `gemini` whose input or output is redirected
+(`gemini < file`, `... | cat`) runs headless but still reports into its
+pane. In Gemini's own sandbox (`-s`, with Docker or Podman) hooks can't
+reach tmux, so the pane doesn't report.
+
+Gemini's hooks can't tell everything apart:
+
+- Denying or cancelling a confirmation fires no hook: the pane shows asking
+  until your next prompt. So does an approved tool until it returns (a long
+  shell command).
+- An Esc while a tool runs leaves the pane working, and an Esc while the
+  model answers shows it finished, until the next prompt.
+- Quota, authentication and loop-detection dialogs, and a shell command
+  waiting for input, don't show as asking. A turn that fails with an
+  unexpected error stays working; API errors end the turn as finished.
+- Resuming a session from inside Gemini (`/resume`) fires no hook: the pane
+  follows the session from your next prompt, and quitting before one leaves
+  it listed until the pane's next agent starts.
 
 ## Configuration
 

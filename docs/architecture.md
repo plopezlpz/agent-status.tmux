@@ -15,7 +15,7 @@ provider lifecycle event
 | `@agent-state` | `working`, `asking` or `idle` |
 | `@agent-unseen` | `1` while an idle completion is not seen yet (shown as finished), else `0` |
 | `@agent-state-at` | when the state last changed, Unix seconds |
-| `@agent-kind` | the provider: `pi`, `omp`, `opencode`, `kilo`, `kimi`, `mastracode`, `claude` or `codex` |
+| `@agent-kind` | the provider: `pi`, `omp`, `opencode`, `kilo`, `kimi`, `mastracode`, `claude`, `codex` or `gemini` |
 | `@agent-instance` | the provider-qualified session id (`kind:id`) |
 | `@agent-seq` | the last accepted sequence number from an in-process adapter |
 | `@agent-auto-description` | the first prompt (or the session's own title), at most 50 characters |
@@ -108,15 +108,16 @@ A future provider adapter must:
 | Kimi Code | native hooks incl. `SessionEnd`; kimi retitles its process `kimi-code` (cut to its command line's length), so its argv is gone: a run reports only while the kimi process is its terminal's foreground job, which a headless one started by another agent's tool (`-p`, `acp`) is not (one started in a shell or an editor is); the prompt arrives as content parts, whose text names the pane; `TurnStarted` shows turns kimi starts itself (a background task's result) working; a subagent's turn ends with its own `Stop`, `StopFailure` or `Interrupt` under the session's id, so `@agent-subagents` counts the subagents started (`SubagentStart`) and each end while one runs is taken as a subagent's, the last as the turn's (a prompt or a new session starts the count over); the session starts at the first message, so a kimi shows from then; the installer also finds its hook tables when kimi has rewritten `config.toml` without our markers |
 | MastraCode | native hooks incl. `SessionEnd`; the session id follows the thread (`session-init` until the first prompt creates one, then each `/new` or switch, with no new `SessionStart`), so the MastraCode process (its pid) is the identity; only the TUI fires `SessionStart`, so an event reports only into the pane its process registered (a tool hook passes `set-state.sh` `only`, which checks that in the pane read it makes anyway), which leaves headless runs (`--prompt`, a prompt argument, `--acp`), whose tool hooks still fire, out; `AgentEnd` ends a run (`aborted` settles idle, `suspended` waits on the user, whose question or approval asks through `Notification` or `PermissionRequest`); MastraCode runs only the first `SessionEnd` hook and may exit before it does, so ours goes first and also clears a registration whose process is gone |
 | Codex | native hooks in `hooks.json` run `hook-event.sh codex`, which hands the payload to the hook form of `set-state.sh`/`clear-state.sh` (kind `codex`), so asks work as for Claude, with these differences: Codex runs an agent's shell calls in parallel, all named `Bash`, and its `PermissionRequest` has no call id, so an ask is keyed by a hash of the call's command and ends with that call's `PostToolUse` (a `write_stdin` ask with the `Bash` one) or a call that starts a few seconds after the ask (its siblings start with it; a denied call returns nothing); a subagent's ask also ends with its `SubagentStop`; a subagent's events never wake a settled pane, since a subagent may outlive its parent's turn, and only its asks show there, the pane settling again (`@agent-settled` keeps the unseen value) when they end; the model's `request_user_input` question and `request_permissions` request ask (neither fires `PermissionRequest`), `Interrupt` settles idle and `SessionEnd` clears; `SessionStart` fires only at the first prompt, and a turn that ends in an error fires no event; headless runs (`exec`, `review`, `app-server`, including the shared background server whose hooks carry the environment of whichever terminal started it) are detected from the nearest codex process's argv; trust is keyed by each hook's place in the file, so the installer edits it in place, and leaves an empty group where it removes one of ours that other groups follow |
+| Gemini CLI | native hooks in `settings.json` (one definition per event, named `agent-status`) run `hook-event.sh gemini`, which prints nothing and always exits 0 (Gemini shows a hook's output, and exit 2 blocks a prompt or forces a retry turn); `SessionStart` registers the session (`/clear` ends it with reason `clear`, which keeps the pane, and starts the next), `BeforeAgent` works and titles the pane, `Notification` (a confirmation about to show) asks, `AfterTool` works (it ends an approved tool's ask; the hot path, it reads the session id from `GEMINI_SESSION_ID` and never the payload), `AfterAgent` finishes and `SessionEnd` clears; a denied or cancelled confirmation, and an Esc while a tool runs, fire nothing, so the pane stays asking or working until the next prompt, and an Esc while the model streams fires `AfterAgent`; the in-app `/resume` switches sessions without an event, so `BeforeAgent` rebinds the pane (`set-state.sh` `bind`); a prompt argument is interactive in a terminal, while `-p`, `--acp` and a run that isn't its terminal's foreground job (one run by another agent's tool) are headless; Gemini runs hooks only in trusted folders; Antigravity shares `~/.gemini`, so `found` looks for Gemini CLI's own files |
 | Claude Code | native hooks, one `set-state.sh` process per event (it also keeps the first prompt); no interrupt or permission-resolved event, so an Esc or a denied prompt settles on `idle_prompt`; a permission prompt stays asking through the tool hooks of parallel tools and subagents until the agent that asked proceeds (`@agent-asks`): its tool returns, it calls a tool a few seconds after the ask (read-only tools run in parallel, so siblings start with it), it stops (`SubagentStop`), or the main thread's foreground `Agent` call that ran it returns; an MCP server's form or URL asks from `Elicitation` to `ElicitationResult`, and a sandboxed command's network request from its `permission_prompt` notification to the main thread's next tool hook (neither fires `PermissionRequest`), settling the pane again when asked between turns; a session's own title (`session_title`: `--name`, `/rename`) describes the pane in place of the first prompt, and text pasted into the prompt is left out; API errors end the turn through `StopFailure`; a Stop while background subagents run stays working; headless runs (`claude -p`, the Agent SDK: `CLAUDE_CODE_ENTRYPOINT=sdk-*`) are ignored |
 
 Adapters run the scripts of the checkout they come from: the extensions and
 plugins are symlinks into it and find `scripts/agent` beside their real path,
-and Kimi, MastraCode and Codex hooks run `scripts/agent/hook-event.sh` by
-its path.
+and Kimi, MastraCode, Codex and Gemini CLI hooks run
+`scripts/agent/hook-event.sh` by its path.
 `hook-event.sh` cannot read an interactive flag from the payload, so it
-inspects the provider process's argv (Kimi: its process group) once per
-hook, honoring only options before the first non-option word; a headless
+inspects the provider process's argv (Kimi and Gemini: also whether it is
+its terminal's foreground job) once per hook, honoring only options before the first non-option word; a headless
 run it cannot recognize may still report into the pane it inherited. Where
 `/proc/<pid>/cmdline` exists it reads the real argv; elsewhere `ps` drops
 quoting, so an interactive run whose command-line prompt starts with a
@@ -142,7 +143,8 @@ Installer path overrides follow each provider's conventions: pi
 `OMP_PROFILE` (else `PI_PROFILE`), `OMP_EXTENSIONS_DIR`;
 `OPENCODE_CONFIG_DIR`, `KILO_CONFIG_DIR` (else
 `$XDG_CONFIG_HOME/opencode`, `$XDG_CONFIG_HOME/kilo`),
-`KIMI_CODE_HOME`, `CODEX_HOME`, and Claude's `CLAUDE_CONFIG_DIR` (or
+`KIMI_CODE_HOME`, `CODEX_HOME`, `GEMINI_CLI_HOME` (Gemini CLI's home: its
+settings are in `$GEMINI_CLI_HOME/.gemini`), and Claude's `CLAUDE_CONFIG_DIR` (or
 `CLAUDE_SETTINGS`, the settings file itself). `MASTRACODE_HOME` is the
 installer's own, for tests: MastraCode always reads `~/.mastracode`.
 Providers whose config directory is missing are skipped (Claude's
@@ -152,7 +154,9 @@ runs for Claude.
 
 `manage-provider.sh found <provider>` exits 0 when that agent is installed,
 meaning its config directory exists (for Claude, the directory holding its
-`settings.json`; for pi, a set `PI_EXTENSIONS_DIR` also counts). It exits 1
+`settings.json`; for pi, a set `PI_EXTENSIONS_DIR` also counts; for Gemini
+CLI, which shares `~/.gemini` with Antigravity, its `settings.json` or the
+`installation_id` it writes when it first runs). It exits 1
 when the agent is not installed, and 2 on a usage error (an unknown action or
 provider). A bare `manage-provider.sh install|uninstall` uses it to pick the
 agents to hook up. paddock's installer depends on it too. On a first install

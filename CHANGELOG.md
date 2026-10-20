@@ -4,6 +4,10 @@ Notable changes to agent-status.tmux, newest first. The format follows [Keep a C
 
 ## [Unreleased]
 
+### Added
+
+- Gemini CLI support. `manage-provider.sh install gemini` adds hooks named `agent-status` to `${GEMINI_CLI_HOME:-~}/.gemini/settings.json`, after other tools' hooks, and keeps a backup of the old file. A session shows idle from its start, working from a prompt, asking at a confirmation, finished when the model answers, and the pane is cleared when Gemini quits. `gemini -p`, `gemini --acp` and a `gemini` run by another agent are ignored. Gemini runs hooks only in trusted folders. Verified with Gemini CLI 0.64.0, without running a turn.
+
 ## [0.5.0] - 2026-10-20
 
 ### Added
