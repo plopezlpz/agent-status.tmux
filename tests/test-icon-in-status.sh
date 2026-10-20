@@ -31,4 +31,11 @@ load
 t set-option -gw window-status-format '#I #{@agent-icon} #W'
 load
 [ "$(fmt window-status-format)" = '#I #{@agent-icon} #W' ] || fail "a format already showing the icon was changed"
-echo "PASS: @agent-icon-in-status"
+# A server that ran a release with the old Nerd Font glyphs gets the new
+# default glyphs on reload; a glyph the user chose stays.
+t set-option -g @agent-icon-working '󱐋'
+t set-option -g @agent-icon-idle 'I'
+load
+[ "$(t display -p '#{==:#{@agent-icon-working},●}')" = 1 ] || fail "a reload kept the old working glyph"
+[ "$(t display -p '#{@agent-icon-idle}')" = I ] || fail "a reload replaced the user's idle glyph"
+echo "PASS: @agent-icon-in-status, glyph upgrade"
