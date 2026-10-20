@@ -40,6 +40,16 @@ setw -g window-status-format         "#{?@agent-icon,#{@agent-icon} ,}#I:#W "
 setw -g window-status-current-format "#{?@agent-icon,#{@agent-icon} ,}#I:#W "
 ```
 
+## Update
+
+Update with `prefix U`, reload tmux, then run the installer again so your
+agents get the current hook commands. It replaces the entries it wrote before,
+and hooks from an earlier release keep working until you do:
+
+```bash
+bash ~/.tmux/plugins/agent-status.tmux/manage-provider.sh install
+```
+
 ## Providers
 
 | Provider | Notes | Verified with |
