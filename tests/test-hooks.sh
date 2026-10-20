@@ -62,6 +62,11 @@ finishes_within(){
 
 # ----- plugin load: one entry per hook, whatever the checkout is called -----
 tmux set-hook -g pane-exited 'display-message user-hook'
+# Another tool's hook that runs something from its own scripts/agent
+# directory is not the plugin's.
+FOREIGN=': /elsewhere/scripts/agent/other.sh'
+tmux set-hook -ga pane-focus-in "run-shell -b '$FOREIGN'"
+tmux set-hook -ga window-layout-changed "run-shell -b '$FOREIGN'"
 # A checkout in another directory (a clone not named agent-status.tmux, or a
 # moved one): reloading from it, then from here, replaces its entries too.
 ELSEWHERE="$TMP/else where \$x'#"
@@ -74,8 +79,12 @@ bash "$PLUGIN_DIR/agent-status.tmux"
 for h in pane-focus-in pane-exited pane-died window-layout-changed pane-moved; do
   hooks=$(tmux show-hooks -g "$h")
   ! printf '%s\n' "$hooks" | grep -qF "$TMP/else" || fail "$h kept an entry from another checkout"
-  n=$(printf '%s\n' "$hooks" | grep -cE 'scripts/agent|@agent-icon-format' || true)
+  n=$(printf '%s\n' "$hooks" | grep -cE 'scripts/agent/clear-(finished|pane)\.sh|@agent-icon-format' || true)
   [ "$n" -eq 1 ] || fail "$h has $n plugin entries after reload"
+done
+for h in pane-focus-in window-layout-changed; do
+  n=$(tmux show-hooks -g "$h" | grep -cF "$FOREIGN" || true)
+  [ "$n" -eq 1 ] || fail "$h has $n copies of another tool's scripts/agent hook after reload"
 done
 # Scripts run in the background, and only when there is work: a routine
 # focus change, layout change or pane exit starts no process at all.

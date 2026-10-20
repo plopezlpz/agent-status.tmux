@@ -83,14 +83,17 @@ done < <(tmux list-windows -a -F '#{window_id}' 2>/dev/null)
 # add_hook NAME CMD: append CMD as a global hook, idempotently. Plugin entries
 # from any load -- this checkout or an earlier one, whatever its directory is
 # called -- are dropped and user hooks kept, so every reload converges to one
-# plugin entry. Matches on what plugin commands contain, not on CMD, since
-# tmux rewrites hook quoting when it stores it.
+# plugin entry. Plugin entries are the ones that run a script any release
+# hooked up, or evaluate @agent-icon-format; matching on CMD would not do,
+# since tmux rewrites hook quoting when it stores it.
 add_hook() {
   local name="$1" line survivors="" ours=""
   while IFS= read -r line; do
     case "$line" in
       "") ;;
-      */scripts/agent/*|*@agent-icon-format*) ours=1 ;;
+      */scripts/agent/clear-finished.sh*|*/scripts/agent/clear-pane.sh*|\
+      */scripts/agent/update-window-icon.sh*|*/scripts/agent/on-pane-exit.sh*|\
+      *@agent-icon-format*) ours=1 ;;
       # Strip the "<name>[<idx>] " prefix; the remainder is the hook's
       # original command, ready to feed back to set-hook.
       *) survivors="$survivors${line#"$name"\[*\] }
