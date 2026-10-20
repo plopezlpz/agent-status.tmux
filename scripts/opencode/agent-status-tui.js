@@ -27,11 +27,13 @@ export default {
       if (!session || session.parentID) { last = undefined; return; }
       if (id === last || pending || missing || Date.now() < retryAt) return;
       if (id === bound) { last = id; return; }
-      // Selection and server events are separate streams; reset clears the
+      // Selection and server events are separate streams; a reset clears the
       // prior stream sequence so neither clock can permanently stale the other.
-      // A newly selected root starts idle; its own server events follow.
+      // A newly selected root starts idle, without the old label; its own
+      // server events follow. `bind` leaves a pane the server plugin already
+      // bound to this root (a first prompt from the home screen) as it is.
       pending = true;
-      const child = execFile(`${scripts}/set-state.sh`, ["idle", "", id, "", "opencode", "reset"], { timeout: 5000 }, error => {
+      const child = execFile(`${scripts}/set-state.sh`, ["idle", "", id, "", "opencode", "bind"], { timeout: 5000 }, error => {
         pending = false;
         if (error) {
           if (error.code === "ENOENT") missing = true;
@@ -40,7 +42,6 @@ export default {
         }
         retryAt = 0; delay = 100;
         last = bound = id;
-        execFile(`${scripts}/auto-desc.sh`, ["clear", "opencode"], { timeout: 5000 }, () => {}).stdin?.end();
       });
       child.stdin?.end();
     };

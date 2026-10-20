@@ -99,6 +99,21 @@ window=$(tmux display -pt "$p2" '#{window_id}')
 [ -z "$(get "$p2" @agent-state)" ] || fail "pane-exited cleanup left retained state"
 icon_is green I || fail "pane-exited cleanup did not reaggregate window"
 
+# bind (the OpenCode 1.x TUI selecting a root): a pane its server plugin
+# already bound to that root keeps its state and first-prompt label; another
+# root resets it and drops the label.
+state "$p2" working "" oc-1 5 opencode
+tmux set-option -p -t "$p2" @agent-auto-description "first prompt"
+state "$p2" idle "" oc-1 "" opencode bind
+[ "$(get "$p2" @agent-state):$(get "$p2" @agent-seq)" = working:5 ] || fail "bind to the bound root reset its state"
+[ "$(get "$p2" @agent-auto-description)" = "first prompt" ] || fail "bind to the bound root dropped its label"
+state "$p2" idle "" oc-2 "" opencode bind
+[ "$(get "$p2" @agent-state):$(get "$p2" @agent-instance):$(get "$p2" @agent-seq)" = idle:opencode:oc-2: ] || fail "bind did not reset to another root"
+[ -z "$(get "$p2" @agent-auto-description)" ] || fail "bind to another root kept the old label"
+state "$p2" idle "" "" "" opencode bind
+[ "$(get "$p2" @agent-instance)" = opencode:oc-2 ] || fail "bind without an instance changed the pane"
+TMUX_PANE="$p2" "$CLEAR" quit oc-2 opencode </dev/null
+
 if [ -n "$JQ" ]; then
   printf '%s\n' '{"session_id":"claude-1","hook_event_name":"SessionStart"}' | \
     TMUX_PANE="$p1" AGENT_STATUS_KIND=claude "$SET" idle

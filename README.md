@@ -67,14 +67,15 @@ UTC offset (`2026-10-20T11:09:03+0300`) instead of UTC (`...Z`).
 | OpenCode | `tui.jsonc` must be plain JSON (comments make install refuse) | 2.0.25 |
 | Kimi Code | | 2.1.1 |
 | MastraCode | | not verified locally |
-| Kilo Code | partial: Kilo has no exit event | not verified locally |
+| Kilo Code | a TUI attached to a `kilo daemon`, or `kilo attach`, doesn't report: run it with `KILO_NO_DAEMON=1` while a daemon runs; suggestion and network prompts don't show as asking | 7.8.15 (no turn run) |
 | Claude Code | an Esc or a denied prompt shows idle only after Claude's `idle_prompt` (about 60s) | 2.1.296 |
 | Codex | run it as `codex --no-daemon` and trust its hooks once (see below); shows from the first prompt; a turn that ends in an error stays working until the next prompt | 0.163.0 (hooks load; not run live) |
 
 Agents without lifecycle hooks (Gemini, Cursor and others) are not
 supported: their state can't be known without polling the pane.
 
-Headless runs (`claude -p` and the Agent SDK, `kilo run`, `kimi -p`,
+Headless runs (`claude -p` and the Agent SDK, `opencode run` and `serve`,
+`kilo run` and `serve`, `kimi -p`,
 `mastracode --prompt`, `codex exec` and `codex review`) are ignored. Run any
 other nested headless agent with `TMUX_PANE` cleared, or it takes over the
 pane it runs in.

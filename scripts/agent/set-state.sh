@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Update the current pane's agent state and optionally notify.
-# Usage: set-state.sh <working|asking|finished|idle> [message] [instance] [seq] [kind] [reset]
+# Usage: set-state.sh <working|asking|finished|idle> [message] [instance] [seq] [kind] [reset|bind]
+# `bind` is a reset unless the pane already reports that instance.
 # `finished` is stored as idle + unseen: an idle completion not yet seen.
 # Claude hooks (and Codex hooks, through hook-event.sh) pass the state alone,
 # with their payload on stdin (kind $AGENT_STATUS_KIND, else claude); for them
@@ -142,6 +143,14 @@ case "$prev_seq" in ""|*[!0-9]*) prev_seq="" ;; esac
 # same agent. The write below upgrades it.
 same="$prev_instance"
 if [ -z "$prev_kind" ] && [ -n "$kind" ] && [ "$kind:$prev_instance" = "$instance" ]; then same="$instance"; fi
+# The OpenCode 1.x TUI binds the root session it shows, which its server
+# plugin may have bound first, with a first prompt's label and state: keep
+# those. A real rebind also drops the old session's label.
+rebind=""
+if [ "$reset" = bind ]; then
+  [ -n "$instance" ] && [ "$instance" != "$same" ] || exit 0
+  reset=reset rebind=1
+fi
 
 # Only an explicit session reset may replace a known agent instance. Reports
 # without identity remain accepted for backwards-compatible/manual adapters.
@@ -266,7 +275,7 @@ fi
 if [ "$hook_name" = UserPromptSubmit ] && [ -z "$agent" ] && [ -z "$described" ]; then
   agent_auto_text "$prompt"
   [ -z "$AUTO" ] || args+=("${w[@]}" @agent-auto-description "$AUTO")
-elif [ "$hook_name" = SessionStart ] && [ -z "$compact" ] && [ -n "$described" ]; then
+elif [ -n "$described" ] && { [ -n "$rebind" ] || { [ "$hook_name" = SessionStart ] && [ -z "$compact" ]; }; }; then
   args+=("${w[@]}" -u @agent-auto-description)
 fi
 # The pane vanished since the read: nothing left to update.

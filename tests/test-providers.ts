@@ -138,14 +138,30 @@ process.env.AGENT_STATUS_OMP_RETRY_GRACE_MS = "5";
 // ----------------------------------------------------------- OpenCode
 {
   // OpenCode and Kilo share lifecycle.js; each adapter keeps its own sessions.
-  const { lifecycle } = await import(resolve(root, "scripts/opencode/lifecycle.js"));
+  const { lifecycle, interactive } = await import(resolve(root, "scripts/opencode/lifecycle.js"));
   const a = lifecycle("opencode"), b = lifecycle("kilo");
-  a.childSessions.add("child"); a.aborted.add("aborted");
+  a.childSessions.set("child", "root"); a.aborted.add("aborted");
   check(!b.childSessions.has("child") && !b.aborted.has("aborted"), "lifecycle() instances keep separate session state");
+  a.childSessions.set("grandchild", "child");
+  check(a.rootOf("grandchild") === "root" && a.rootOf("root") === "root", "lifecycle() finds a child's root session");
+  // The TUI runs the server in a worker; the main thread runs headless
+  // commands, and Kilo's --mini and run --interactive.
+  const argv = (...args: string[]) => ["bun", "/$bunfs/root/src/index.js", ...args];
+  check(interactive(["bun", "/$bunfs/root/src/cli/tui/worker.js"], false), "the TUI's server worker is interactive");
+  for (const args of [[], ["--continue"], ["--mini"], ["/some/project"], ["run", "-i"], ["run", "--interactive", "x"], ["--log-level", "DEBUG"]]) {
+    check(interactive(argv(...args), true), `${JSON.stringify(args)} on the main thread is interactive`);
+  }
+  for (const args of [["run", "x"], ["serve"], ["--log-level", "DEBUG", "run", "x"], ["remote"], ["attach", "http://h"], ["acp"]]) {
+    check(!interactive(argv(...args), true), `${JSON.stringify(args)} on the main thread is headless`);
+  }
 }
 process.env.TMUX_PANE = "%2";
 {
   const { AgentStatusPlugin } = await import(installed("opencode", "plugins"));
+  const argv = process.argv;
+  process.argv = [argv[0], argv[1], "serve", "--port", "4096"];
+  check(Object.keys(await AgentStatusPlugin()).length === 0, "OpenCode headless `opencode serve` registers no hooks");
+  process.argv = argv;
   const plugin = await AgentStatusPlugin();
   const event = (type: string, properties: any) => plugin.event({ event: { type, properties } });
   let sentinel = 0;
@@ -172,9 +188,11 @@ process.env.TMUX_PANE = "%2";
   await event("permission.asked", { sessionID: "child-1" });
   await event("permission.replied", { sessionID: "child-1" });
   await event("session.idle", { sessionID: "child-1" });
+  await event("session.created", { sessionID: "child-2", info: { id: "child-2", parentID: "child-1" } });
+  await event("question.asked", { sessionID: "child-2" });
   got = await drain();
-  check(got.length === 2 && got[0].startsWith("set-state.sh|asking|||") && got[1].startsWith("set-state.sh|working|||"), "OpenCode child events report only blockers, without identity");
-  check(got.every(l => !l.includes("child-1") && !l.includes("|reset|")), "OpenCode child events never carry identity or reset");
+  check(got.length === 3 && got[0].startsWith("set-state.sh|asking||root-1|") && got[1].startsWith("set-state.sh|working||root-1|") && got[2].startsWith("set-state.sh|asking||root-1|"), "OpenCode child events report only blockers, as their root");
+  check(got.every(l => !l.includes("child-") && !l.includes("|reset|")), "OpenCode child events never carry their own identity or reset");
 
   await event("session.error", { sessionID: "root-1", error: { name: "MessageAbortedError", data: { message: "aborted" } } });
   await event("session.status", { sessionID: "root-1", status: { type: "idle" } });
@@ -186,12 +204,31 @@ process.env.TMUX_PANE = "%2";
   await event("session.idle", { sessionID: "root-1" });
   got = await drain();
   check(got.map(l => l.split("|")[1]).join(",") === "working,asking,finished", "OpenCode real errors still ask, and the next turn finishes");
+  // A rejected permission or question, or an Esc on a `!` shell command, ends
+  // the turn without completing it.
+  for (const [name, stop] of [
+    ["a rejected permission", () => event("permission.replied", { sessionID: "root-1", requestID: "per_1", reply: "reject" })],
+    ["a rejected question", () => event("question.rejected", { sessionID: "root-1", requestID: "que_1" })],
+    ["an Esc on a shell command", () => event("message.part.updated", { sessionID: "root-1", part: { type: "tool", sessionID: "root-1", tool: "bash", state: { status: "completed", output: "x\n\n<metadata>\nUser aborted the command\n</metadata>" } } })],
+  ] as const) {
+    await event("session.status", { sessionID: "root-1", status: { type: "busy" } });
+    await stop();
+    await event("session.status", { sessionID: "root-1", status: { type: "idle" } });
+    got = await drain();
+    check(got.at(-1)?.startsWith("set-state.sh|idle||root-1|") === true, `OpenCode ${name} settles idle, not finished`);
+  }
+  await event("permission.replied", { sessionID: "root-1", requestID: "per_2", reply: "once" });
+  await event("session.status", { sessionID: "root-1", status: { type: "idle" } });
+  got = await drain();
+  check(got.at(-1)?.startsWith("set-state.sh|finished||root-1|") === true, "OpenCode an allowed permission still finishes");
 }
 
 // --------------------------------------------------------------- Kilo
 process.env.TMUX_PANE = "%3";
 {
-  const { AgentStatusPlugin } = await import(installed("kilo", "plugin"));
+  const mod = await import(installed("kilo", "plugin"));
+  const { AgentStatusPlugin } = mod;
+  check(mod.default?.id && mod.default.server === AgentStatusPlugin, "Kilo exports a plugin definition");
   const argv = process.argv;
   process.argv = [argv[0], argv[1], "run", "do it"];
   check(Object.keys(await AgentStatusPlugin()).length === 0, "Kilo headless `kilo run` registers no hooks");
@@ -217,7 +254,16 @@ process.env.TMUX_PANE = "%3";
   await event("question.asked", { sessionID: "k-child" });
   await event("session.idle", { sessionID: "k-child" });
   got = await drain();
-  check(got.length === 1 && got[0].startsWith("set-state.sh|asking|||") && !got[0].includes("|reset|"), "Kilo child session never resets and reports without identity");
+  check(got.length === 1 && got[0].startsWith("set-state.sh|asking||k-root|") && !got[0].includes("|reset|"), "Kilo child session never resets and reports as its root");
+
+  // Kilo's offline status waits for the user.
+  await event("session.status", { sessionID: "k-root", status: { type: "offline", requestID: "r", message: "lost" } });
+  got = await drain();
+  check(got.length === 1 && got[0].startsWith("set-state.sh|asking||k-root|"), "Kilo offline status asks");
+  await event("permission.replied", { sessionID: "k-root", requestID: "per_1", reply: "reject" });
+  await event("session.idle", { sessionID: "k-root" });
+  got = await drain();
+  check(got.at(-1)?.startsWith("set-state.sh|idle||k-root|") === true, "Kilo a rejected permission settles idle, not finished");
 
   await event("session.error", { sessionID: "k-root", error: { name: "MessageAbortedError" } });
   await event("session.idle", { sessionID: "k-root" });
@@ -251,6 +297,18 @@ await new Promise(r => setTimeout(r, 5000));
     check(got.at(-1)?.startsWith(`clear-state.sh|quit|${id}|kilo|`) === true, `Kilo clears its instance on ${mode.slice(2)}`);
     check(mode === "--exit" ? r.status === 0 : r.signal === "SIGTERM", `Kilo ${mode.slice(2)} still ends the process (${r.status} ${r.signal} ${r.stderr})`);
   }
+
+  // The default TUI runs the plugin in a worker, where exit handlers never
+  // run: Kilo calls dispose() as it quits.
+  const quitting = await AgentStatusPlugin();
+  await quitting["chat.message"]({ sessionID: "k-quit" }, { parts: [] });
+  check(await waitFor("|k-quit|"), "Kilo binds a session before quitting");
+  since();
+  await quitting.dispose();
+  got = since();
+  check(got.length === 1 && got[0].startsWith("clear-state.sh|quit|k-quit|kilo|"), "Kilo dispose clears its instance");
+  await quitting.dispose();
+  check(since().length === 0, "Kilo clears its instance once");
 }
 
 // -------------------------------------------------------- OpenCode TUI
@@ -264,16 +322,15 @@ process.env.TMUX_PANE = "%4";
   await tui.tui({ route: { get current() { return route; } }, state: { session: { get: (id: string) => sessions[id] } }, lifecycle: { onDispose: (fn: Function) => { dispose = fn; } } });
   const open = async (id: string) => { route = { name: "session", params: { sessionID: id } }; await sleep(250); };
   await open("A");
-  check(await waitFor("auto-desc.sh|clear|opencode"), "TUI root selection clears the label");
+  check(await waitFor("set-state.sh|idle||A||opencode|bind|"), "TUI root selection binds the pane");
   let got = since();
-  check(got[0]?.startsWith("set-state.sh|idle||A||opencode|reset|"), "TUI root selection resets the pane to idle (no copied state)");
+  check(got.length === 1, "TUI root selection leaves the label to set-state (bind)");
   check(got.every(l => l.endsWith("<stdin:closed>")), "TUI closes script stdin");
   await open("C"); await open("A");
   check(since().length === 0, "TUI returning from a child view to the same root keeps state and label");
   await open("B");
-  check(await waitFor("auto-desc.sh|clear|opencode"), "TUI switching roots clears the label");
+  check(await waitFor("set-state.sh|idle||B||opencode|bind|"), "TUI switching roots binds the new root");
   got = since();
-  check(got[0]?.startsWith("set-state.sh|idle||B||opencode|reset|"), "TUI switching roots resets to idle");
   check(process.listenerCount("exit") === exitListeners + 1, "TUI registers an exit cleanup");
   dispose?.();
   got = since();

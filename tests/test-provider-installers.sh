@@ -50,6 +50,9 @@ grep -A1 '^event = "Interrupt"$' "$KIMI_CODE_HOME/config.toml" | grep -q "' kimi
 
 for provider in pi omp opencode kilo kimi mastracode; do bash "$ROOT/manage-provider.sh" uninstall "$provider" >/dev/null; done
 [ ! -e "$PI_EXTENSIONS_DIR/agent-status.ts" ] || fail "pi link remained"
+for link in plugins/agent-status.tmux.js agent-status-tui.js; do
+  [ ! -e "$OPENCODE_CONFIG_DIR/$link" ] && [ ! -L "$OPENCODE_CONFIG_DIR/$link" ] || fail "opencode $link remained"
+done
 [ "$(jq -r .theme "$OPENCODE_CONFIG_DIR/tui.jsonc")" = safe ] || fail "opencode uninstall changed unrelated config"
 [ "$(jq -r '.UserPromptSubmit[0].command' "$MASTRACODE_HOME/hooks.json")" = keep ] || fail "mastra uninstall removed user hook"
 [ "$(jq -c 'keys' "$MASTRACODE_HOME/hooks.json")" = '["UserPromptSubmit"]' ] || fail "mastra uninstall left hooks behind"
