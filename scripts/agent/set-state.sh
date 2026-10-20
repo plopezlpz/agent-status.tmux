@@ -3,7 +3,8 @@
 # Usage: set-state.sh <working|asking|finished|idle> [message] [instance] [seq] [kind] [reset]
 # `finished` is stored as idle + unseen: an idle completion not yet seen.
 # Claude hooks pass the state alone, with their payload on stdin (kind
-# $AGENT_STATUS_KIND, else claude).
+# $AGENT_STATUS_KIND, else claude); for them it also keeps the first prompt as
+# @agent-auto-description and tracks open permission prompts in @agent-asks.
 set -eu
 
 SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
@@ -32,8 +33,8 @@ esac
 sep=$'\037'
 read_pane() {
   IFS="$sep" read -r cur_pane pane_dead prev_state prev_unseen prev_instance prev_seq prev_kind \
-    prev_state_at prev_transcript now notify_timeout team_delay pane_active viewers clients \
-    socket client log_file log_time name <<< "$(tmux display -t "$TMUX_PANE" -p "#{pane_id}$sep#{pane_dead}$sep#{@agent-state}$sep#{@agent-unseen}$sep#{@agent-instance}$sep#{@agent-seq}$sep#{@agent-kind}$sep#{@agent-state-at}$sep#{@agent-transcript}$sep%s$sep#{@agent-notify-timeout}$sep#{@agent-notify-team-delay}$sep#{pane_active}$sep#{window_active_clients_list}$sep#{L/t:#{?client_control_mode,,#{client_name}=#{client_flags} }}$sep#{socket_path}$sep#{client_name}$sep$AGENT_LOG_FIELDS$sep#S / #W" 2>/dev/null || true)"
+    prev_state_at prev_transcript prev_asks described now notify_timeout team_delay pane_active viewers clients \
+    socket client log_file log_time name <<< "$(tmux display -t "$TMUX_PANE" -p "#{pane_id}$sep#{pane_dead}$sep#{@agent-state}$sep#{@agent-unseen}$sep#{@agent-instance}$sep#{@agent-seq}$sep#{@agent-kind}$sep#{@agent-state-at}$sep#{@agent-transcript}$sep#{@agent-asks}$sep#{?@agent-auto-description,1,}$sep%s$sep#{@agent-notify-timeout}$sep#{@agent-notify-team-delay}$sep#{pane_active}$sep#{window_active_clients_list}$sep#{L/t:#{?client_control_mode,,#{client_name}=#{client_flags} }}$sep#{socket_path}$sep#{client_name}$sep$AGENT_LOG_FIELDS$sep#S / #W" 2>/dev/null || true)"
   # display -t on a vanished pane silently describes another one.
   [ "$cur_pane" = "$TMUX_PANE" ] && [ "$pane_dead" != 1 ] || exit 0
 }
@@ -42,7 +43,8 @@ read_pane() {
 # call makes two, often several at once: settle those (working or asking,
 # without seq or reset) from one read, before stdin, jq or the lock. Identity
 # cannot change then either, since a pane with an instance rejects any other.
-if [ "$unseen" = 0 ] && [ -z "$seq$reset" ]; then
+# A Claude ask still counts: it records who asks.
+if [ "$unseen" = 0 ] && [ -z "$seq$reset" ] && { [ "$state" = working ] || [ "$#" -gt 1 ]; }; then
   read_pane
   case "$prev_state_at" in ''|*[!0-9]*) ;; *)
     if [ "$state:0" = "$prev_state:$prev_unseen" ] && [ -n "$prev_instance" ] && [ "${kind:-$prev_kind}" = "$prev_kind" ]; then
@@ -54,13 +56,15 @@ fi
 # Claude hooks provide identity and event metadata on stdin; their commands
 # pass the state alone. Adapters always pass positional arguments and may leave
 # stdin open (Node execFile), so never read it for them: jq would block.
-hook_name="" background="" team="" transcript="" src="" hook_message="" hook_error=""
+hook_name="" background="" team="" transcript="" src="" agent="" tool="" prompt="" hook_message="" hook_error=""
 if [ "$#" -eq 1 ] && [ ! -t 0 ] && command -v jq >/dev/null 2>&1; then
   # background: in-flight subagents/workflows. Background shells and monitors
   # can run indefinitely and never resume the turn by themselves.
   # team: live agent-team teammates. They stay "running" while idle, so they
   # cannot hold a Stop, but each message from one resumes the lead turn.
   # Entry types are friendly labels, or the raw discriminant when unknown.
+  # agent, tool: who asks or proceeds (agent_id: empty on the main thread),
+  # as option-safe words. prompt: its start, on one line.
   # message, error: for the notification (StopFailure carries only its error
   # type: rate_limit, overloaded, ...), on one line.
   metadata=$(jq -r 'def live(types): (.background_tasks // [])
@@ -72,9 +76,11 @@ if [ "$#" -eq 1 ] && [ ! -t 0 ] && command -v jq >/dev/null 2>&1; then
       live("subagent", "workflow", "local_agent", "local_workflow"),
       live("teammate", "in_process_teammate"),
       (.transcript_path // "" | tostring), (.source // "" | tostring),
+      (.agent_id, .tool_name | . // "" | tostring | .[:128] | gsub("[^A-Za-z0-9._:-]"; "_")),
+      (.prompt // "" | tostring | sub("^\\s+"; "") | .[:500] | gsub("[\n\r\t]"; " ") | gsub("[\u0000-\u001f\u007f]"; "")),
       (.message // .title // "", .error // "error" | tostring | gsub("[\u0000-\u001f]"; " "))]
     | join("\u001f")' 2>/dev/null || true)
-  IFS="$sep" read -r instance hook_name background team transcript src hook_message hook_error <<< "$metadata"
+  IFS="$sep" read -r instance hook_name background team transcript src agent tool prompt hook_message hook_error <<< "$metadata"
   [ -z "$hook_name" ] || kind="${kind:-claude}"
 fi
 # Auto-compaction restarts the session mid-turn (SessionStart source=compact)
@@ -124,6 +130,28 @@ if [ "$raw_state" = idle ]; then
 fi
 case "$unseen" in 0|1) ;; *) unseen=0 ;; esac
 
+# Claude permission prompts: tool hooks of parallel tools and subagents keep
+# coming while a dialog is open, so an ask holds the pane asking until the
+# turn ends or the agent that asked proceeds: its asked tool returns, or it
+# starts another. @agent-asks lists the open ones as "<agent_id>/<tool>".
+asks="$prev_asks"
+if [ -n "$hook_name" ] && [ -z "$compact" ]; then
+  case "$raw_state" in
+    asking) case " $asks " in *" $agent/$tool "*) ;; *) asks="${asks:+$asks }$agent/$tool" ;; esac ;;
+    working)
+      asks=""
+      for ask in $prev_asks; do
+        case "$hook_name:$ask" in
+          UserPromptSubmit:*|PreToolUse:"$agent/"*|Stop*:"$agent/"*|PostToolUse*:"$agent/$tool") ;;
+          *) asks="${asks:+$asks }$ask" ;;
+        esac
+      done
+      [ -z "$asks" ] || state=asking
+      ;;
+    *) asks="" ;;
+  esac
+fi
+
 changed=0
 [ "$state" = "$prev_state" ] && [ "$unseen" = "${prev_unseen:-0}" ] || changed=1
 
@@ -152,6 +180,16 @@ if [ -n "$kind" ] && [ "$kind" != "$prev_kind" ]; then
 fi
 if [ -n "$transcript" ] && [ "$transcript" != "$prev_transcript" ]; then
   args+=("${w[@]}" @agent-transcript "$transcript" \;)
+fi
+if [ "$asks" != "$prev_asks" ]; then
+  if [ -n "$asks" ]; then args+=("${w[@]}" @agent-asks "$asks" \;); else args+=("${w[@]}" -u @agent-asks \;); fi
+fi
+# The first prompt describes the pane until a new session.
+if [ "$hook_name" = UserPromptSubmit ] && [ -z "$described" ]; then
+  agent_auto_text "$prompt"
+  [ -z "$AUTO" ] || args+=("${w[@]}" @agent-auto-description "$AUTO" \;)
+elif [ "$hook_name" = SessionStart ] && [ -z "$compact" ] && [ -n "$described" ]; then
+  args+=("${w[@]}" -u @agent-auto-description \;)
 fi
 # Any state change cancels a pending delayed notification (see below), and
 # recomputes the window icon.

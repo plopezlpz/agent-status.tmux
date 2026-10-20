@@ -7,7 +7,7 @@
 tmux() { command tmux -u "$@"; }
 
 # Pane options owned by a registration; cleared together on exit.
-AGENT_PANE_OPTIONS="@agent-state @agent-unseen @agent-instance @agent-seq @agent-kind @agent-state-at @agent-auto-description @agent-description @agent-generating @agent-transcript @agent-notify-token"
+AGENT_PANE_OPTIONS="@agent-state @agent-unseen @agent-instance @agent-seq @agent-kind @agent-state-at @agent-auto-description @agent-description @agent-generating @agent-transcript @agent-notify-token @agent-asks"
 
 # agent_pane_guard: exit unless run in a tmux pane ($TMUX_PANE). A headless
 # run (claude -p, the Agent SDK: entrypoint sdk-*) inherits the pane from
@@ -15,6 +15,40 @@ AGENT_PANE_OPTIONS="@agent-state @agent-unseen @agent-instance @agent-seq @agent
 agent_pane_guard() {
   [[ "${TMUX_PANE:-}" =~ ^%[0-9]+$ ]] || exit 0
   case "${CLAUDE_CODE_ENTRYPOINT:-}" in sdk-*) exit 0 ;; esac
+}
+
+# utf8_cut N TEXT: CUT, the first N characters of TEXT (not bytes, so a
+# multibyte character is never split), even when the caller's locale is not
+# UTF-8.
+utf8_cut() {
+  case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
+    *[Uu][Tt][Ff]-8*|*[Uu][Tt][Ff]8*) ;;
+    *) local LC_ALL=C.UTF-8 2>/dev/null ;;
+  esac
+  CUT=${2:0:$1}
+}
+
+# clean_text TEXT: CLEAN, one line without control characters, at most 240
+# characters, without surrounding blanks.
+clean_text() {
+  local text="$1" controls char
+  text=${text//$'\n'/ }; text=${text//$'\r'/ }; text=${text//$'\t'/ }
+  controls=$'\001\002\003\004\005\006\007\010\013\014\016\017\020\021\022\023\024\025\026\027\030\031\032\033\034\035\036\037\177'
+  while [ -n "$controls" ]; do
+    char=${controls%"${controls#?}"}; controls=${controls#?}; text=${text//"$char"/}
+  done
+  text="${text#"${text%%[![:space:]]*}"}"; text="${text%"${text##*[![:space:]]}"}"
+  utf8_cut 240 "$text"; CLEAN="$CUT"
+}
+
+# agent_auto_text PROMPT: AUTO, a first prompt as @agent-auto-description:
+# cleaned, blanks squeezed, at most 50 characters (49 and an ellipsis).
+agent_auto_text() {
+  utf8_cut 500 "$1"; clean_text "$CUT"  # only the start of a long prompt shows
+  AUTO=$CLEAN
+  while [[ $AUTO == *"  "* ]]; do AUTO=${AUTO//  / }; done
+  utf8_cut 50 "$AUTO"
+  [ "$CUT" = "$AUTO" ] || { utf8_cut 49 "$AUTO"; AUTO="${CUT}…"; }
 }
 
 # agent_shown STATE UNSEEN: SHOWN, the state as UIs show it: an idle pane with

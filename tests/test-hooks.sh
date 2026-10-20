@@ -214,6 +214,51 @@ headless "$p6" '{"prompt":"headless task"}' "$AGENT/auto-desc.sh" set
 [ -z "$(get "$p6" @agent-auto-description)" ] || fail "headless claude -p described the pane"
 tmux kill-pane -t "$p6"
 
+# ----- a permission prompt outlasts other tools' hooks --------------------
+p6=$(tmux split-window -d -P -F '#{pane_id}' -t "$p1")
+ev(){ claude "$p6" "{\"session_id\":\"c-4\",\"hook_event_name\":\"$1\"${3:+,$3}}" "$2"; }
+tool(){ ev "$1" "$2" "\"tool_name\":\"$3\"${4:+,\"agent_id\":\"$4\"}"; }
+shown(){ printf '%s:%s' "$(get "$p6" @agent-state)" "$(get "$p6" @agent-asks)"; }
+ev SessionStart idle '"source":"startup"'
+# One hook process per event: set-state keeps the first prompt as the title.
+ev UserPromptSubmit working '"prompt":"  check   the\nlogs\u001b  "'
+[ "$(get "$p6" @agent-auto-description)" = "check the logs" ] || fail "first prompt not kept: [$(get "$p6" @agent-auto-description)]"
+# Subagent a1 asks while subagent a2 and the main thread keep running tools,
+# one of them a Bash too.
+tool PermissionRequest asking Bash a1
+tool PreToolUse working Read a2
+tool PostToolUse working Read a2
+tool PostToolUse working Bash
+[ "$(shown)" = "asking:a1/Bash" ] || fail "other agents' tool hooks ended a permission prompt: $(shown)"
+# The main thread asks too, for a WebFetch beside its parallel Reads.
+tool PermissionRequest asking WebFetch
+tool PostToolUse working Read
+tool PostToolUse working Bash a1
+[ "$(shown)" = "asking:/WebFetch" ] || fail "an approved tool did not end only its own ask: $(shown)"
+# The approved WebFetch fails: PostToolUseFailure ends the ask.
+tool PostToolUseFailure working WebFetch
+[ "$(shown)" = "working:" ] || fail "PostToolUseFailure did not end the ask: $(shown)"
+# An agent that moves on to another tool is no longer asking.
+tool PermissionRequest asking Edit a3
+tool PreToolUse working Grep a3
+[ "$(shown)" = "working:" ] || fail "the asking agent's next tool did not end its ask: $(shown)"
+# A Stop held by a background subagent that asks keeps the pane asking; the
+# final Stop ends every ask.
+tool PermissionRequest asking Bash a4
+ev Stop finished '"background_tasks":[{"id":"a4","type":"subagent","status":"running"}]'
+[ "$(shown)" = "asking:a4/Bash" ] || fail "a held Stop dropped a background agent's ask: $(shown)"
+tool PermissionRequest asking Bash
+ev Stop finished '"background_tasks":[]'
+[ "$(shown):$(get "$p6" @agent-unseen)" = "idle::1" ] || fail "the final Stop did not end the asks: $(shown)"
+# Later prompts keep the title; a new session clears it, a compaction doesn't.
+ev UserPromptSubmit working '"prompt":"something else"'
+[ "$(get "$p6" @agent-auto-description)" = "check the logs" ] || fail "a later prompt replaced the title"
+ev SessionStart idle '"source":"compact"'
+[ "$(get "$p6" @agent-auto-description)" = "check the logs" ] || fail "compaction cleared the title"
+ev SessionStart idle '"source":"clear"'
+[ -z "$(get "$p6" @agent-auto-description)" ] || fail "a new session kept the title"
+tmux kill-pane -t "$p6"
+
 # ----- locks: stale and wedged holders cannot block hooks -----------------
 holder(){  # holder PANE MODE &: take PANE's lock, record its path, then MODE
   rm -f "$TMP/lockpath"

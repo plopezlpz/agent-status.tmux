@@ -29,30 +29,6 @@ pane_option() {
   tmux show-option -pqv -t "$1" "$2" 2>/dev/null || true
 }
 
-# utf8_cut N TEXT: CUT, the first N characters of TEXT (not bytes, so a
-# multibyte character is never split), even when the caller's locale is not
-# UTF-8.
-utf8_cut() {
-  case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
-    *[Uu][Tt][Ff]-8*|*[Uu][Tt][Ff]8*) ;;
-    *) local LC_ALL=C.UTF-8 2>/dev/null ;;
-  esac
-  CUT=${2:0:$1}
-}
-
-# clean_text TEXT: CLEAN, one line without control characters, at most 240
-# characters, without surrounding blanks.
-clean_text() {
-  local text="$1" controls char
-  text=${text//$'\n'/ }; text=${text//$'\r'/ }; text=${text//$'\t'/ }
-  controls=$'\001\002\003\004\005\006\007\010\013\014\016\017\020\021\022\023\024\025\026\027\030\031\032\033\034\035\036\037\177'
-  while [ -n "$controls" ]; do
-    char=${controls%"${controls#?}"}; controls=${controls#?}; text=${text//"$char"/}
-  done
-  text="${text#"${text%%[![:space:]]*}"}"; text="${text%"${text##*[![:space:]]}"}"
-  utf8_cut 240 "$text"; CLEAN="$CUT"
-}
-
 valid_pane() {
   [[ "$1" =~ ^%[0-9]+$ ]] || { echo "describe.sh: not a pane id: $1" >&2; return 2; }
 }

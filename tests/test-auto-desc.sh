@@ -32,6 +32,12 @@ case "$out" in *…) : ;; *) fail "no ellipsis on long input: $out" ;; esac
 [ "${#out}" -le 60 ] || fail "too long: $out"
 
 unset_desc
+# Cut by characters, whatever the locale: never half a UTF-8 character.
+LC_ALL=C bash "$SCRIPT" set "$(printf 'é%.0s' $(seq 60))"
+out="$(get)"
+[ "$out" = "$(printf 'é%.0s' $(seq 49))…" ] || fail "multibyte prompt cut by bytes: [$out]"
+
+unset_desc
 bash "$SCRIPT" set "$(printf 'first line here\nsecond line')"
 [ "$(get)" = "first line here second line" ] || fail "multi-line not collapsed: [$(get)]"
 

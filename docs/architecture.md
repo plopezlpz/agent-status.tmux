@@ -75,7 +75,7 @@ A future provider adapter must:
 | Kilo Code | plugin; no exit event, so the pane is cleared from a process exit/signal handler; a prompt in another root session (`kilo -c`, picking a session) rebinds the pane; headless commands are detected from argv |
 | Kimi Code | native hooks incl. `SessionEnd`; headless runs (`-p`, `acp`, `web`, `rc`) are detected from the kimi process argv |
 | MastraCode | native hooks incl. `SessionEnd`; headless `--prompt` runs are detected from argv |
-| Claude Code | native hooks; no interrupt or permission-resolved event, so an Esc or a denied prompt settles on `idle_prompt`; API errors end the turn through `StopFailure`; a Stop while background subagents run stays working; headless runs (`claude -p`, the Agent SDK: `CLAUDE_CODE_ENTRYPOINT=sdk-*`) are ignored |
+| Claude Code | native hooks, one `set-state.sh` process per event (it also keeps the first prompt); no interrupt or permission-resolved event, so an Esc or a denied prompt settles on `idle_prompt`; a permission prompt stays asking through the tool hooks of parallel tools and subagents until the agent that asked proceeds (`@agent-asks`); API errors end the turn through `StopFailure`; a Stop while background subagents run stays working; headless runs (`claude -p`, the Agent SDK: `CLAUDE_CODE_ENTRYPOINT=sdk-*`) are ignored |
 
 Hook adapters that cannot read an interactive flag from their payload (Kimi,
 MastraCode) inspect the provider process's argv once per hook, honoring only
@@ -85,7 +85,8 @@ they cannot recognize may still report into the pane it inherited.
 Installer path overrides follow each provider's conventions: pi
 `PI_CODING_AGENT_DIR`, `PI_EXTENSIONS_DIR`; OMP `PI_CONFIG_DIR`,
 `OMP_EXTENSIONS_DIR`; `OPENCODE_CONFIG_DIR`, `KILO_CONFIG_DIR`,
-`KIMI_CODE_HOME`, `MASTRACODE_HOME` and `CLAUDE_SETTINGS`. Providers whose
+`KIMI_CODE_HOME`, `MASTRACODE_HOME`, and Claude's `CLAUDE_CONFIG_DIR` (or
+`CLAUDE_SETTINGS`, the settings file itself). Providers whose
 config directory is missing are skipped (Claude's `settings.json` is created).
 `install-claude-hooks.sh [install|uninstall]` is what `manage-provider.sh`
 runs for Claude; the older `install-pi-extension.sh` and

@@ -20,9 +20,9 @@ SCRIPTS="$PLUGIN_DIR/scripts/agent"
 # so installs through a symlinked plugin dir (e.g. TPM) never duplicate.
 SCRIPTS_REAL="$( cd "$SCRIPTS" && pwd -P )"
 # Path-independent match for entries written under any other spelling
-# (old installs through a symlink, a moved clone).
-OURS='/agent-status\.tmux/scripts/agent/(set-state|clear-state|auto-desc)\.sh( |$)'
-SETTINGS="${CLAUDE_SETTINGS:-$HOME/.claude/settings.json}"
+# (old installs through a symlink, a moved clone), quoted or not.
+OURS="/agent-status\\.tmux/scripts/agent/(set-state|clear-state|auto-desc)\\.sh([' ]|\$)"
+SETTINGS="${CLAUDE_SETTINGS:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json}"
 
 if ! command -v jq >/dev/null 2>&1; then
   echo "agent-status: jq is required (brew install jq | apt install jq)" >&2
@@ -74,16 +74,19 @@ uninstall_filter="$strip"'
 # shellcheck disable=SC2016
 install_filter="$strip"'
   def put($event; entry): .hooks[$event] = ((.hooks[$event] // []) | strip) + [entry];
-  def run($cmd): {type:"command", command:"\($r)/\($cmd)"};
-  def state($s): {type:"command", command:"\($r)/set-state.sh \($s)"};
+  # Claude runs a hook command with sh -c: quote the path.
+  def script($name): {type:"command", command:("\($r)/\($name)" | @sh)};
+  def state($s): script("set-state.sh") | .command += " \($s)";
   # Older plugin releases registered PermissionDenied, which fires on auto-mode
   # classifier denials mid-turn and is not a state change. Remove only our old
   # entry and preserve any unrelated user configuration.
   .hooks.PermissionDenied = ((.hooks.PermissionDenied // []) | strip) |
   if (.hooks.PermissionDenied | length) == 0 then del(.hooks.PermissionDenied) else . end |
-  put("SessionStart"; {hooks:[state("idle"), run("auto-desc.sh clear")]}) |
-  put("SessionEnd"; {hooks:[run("clear-state.sh")]}) |
-  put("UserPromptSubmit"; {hooks:[state("working"), run("auto-desc.sh set")]}) |
+  # set-state also sets (UserPromptSubmit) and clears (SessionStart) the
+  # first-prompt description; older releases ran auto-desc.sh beside it.
+  put("SessionStart"; {hooks:[state("idle")]}) |
+  put("SessionEnd"; {hooks:[script("clear-state.sh")]}) |
+  put("UserPromptSubmit"; {hooks:[state("working")]}) |
   put("Stop"; {hooks:[state("finished")]}) |
   # A turn that ends in an API error (rate limit, overload, auth) fires
   # StopFailure instead of Stop.
@@ -92,12 +95,15 @@ install_filter="$strip"'
   # idle (default 60s) with no turn, dialog, or background agent running, so
   # it ends a working/asking state that no Stop will ever close.
   put("Notification"; {matcher:"idle_prompt", hooks:[state("idle")]}) |
+  # Claude Code has no "permission answered" event. PostToolUse (or
+  # PostToolUseFailure) of the asking agent fires after its approved tool
+  # runs, and set-state keeps the pane asking through the tool hooks of other
+  # tools and agents meanwhile; a denial ends the turn like an interrupt, so
+  # the idle_prompt notification above closes it.
   put("PermissionRequest"; {hooks:[state("asking")]}) |
   put("PreToolUse"; {hooks:[state("working")]}) |
-  # Claude Code has no "permission answered" event. PostToolUse fires after an
-  # approved tool runs; a denial ends the turn like an interrupt, so the
-  # idle_prompt notification above closes it.
-  put("PostToolUse"; {hooks:[state("working")]})
+  put("PostToolUse"; {hooks:[state("working")]}) |
+  put("PostToolUseFailure"; {hooks:[state("working")]})
 '
 if [ "$ACTION" = install ]; then filter="$install_filter"; else filter="$uninstall_filter"; fi
 new=$({ if [ "$input" = /dev/null ]; then printf '{}\n'; else cat "$input"; fi; } | jq --arg s "$SCRIPTS" --arg r "$SCRIPTS_REAL" --arg ours "$OURS" "$filter")

@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Transient first-prompt description, stored with the pane.
-#   auto-desc.sh set [text]   # text from arg; Claude form (no arg): stdin .prompt
-#   auto-desc.sh clear [src]  # Claude form: stdin .source=="compact" -> keep
+#   auto-desc.sh set [text]   # text from arg; stdin form (no arg): .prompt
+#   auto-desc.sh clear [src]  # stdin form: .source=="compact" -> keep
+# Claude's hooks now leave this to set-state.sh; the stdin form serves the
+# Kimi and MastraCode adapters and Claude hooks installed by older releases.
 set -eu
 
 # shellcheck source=lib.sh
@@ -18,12 +20,9 @@ case "$cmd" in
     fi
     current=$(tmux show-option -p -q -v -t "$TMUX_PANE" @agent-auto-description 2>/dev/null || true)
     [ -z "$current" ] || exit 0
-    cleaned=$(printf '%s' "$raw" | LC_ALL=C tr -d '\000-\010\013\014\016-\037\177' | tr -s '[:space:]' ' ' | sed 's/^ //;s/ $//')
-    [ -n "$cleaned" ] || exit 0
-    if [ "${#cleaned}" -gt 50 ]; then
-      cleaned="$(printf '%s' "$cleaned" | cut -c1-49)…"
-    fi
-    tmux set-option -p -t "$TMUX_PANE" @agent-auto-description "$cleaned"
+    agent_auto_text "$raw"
+    [ -n "$AUTO" ] || exit 0
+    tmux set-option -p -t "$TMUX_PANE" @agent-auto-description "$AUTO"
     ;;
   clear)
     src="${2:-}"
