@@ -14,6 +14,15 @@ unset TMUX
 # The hooks ignore headless runs (claude -p): the suite may be run from one.
 # Nor may an installer test reach a real Claude, Codex, Gemini or Qwen config.
 unset CLAUDE_CODE_ENTRYPOINT CLAUDE_CONFIG_DIR CODEX_HOME GEMINI_CLI_HOME QWEN_HOME
+# Nor may a test's finished or asking pane send a desktop notification: the
+# notifiers found first on PATH do nothing. A test that checks notifications
+# puts its own stand-ins in front of these.
+mkdir "$TMUX_TMPDIR/quiet" || exit 1
+for n in alerter terminal-notifier notify-send; do
+  printf '#!/bin/sh\nexit 0\n' > "$TMUX_TMPDIR/quiet/$n"
+  chmod +x "$TMUX_TMPDIR/quiet/$n"
+done
+PATH="$TMUX_TMPDIR/quiet:$PATH"
 cleanup() {
   local s
   for s in "$TMUX_TMPDIR"/tmux-*/*; do
