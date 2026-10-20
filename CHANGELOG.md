@@ -31,7 +31,7 @@ Notable changes to agent-status.tmux, newest first. The format follows [Keep a C
 - The installer finds OpenCode and Kilo under `$XDG_CONFIG_HOME` when `OPENCODE_CONFIG_DIR` or `KILO_CONFIG_DIR` is unset.
 - Kimi Code: a `kimi -p` or `kimi acp` started by another agent's tool no longer takes over that agent's pane. Kimi hides its arguments, so a kimi now reports only as the foreground job of its terminal.
 - Kimi Code: the pane's title is the first prompt's text, not raw JSON.
-- Kimi Code: a subagent finishing no longer marks the main agent finished, or sends a notification, while its turn is still running.
+- Kimi Code: a subagent finishing no longer marks the main agent finished, or sends a notification, while its turn is still running. A background subagent that finishes during a later turn still does.
 - Kimi Code: turns kimi starts by itself, such as a background task's result arriving, show as working.
 - Kimi Code: `manage-provider.sh uninstall kimi` (and a reinstall) also removes our hooks after kimi has rewritten `config.toml` and dropped the integration markers.
 - MastraCode: a pane no longer stays stuck on working after the first prompt, `/new` or a thread switch. State, asks, the finished notification and the clear on exit all work again.
