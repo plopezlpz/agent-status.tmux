@@ -4,11 +4,17 @@ Notable changes to agent-status.tmux, newest first. The format follows [Keep a C
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-20
+
 ### Added
 
 - Gemini CLI support. `manage-provider.sh install gemini` adds hooks named `agent-status` to `${GEMINI_CLI_HOME:-~}/.gemini/settings.json`, after other tools' hooks, and keeps a backup of the old file. A session shows idle from its start, working from a prompt, asking at a confirmation, finished when the model answers, and the pane is cleared when Gemini quits. `gemini -p`, `gemini --acp` and a `gemini` run by another agent are ignored. Gemini runs hooks only in trusted folders. Verified with Gemini CLI 0.64.0, without running a turn.
 - Qwen Code support. `manage-provider.sh install qwen` adds hooks named `agent-status` to `${QWEN_HOME:-~/.qwen}/settings.json`, after other tools' hooks, and keeps a backup of the old file. A session shows idle from its start, working from a prompt, asking at a permission prompt or a question from the model, finished when the model answers, and the pane is cleared when Qwen quits; an Esc or a denied prompt settles idle. A prompt argument without `-i`, `qwen -p`, `qwen --acp`, Qwen's subcommands and a `qwen` run by another agent are ignored. Verified with Qwen Code 0.25.3, without running a turn.
 - Antigravity CLI (`agy`) support, partial. `manage-provider.sh install antigravity` adds a hook named `agent-status` to `~/.gemini/config/hooks.json`, after other tools' hooks, and keeps a backup of the old file; turning it off in agy's `/hooks` lasts through a reinstall. A session shows working from each model call, asking while the model's question waits for an answer, finished when the turn ends, and idle after an Esc. agy runs no hook as it starts or quits, or for a permission prompt: a session shows from its first prompt, a permission prompt shows as working, and after agy quits its pane keeps the last state until agy runs there again or the pane closes. `agy -p`, agy's subcommands and an `agy` run by another agent are ignored. Verified with Antigravity CLI 1.4.3, offline, without a model's answer.
+
+### Upgrading
+
+Press `prefix U` and reload tmux. To hook up Gemini CLI, Qwen Code or Antigravity CLI, run `bash ~/.tmux/plugins/agent-status.tmux/manage-provider.sh install` (or `install gemini`, `install qwen`, `install antigravity`) and restart their running sessions. Gemini runs the hooks only in folders you trust. If you set `QWEN_HOME` only in `~/.qwen/.env` or `~/.env`, set it for the installer too. Nothing changes for the agents you already hooked up, and their hooks need no reinstall.
 
 ## [0.5.0] - 2026-10-20
 
@@ -214,7 +220,8 @@ Descriptions under `~/.cache/agent-status` are not moved. Move them yourself, or
 - `prefix A` navigator popup: one card per Claude pane, grouped by session and folder, with editable descriptions.
 - `install-claude-hooks.sh` and `uninstall-claude-hooks.sh`.
 
-[Unreleased]: https://github.com/plopezlpz/agent-status.tmux/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/plopezlpz/agent-status.tmux/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/plopezlpz/agent-status.tmux/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/plopezlpz/agent-status.tmux/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/plopezlpz/agent-status.tmux/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/plopezlpz/agent-status.tmux/compare/v0.2.3...v0.3.0

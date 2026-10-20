@@ -97,6 +97,10 @@ A future provider adapter must:
 6. on a real exit, run `clear-state.sh <reason> <instance> <kind>`; the
    reasons `clear` and `resume` keep the pane registered.
 
+Antigravity CLI meets 1 and 6 only in part: agy runs no hook as it starts or
+quits, or for a permission prompt. Its support is partial, and the README
+says what it can't show.
+
 ## Providers in detail
 
 | Provider | Integration |

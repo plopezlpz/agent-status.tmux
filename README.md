@@ -33,7 +33,8 @@ asks before hooking them up (`--yes` doesn't ask); the others are skipped.
 (with or without a name) undoes it. Installers only add or remove their own
 entries and refuse to overwrite files they don't own. Codex needs more
 setup: see [Codex](#codex). Gemini CLI runs hooks only in folders you
-trust: see [Gemini CLI](#gemini-cli).
+trust: see [Gemini CLI](#gemini-cli). Antigravity CLI support is partial:
+see [Antigravity CLI](#antigravity-cli).
 
 TPM may keep plugins in `~/.config/tmux/plugins/` instead of
 `~/.tmux/plugins/`; adjust the paths if so. Without TPM, clone the repo:
@@ -75,10 +76,12 @@ bash ~/.tmux/plugins/agent-status.tmux/manage-provider.sh install
 
 What changed in each release: [CHANGELOG.md](CHANGELOG.md).
 
-From 0.6.0: Gemini CLI, Qwen Code and Antigravity CLI are new. The
-installer hooks them up; restart running Gemini, Qwen and agy sessions
-afterwards. See [Gemini CLI](#gemini-cli), [Qwen Code](#qwen-code) and
-[Antigravity CLI](#antigravity-cli).
+From 0.5.0: Gemini CLI, Qwen Code and Antigravity CLI are new. The
+installer hooks them up (`install gemini`, `install qwen` or
+`install antigravity` for just one); restart running Gemini, Qwen and agy
+sessions afterwards. The agents you already hooked up need nothing: their
+hooks are unchanged. See [Gemini CLI](#gemini-cli), [Qwen Code](#qwen-code)
+and [Antigravity CLI](#antigravity-cli).
 
 From 0.4.0: the installer adds the new Claude Code hooks (until then, MCP
 forms and sandbox network prompts don't show as asking), the OpenCode 2.x
@@ -226,6 +229,11 @@ interactive and reports. A `gemini` whose input or output is redirected
 (`gemini < file`, `... | cat`) runs headless but still reports into its
 pane. In Gemini's own sandbox (`-s`, with Docker or Podman) hooks can't
 reach tmux, so the pane doesn't report.
+
+Checked with Gemini CLI 0.64.0 without running a turn: installing, starting
+(the pane shows idle) and quitting with Ctrl+C twice (the pane is cleared)
+were run, and headless runs tried; what happens during a turn follows
+Gemini's source.
 
 Gemini's hooks can't tell everything apart:
 
