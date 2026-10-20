@@ -75,8 +75,9 @@ bash ~/.tmux/plugins/agent-status.tmux/manage-provider.sh install
 
 What changed in each release: [CHANGELOG.md](CHANGELOG.md).
 
-From 0.5.0: Gemini CLI is new. The installer hooks it up; restart running
-Gemini sessions afterwards. See [Gemini CLI](#gemini-cli).
+From 0.6.0: Gemini CLI and Qwen Code are new. The installer hooks them up;
+restart running Gemini and Qwen sessions afterwards. See
+[Gemini CLI](#gemini-cli) and [Qwen Code](#qwen-code).
 
 From 0.4.0: the installer adds the new Claude Code hooks (until then, MCP
 forms and sandbox network prompts don't show as asking), the OpenCode 2.x
@@ -134,6 +135,7 @@ agents.
 | Claude Code | an Esc or a denied prompt shows idle only after Claude's `idle_prompt` (about 60s); an approved tool shows asking until it returns; a turn that ends while a cloud session runs for it shows finished | 2.1.296, 2.1.304 (2.1.304 turns not run live) |
 | Codex | run it as `codex --no-daemon` and trust its hooks once (see below); shows from the first prompt; a turn that ends in an error stays working until the next prompt | 0.163.0 (no turn run) |
 | Gemini CLI | reports only in trusted folders; a denied or cancelled confirmation shows asking, and an Esc while a tool runs working, until the next prompt; an approved tool shows asking until it returns; an Esc while the model answers shows finished (see below) | 0.64.0 (no turn run) |
+| Qwen Code | a `qwen` reading a pipe or a file in the foreground of a pane shows idle there until the pane's next agent starts; with the OpenTUI renderer an Esc or an API error shows working, and a denied prompt asking, until the next prompt (see below) | 0.25.3 (no turn run) |
 
 Other agents, such as Cursor's agent, have no adapter yet.
 Agents without lifecycle hooks can't have one: their state can't be known
@@ -144,10 +146,12 @@ Headless runs (`claude -p` and the Agent SDK, pi and OMP outside their TUI,
 same for Kilo (`kilo run`, `serve`, `remote`, ...), `kimi -p` or `kimi acp`
 run by another agent, `mastracode --prompt`, a prompt argument or `--acp`,
 `codex exec`, `codex review` and Codex's other non-interactive commands,
-`gemini -p` and `gemini --acp`, and a `gemini` run by another agent) are
-ignored. Kimi hides its arguments, so a kimi reports only as the foreground
-job of its terminal: a `kimi -p` or `kimi acp` you start yourself in a shell
-or an editor reports into that pane. Run any other nested headless agent
+`gemini -p`, `gemini --acp` and a `gemini` run by another agent, and `qwen`
+with a prompt argument (without `-i`), `qwen -p`, `qwen --acp`, Qwen's
+subcommands (`serve`, ...) and a `qwen` run by another agent) are ignored.
+Kimi hides its arguments, so a kimi reports only as the foreground job of
+its terminal: a `kimi -p` or `kimi acp` you start yourself in a shell or an
+editor reports into that pane. Run any other nested headless agent
 with `TMUX_PANE` cleared, or it takes over the pane it runs in. Claude keeps
 the `CLAUDE_CODE_ENTRYPOINT` it inherits, so a `claude` started where that is
 `sdk-*` (say, from a shell or tmux server that a headless run started)
@@ -232,6 +236,43 @@ Gemini's hooks can't tell everything apart:
 - Resuming a session from inside Gemini (`/resume`) fires no hook: the pane
   follows the session from your next prompt, and quitting before one leaves
   it listed until the pane's next agent starts.
+
+### Qwen Code
+
+The installer adds one hook per event, named `agent-status`, to
+`${QWEN_HOME:-~/.qwen}/settings.json`, after other tools' hooks. If you set
+`QWEN_HOME` in `~/.qwen/.env` or `~/.env`, set it for the installer too.
+Qwen reads comments in that file but jq can't keep them, so a file with
+comments is refused. It is written in jq's layout (2-space indent), and the
+old file is kept as `settings.json.bak-*`. Qwen runs the hooks without
+asking; restart running Qwen sessions after installing.
+`"disableAllHooks": true`, `--safe-mode` and `--bare` turn them off.
+
+A session shows idle from its start, working from a prompt, asking at a
+permission prompt, a question from the model or a plan to approve, and
+finished when the model answers or an API error ends the turn. An Esc or a
+denied prompt settles idle as soon as Qwen waits for input again. `/clear`
+starts the new session idle, and quitting clears the pane. A prompt given on
+the command line runs once, headless, unless you add `-i`: `qwen "fix it"`
+doesn't report, `qwen -i "fix it"` does.
+
+Checked with Qwen Code 0.25.3 without running a turn: starting, `/clear`,
+`!` commands, `/quit` and closing the pane were run, and headless runs
+tried; what happens during a turn follows Qwen's source.
+
+Qwen's hooks can't tell everything apart:
+
+- A `qwen` whose input is redirected (`qwen < file`, `... | qwen`) runs
+  headless, but in the foreground of a pane it still reports there, and it
+  quits without a hook: the pane shows Qwen idle until its next agent
+  starts. So does a script there that drives Qwen through its SDK.
+- Turns Qwen starts itself (the result of a background agent or shell, a
+  scheduled prompt) fire no prompt hook: their tool calls show working and
+  their end finished, while one without a tool call shows only its end.
+- With the OpenTUI renderer (`QWEN_TUI_RENDERER=opentui`), which doesn't
+  announce that it waits for input or that a turn failed, an Esc or an API
+  error leaves the pane working, and a denied prompt asking, until the next
+  prompt.
 
 ## Configuration
 

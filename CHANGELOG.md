@@ -7,6 +7,7 @@ Notable changes to agent-status.tmux, newest first. The format follows [Keep a C
 ### Added
 
 - Gemini CLI support. `manage-provider.sh install gemini` adds hooks named `agent-status` to `${GEMINI_CLI_HOME:-~}/.gemini/settings.json`, after other tools' hooks, and keeps a backup of the old file. A session shows idle from its start, working from a prompt, asking at a confirmation, finished when the model answers, and the pane is cleared when Gemini quits. `gemini -p`, `gemini --acp` and a `gemini` run by another agent are ignored. Gemini runs hooks only in trusted folders. Verified with Gemini CLI 0.64.0, without running a turn.
+- Qwen Code support. `manage-provider.sh install qwen` adds hooks named `agent-status` to `${QWEN_HOME:-~/.qwen}/settings.json`, after other tools' hooks, and keeps a backup of the old file. A session shows idle from its start, working from a prompt, asking at a permission prompt or a question from the model, finished when the model answers, and the pane is cleared when Qwen quits; an Esc or a denied prompt settles idle. A prompt argument without `-i`, `qwen -p`, `qwen --acp`, Qwen's subcommands and a `qwen` run by another agent are ignored. Verified with Qwen Code 0.25.3, without running a turn.
 
 ## [0.5.0] - 2026-10-20
 

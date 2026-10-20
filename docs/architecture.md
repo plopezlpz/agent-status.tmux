@@ -15,13 +15,13 @@ provider lifecycle event
 | `@agent-state` | `working`, `asking` or `idle` |
 | `@agent-unseen` | `1` while an idle completion is not seen yet (shown as finished), else `0` |
 | `@agent-state-at` | when the state last changed, Unix seconds |
-| `@agent-kind` | the provider: `pi`, `omp`, `opencode`, `kilo`, `kimi`, `mastracode`, `claude`, `codex` or `gemini` |
+| `@agent-kind` | the provider: `pi`, `omp`, `opencode`, `kilo`, `kimi`, `mastracode`, `claude`, `codex`, `gemini` or `qwen` |
 | `@agent-instance` | the provider-qualified session id (`kind:id`) |
 | `@agent-seq` | the last accepted sequence number from an in-process adapter |
 | `@agent-auto-description` | the first prompt (or the session's own title), at most 50 characters |
 | `@agent-description` | a title the user set (by a UI or `describe.sh set`) |
-| `@agent-transcript` | the session's `.jsonl` (Claude, Codex, pi); `describe.sh` reads Claude's and pi's for title suggestions |
-| `@agent-asks` | internal: open Claude and Codex permission prompts and dialogs, space-separated |
+| `@agent-transcript` | the session's `.jsonl` (Claude, Codex, Qwen, pi); `describe.sh` reads Claude's and pi's for title suggestions |
+| `@agent-asks` | internal: open Claude, Codex and Qwen permission prompts and dialogs, space-separated |
 | `@agent-settled` | internal: the `@agent-unseen` value to restore when an ask on a settled pane ends (a Codex subagent's, a Claude dialog between turns); focusing the pane sets it to 0 |
 | `@agent-subagents` | internal: Kimi subagents started in the current turn |
 | `@agent-notify-token` | internal: cancels a delayed notification |
@@ -93,7 +93,7 @@ A future provider adapter must:
    session;
 5. avoid blocking or breaking the provider when status reporting fails.
    Always pass positional arguments: `set-state.sh` reads a stdin payload
-   only in the single-argument hook form Claude and Codex hooks use;
+   only in the single-argument hook form Claude, Codex and Qwen hooks use;
 6. on a real exit, run `clear-state.sh <reason> <instance> <kind>`; the
    reasons `clear` and `resume` keep the pane registered.
 
@@ -109,15 +109,16 @@ A future provider adapter must:
 | MastraCode | native hooks incl. `SessionEnd`; the session id follows the thread (`session-init` until the first prompt creates one, then each `/new` or switch, with no new `SessionStart`), so the MastraCode process (its pid) is the identity; only the TUI fires `SessionStart`, so an event reports only into the pane its process registered (a tool hook passes `set-state.sh` `only`, which checks that in the pane read it makes anyway), which leaves headless runs (`--prompt`, a prompt argument, `--acp`), whose tool hooks still fire, out; `AgentEnd` ends a run (`aborted` settles idle, `suspended` waits on the user, whose question or approval asks through `Notification` or `PermissionRequest`); MastraCode runs only the first `SessionEnd` hook and may exit before it does, so ours goes first and also clears a registration whose process is gone |
 | Codex | native hooks in `hooks.json` run `hook-event.sh codex`, which hands the payload to the hook form of `set-state.sh`/`clear-state.sh` (kind `codex`), so asks work as for Claude, with these differences: Codex runs an agent's shell calls in parallel, all named `Bash`, and its `PermissionRequest` has no call id, so an ask is keyed by a hash of the call's command and ends with that call's `PostToolUse` (a `write_stdin` ask with the `Bash` one) or a call that starts a few seconds after the ask (its siblings start with it; a denied call returns nothing); a subagent's ask also ends with its `SubagentStop`; a subagent's events never wake a settled pane, since a subagent may outlive its parent's turn, and only its asks show there, the pane settling again (`@agent-settled` keeps the unseen value) when they end; the model's `request_user_input` question and `request_permissions` request ask (neither fires `PermissionRequest`), `Interrupt` settles idle and `SessionEnd` clears; `SessionStart` fires only at the first prompt, and a turn that ends in an error fires no event; headless runs (`exec`, `review`, `app-server`, including the shared background server whose hooks carry the environment of whichever terminal started it) are detected from the nearest codex process's argv; trust is keyed by each hook's place in the file, so the installer edits it in place, and leaves an empty group where it removes one of ours that other groups follow |
 | Gemini CLI | native hooks in `settings.json` (one definition per event, named `agent-status`) run `hook-event.sh gemini`, which prints nothing and always exits 0 (Gemini shows a hook's output, and exit 2 blocks a prompt or forces a retry turn); `SessionStart` registers the session (`/clear` ends it with reason `clear`, which keeps the pane, and starts the next), `BeforeAgent` works and titles the pane, `Notification` (a confirmation about to show) asks, `AfterTool` works (it ends an approved tool's ask; the hot path, it reads the session id from `GEMINI_SESSION_ID` and never the payload), `AfterAgent` finishes and `SessionEnd` clears; a denied or cancelled confirmation, and an Esc while a tool runs, fire nothing, so the pane stays asking or working until the next prompt, and an Esc while the model streams fires `AfterAgent`; the in-app `/resume` switches sessions without an event, so `BeforeAgent` rebinds the pane (`set-state.sh` `bind`); a prompt argument is interactive in a terminal, while `-p`, `--acp` and a run that isn't its terminal's foreground job (one run by another agent's tool) are headless; Gemini runs hooks only in trusted folders; Antigravity shares `~/.gemini`, so `found` looks for Gemini CLI's own files |
+| Qwen Code | native hooks in `settings.json` (one definition per event, named `agent-status`, edited as for Gemini CLI) run `hook-event.sh qwen`, which prints nothing, always exits 0 and hands the payload, Claude Code's events and fields, to the hook form of `set-state.sh`/`clear-state.sh` (kind `qwen`), as for Codex; Qwen runs none of an agent's tools while one waits on an answer, so the agent's next `PreToolUse` ends all its asks (`PermissionRequest`, which also covers the model's question and plan approval); the `idle_prompt` notification, sent each time the TUI waits for input again, settles an Esc or a denial idle; `StopFailure` (API errors) finishes; a `Stop` while background agents run (`background_tasks`, which carry no type) stays working, as for Claude; `SessionEnd` clears (`clear` keeps the pane for the next `SessionStart`); headless runs (a prompt argument without `-i`, a subcommand, `-p`, `--acp`, a run that isn't its terminal's foreground job) are found from the nearest qwen process's argv, but one in the foreground whose input is redirected reports, and fires no `SessionEnd`; turns Qwen starts itself fire no prompt event; the opt-in OpenTUI renderer sends no `idle_prompt` or `StopFailure` |
 | Claude Code | native hooks, one `set-state.sh` process per event (it also keeps the first prompt); no interrupt or permission-resolved event, so an Esc or a denied prompt settles on `idle_prompt`; a permission prompt stays asking through the tool hooks of parallel tools and subagents until the agent that asked proceeds (`@agent-asks`): its tool returns, it calls a tool a few seconds after the ask (read-only tools run in parallel, so siblings start with it), it stops (`SubagentStop`), or the main thread's foreground `Agent` call that ran it returns; an MCP server's form or URL asks from `Elicitation` to `ElicitationResult`, and a sandboxed command's network request from its `permission_prompt` notification to the main thread's next tool hook (neither fires `PermissionRequest`), settling the pane again when asked between turns; a session's own title (`session_title`: `--name`, `/rename`) describes the pane in place of the first prompt, and text pasted into the prompt is left out; API errors end the turn through `StopFailure`; a Stop while background subagents run stays working; headless runs (`claude -p`, the Agent SDK: `CLAUDE_CODE_ENTRYPOINT=sdk-*`) are ignored |
 
 Adapters run the scripts of the checkout they come from: the extensions and
 plugins are symlinks into it and find `scripts/agent` beside their real path,
-and Kimi, MastraCode, Codex and Gemini CLI hooks run
+and Kimi, MastraCode, Codex, Gemini CLI and Qwen Code hooks run
 `scripts/agent/hook-event.sh` by its path.
 `hook-event.sh` cannot read an interactive flag from the payload, so it
-inspects the provider process's argv (Kimi and Gemini: also whether it is
-its terminal's foreground job) once per hook, honoring only options before the first non-option word; a headless
+inspects the provider process's argv (Kimi, Gemini and Qwen: also whether
+it is its terminal's foreground job) once per hook, honoring only options before the first non-option word; a headless
 run it cannot recognize may still report into the pane it inherited. Where
 `/proc/<pid>/cmdline` exists it reads the real argv; elsewhere `ps` drops
 quoting, so an interactive run whose command-line prompt starts with a
@@ -144,7 +145,8 @@ Installer path overrides follow each provider's conventions: pi
 `OPENCODE_CONFIG_DIR`, `KILO_CONFIG_DIR` (else
 `$XDG_CONFIG_HOME/opencode`, `$XDG_CONFIG_HOME/kilo`),
 `KIMI_CODE_HOME`, `CODEX_HOME`, `GEMINI_CLI_HOME` (Gemini CLI's home: its
-settings are in `$GEMINI_CLI_HOME/.gemini`), and Claude's `CLAUDE_CONFIG_DIR` (or
+settings are in `$GEMINI_CLI_HOME/.gemini`), `QWEN_HOME` (read as Qwen
+does: `~` is the home directory), and Claude's `CLAUDE_CONFIG_DIR` (or
 `CLAUDE_SETTINGS`, the settings file itself). `MASTRACODE_HOME` is the
 installer's own, for tests: MastraCode always reads `~/.mastracode`.
 Providers whose config directory is missing are skipped (Claude's
