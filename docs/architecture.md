@@ -31,8 +31,10 @@ The window icon `@agent-icon` is a plain window option, but tmux computes it:
 `set-option -wF @agent-icon '#{E:@agent-icon-format}'` evaluates the worst
 pane state in the window, so updating it starts no process. State changes
 run it after their pane write; the plugin's `pane-exited`,
-`window-layout-changed` and `pane-moved` hooks run it directly (kill, break,
-join, move and swap-pane), and every window is recomputed on load. The
+`window-layout-changed` and `pane-moved` hooks run it for `#{hook_window}`
+(kill, break, join, move and swap-pane), through `run-shell -C`, which expands
+the id without a process, and only when the icon changes, since every option
+write redraws every client. Every window is recomputed on load. The
 `pane-focus-in` hook checks for an unseen completion in tmux and runs a script
 only to clear one; `pane-died` clears a remain-on-exit pane (`run-shell -b`).
 

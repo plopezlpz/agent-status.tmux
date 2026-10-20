@@ -86,9 +86,11 @@ done
 unset _s _g _c
 
 # agent_update_window TARGET: recompute the icon of TARGET's window (a pane or
-# window id).
+# window id). An unchanged icon is not written: every write redraws every
+# client.
 agent_update_window() {
-  tmux set-option -wF -t "$1" @agent-icon "$AGENT_ICON" 2>/dev/null || true
+  tmux if -F -t "$1" "#{!=:#{@agent-icon},$AGENT_ICON}" \
+    "set-option -wF -t '$1' @agent-icon '$AGENT_ICON'" 2>/dev/null || true
 }
 
 # agent_identity: bound and sanitize $instance and $kind, then scope the

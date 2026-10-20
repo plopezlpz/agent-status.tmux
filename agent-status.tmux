@@ -138,9 +138,13 @@ add_hook pane-focus-in "if -F '#{&&:#{==:#{@agent-state},idle},#{==:#{@agent-uns
 
 # Recompute the window icon when panes leave or join a window: kill-pane,
 # join-pane/move-pane and cross-window swap-pane change both windows'
-# layouts; a window made by break-pane only reports pane-moved. pane-exited
-# runs in the closed pane's window, and the pane's options are gone with it.
-_icon="set-option -wF @agent-icon '#{E:@agent-icon-format}'"
+# layouts; a window made by break-pane only reports pane-moved; an exited
+# pane's options are gone with it. A hook command runs in the hook's window
+# only while the pane that fired it exists, so name #{hook_window}: -t does not
+# expand formats, run-shell -C does (## leaves the icon format to set-option).
+# The window may be gone (-q). An unchanged icon is not written, since every
+# write redraws every client.
+_icon="run-shell -C \"if -F -t '#{hook_window}' '##{!=:##{@agent-icon},##{E:@agent-icon-format}}' { set-option -wqF -t '#{hook_window}' @agent-icon '##{E:@agent-icon-format}' }\""
 add_hook pane-exited "$_icon"
 add_hook window-layout-changed "$_icon"
 add_hook pane-moved "$_icon"

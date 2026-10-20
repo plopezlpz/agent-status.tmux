@@ -81,9 +81,10 @@ done
 # focus change, layout change or pane exit starts no process at all.
 tmux show-hooks -g pane-died | grep -F "run-shell -b \"$AGENT/clear-pane.sh" | grep -F '#{hook_pane}' >/dev/null || fail "pane-died hook is not run-shell -b with #{hook_pane}"
 tmux show-hooks -g pane-focus-in | grep -F 'if-shell -F "#{&&:#{==:#{@agent-state},idle},#{==:#{@agent-unseen},1}}"' | grep -F "run-shell -b \"$AGENT/clear-finished.sh" >/dev/null || fail "pane-focus-in does not check for an unseen completion in tmux"
+# The icon hooks name the hook's window and write only a changed icon.
 for h in pane-exited window-layout-changed pane-moved; do
   line=$(tmux show-hooks -g "$h" | grep -F '@agent-icon-format')
-  [ "${line#*] }" = 'set-option -Fw @agent-icon "#{E:@agent-icon-format}"' ] || fail "$h hook is not a plain icon update: $line"
+  [ "${line#*] }" = "run-shell -C \"if -F -t '#{hook_window}' '##{!=:##{@agent-icon},##{E:@agent-icon-format}}' { set-option -wqF -t '#{hook_window}' @agent-icon '##{E:@agent-icon-format}' }\"" ] || fail "$h hook is not a guarded icon update of its window: $line"
 done
 tmux show-hooks -g pane-exited | grep -F 'user-hook' >/dev/null || fail "reload dropped a user pane-exited hook"
 # From here on the hooks run the copy, whose path has a space, a $, a quote
@@ -150,6 +151,38 @@ eventually no_icon "$w2" || fail "join-pane left the source window's icon"
 tmux kill-window -t "$w2"
 tmux kill-pane -t "$p5"
 eventually icon_is "$w1" working || fail "icon not restored after cleanup"
+# A layout change recomputes an icon that is out of date.
+p5=$(tmux split-window -d -P -F '#{pane_id}' -t "$p1")
+tmux set-option -p -t "$p5" @agent-state asking
+tmux select-layout -t "$w1" even-vertical
+eventually icon_is "$w1" asking || fail "a layout change did not recompute a changed icon"
+tmux kill-pane -t "$p5"
+eventually icon_is "$w1" working || fail "icon not restored after the layout case"
+
+# ----- the window a pane leaves is recomputed, wherever it is ---------------
+# The hooks' own context is the pane that fired them; when that was its
+# window's active pane, it is gone. Kill and let exit the active pane of a
+# window that is not its session's current one, and of a window in another
+# session: that window's icon is recomputed, and no other.
+tmux new-session -d -s other -x 120 -y 40
+for target in "$(tmux new-window -d -P -F '#{window_id}' -t t:)" "$(tmux display -p -t other: '#{window_id}')"; do
+  for how in kill exit; do
+    pa=$(tmux split-window -P -F '#{pane_id}' -t "$target" 'sleep 1')
+    [ "$(tmux display -p -t "$target" '#{pane_id}')" = "$pa" ] || fail "the split is not its window's active pane"
+    state "$pa" asking "" "a-$how" 1 test reset
+    icon_is "$target" asking || fail "asking pane did not set its window's icon"
+    if [ "$how" = kill ]; then tmux kill-pane -t "$pa"; fi
+    eventually gone "$pa" || fail "the active pane did not go"
+    eventually no_icon "$target" || fail "the active pane's $how left its window's icon: $(icon "$target")"
+    icon_is "$w1" working || fail "the active pane's $how changed another window's icon"
+  done
+done
+tmux kill-session -t other
+# A window whose last pane exits is gone: nothing to recompute, nothing to
+# report.
+tmux new-window -d -t t: 'sleep 0.3'
+sleep 1
+if tmux show-messages | grep -F 'no such window' >/dev/null; then fail "a closed window's hooks reported an error"; fi
 
 # ----- adapters' open stdin never blocks set-state/clear-state/auto-desc --
 mkfifo "$TMP/fifo"
@@ -341,6 +374,7 @@ PATH="$TMP/lbin:$PATH" TMUX_PANE="$p1" "$SET" asking "" a-1 29 test </dev/null
 [ "$(get "$p1" @agent-state)" = working ] || fail "non-UTF-8 client misparsed state (stale sequence accepted)"
 PATH="$TMP/lbin:$PATH" TMUX_PANE="$p1" "$SET" asking "" a-1 31 test </dev/null
 [ "$(get "$p1" @agent-state)" = asking ] || fail "non-UTF-8 client lost an update"
+tmux set-option -w -t "$w1" @agent-icon stale
 PATH="$TMP/lbin:$PATH" "$AGENT/update-window-icon.sh" "$w1"
 icon_is "$w1" asking || fail "non-UTF-8 client misparsed the rollup"
 
