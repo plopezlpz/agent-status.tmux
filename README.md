@@ -75,9 +75,10 @@ bash ~/.tmux/plugins/agent-status.tmux/manage-provider.sh install
 
 What changed in each release: [CHANGELOG.md](CHANGELOG.md).
 
-From 0.6.0: Gemini CLI and Qwen Code are new. The installer hooks them up;
-restart running Gemini and Qwen sessions afterwards. See
-[Gemini CLI](#gemini-cli) and [Qwen Code](#qwen-code).
+From 0.6.0: Gemini CLI, Qwen Code and Antigravity CLI are new. The
+installer hooks them up; restart running Gemini, Qwen and agy sessions
+afterwards. See [Gemini CLI](#gemini-cli), [Qwen Code](#qwen-code) and
+[Antigravity CLI](#antigravity-cli).
 
 From 0.4.0: the installer adds the new Claude Code hooks (until then, MCP
 forms and sandbox network prompts don't show as asking), the OpenCode 2.x
@@ -136,6 +137,7 @@ agents.
 | Codex | run it as `codex --no-daemon` and trust its hooks once (see below); shows from the first prompt; a turn that ends in an error stays working until the next prompt | 0.163.0 (no turn run) |
 | Gemini CLI | reports only in trusted folders; a denied or cancelled confirmation shows asking, and an Esc while a tool runs working, until the next prompt; an approved tool shows asking until it returns; an Esc while the model answers shows finished (see below) | 0.64.0 (no turn run) |
 | Qwen Code | a `qwen` reading a pipe or a file in the foreground of a pane shows idle there until the pane's next agent starts; with the OpenTUI renderer an Esc or an API error shows working, and a denied prompt asking, until the next prompt (see below) | 0.25.3 (no turn run) |
+| Antigravity CLI | partial: shows from the first prompt; a permission prompt shows as working; agy runs no hook when it quits, so the pane keeps its last state until agy runs there again or the pane closes (see below) | 1.4.3 (one turn run offline; no answer, tool or question) |
 
 Other agents, such as Cursor's agent, have no adapter yet.
 Agents without lifecycle hooks can't have one: their state can't be known
@@ -148,7 +150,9 @@ run by another agent, `mastracode --prompt`, a prompt argument or `--acp`,
 `codex exec`, `codex review` and Codex's other non-interactive commands,
 `gemini -p`, `gemini --acp` and a `gemini` run by another agent, and `qwen`
 with a prompt argument (without `-i`), `qwen -p`, `qwen --acp`, Qwen's
-subcommands (`serve`, ...) and a `qwen` run by another agent) are ignored.
+subcommands (`serve`, ...) and a `qwen` run by another agent, and `agy -p`,
+agy's subcommands (`remote-control`, ...) and an `agy` run by another agent)
+are ignored.
 Kimi hides its arguments, so a kimi reports only as the foreground job of
 its terminal: a `kimi -p` or `kimi acp` you start yourself in a shell or an
 editor reports into that pane. Run any other nested headless agent
@@ -273,6 +277,46 @@ Qwen's hooks can't tell everything apart:
   announce that it waits for input or that a turn failed, an Esc or an API
   error leaves the pane working, and a denied prompt asking, until the next
   prompt.
+
+### Antigravity CLI
+
+Support is partial: agy's hooks cover a turn, but not a permission prompt or
+agy quitting.
+
+The installer adds a named hook, `agent-status`, to agy's global hooks file,
+`~/.gemini/config/hooks.json` (agy always reads `~/.gemini`), after the
+others, and edits only that entry and the handlers of ours other entries
+hold. A file with comments is refused, since jq can't keep them. It is
+written in jq's layout (2-space indent), and the old file is kept as
+`hooks.json.bak-*`. agy's `/hooks` lists the hooks, and turning
+`agent-status` off there (`"enabled": false`) lasts through a reinstall.
+Restart running agy sessions after installing. Gemini CLI keeps its files in
+`~/.gemini` too, so agy counts as installed once it has run
+(`~/.gemini/antigravity-cli`).
+
+A session shows working from each model call, asking while the model's
+question (`ask_question`) waits for your answer, finished when the turn ends
+and idle after an Esc. `agy -p` and agy's subcommands don't report.
+
+Checked with Antigravity CLI 1.4.3 offline: starting, `-c`, `--conversation`,
+`/hooks`, `/exit` and Ctrl+C twice were run, and one turn, which failed for
+want of a network connection (working, then finished). A model's answer,
+tool calls, questions, an Esc and subagents follow agy's hooks
+documentation.
+
+agy's hooks can't tell everything apart:
+
+- A permission prompt, or a plan or artifact waiting for your review, fires
+  no hook: the pane shows working while it waits.
+- agy runs no hook when it quits (or crashes): the pane keeps agy's last
+  state, usually idle or finished, until agy runs there again or the pane
+  closes. paddock marks it stale once the pane is back at a shell prompt.
+- agy runs no hook as a session starts, and none for `/clear` or `/resume`:
+  a session shows from its first prompt, and until then the pane keeps the
+  previous one.
+- A subagent runs as a conversation of its own. While your turn runs, it
+  doesn't report; if one still runs after your turn ends, the pane may
+  follow it until it finishes.
 
 ## Configuration
 
