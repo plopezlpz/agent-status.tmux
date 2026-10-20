@@ -12,8 +12,8 @@ TMUX_TMPDIR=$(mktemp -d /tmp/agent-status-tests.XXXXXX) || exit 1
 export TMUX_TMPDIR
 unset TMUX
 # The hooks ignore headless runs (claude -p): the suite may be run from one.
-# Nor may an installer test reach a real Claude config.
-unset CLAUDE_CODE_ENTRYPOINT CLAUDE_CONFIG_DIR
+# Nor may an installer test reach a real Claude or Codex config.
+unset CLAUDE_CODE_ENTRYPOINT CLAUDE_CONFIG_DIR CODEX_HOME
 cleanup() {
   local s
   for s in "$TMUX_TMPDIR"/tmux-*/*; do
@@ -33,6 +33,7 @@ bash "$HERE/test-state.sh" || rc=1
 bash "$HERE/test-hooks.sh" || rc=1
 bash "$HERE/test-describe.sh" || rc=1
 bash "$HERE/test-claude-hooks.sh" || rc=1
+bash "$HERE/test-codex.sh" || rc=1
 if command -v bun >/dev/null 2>&1; then
   bun "$HERE/test-extension.ts" || rc=1
   bun "$HERE/test-providers.ts" || rc=1

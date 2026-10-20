@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Install/uninstall lifecycle adapters without touching unrelated provider config.
-# Usage: manage-provider.sh <install|uninstall> [--yes | pi|omp|opencode|kilo|kimi|mastracode|claude]
+# Usage: manage-provider.sh <install|uninstall> [--yes | pi|omp|opencode|kilo|kimi|mastracode|claude|codex]
 # Without a provider it finds the supported agents on this machine and, in a
 # terminal, asks before hooking them up (--yes doesn't ask). The rest are skipped.
 #   manage-provider.sh found <provider>   exit 0 if that agent is installed (its config home exists)
 set -eu
 ACTION="${1:-}" PROVIDER="${2:-}"
-PROVIDERS="pi omp opencode kilo kimi mastracode claude"
+PROVIDERS="pi omp opencode kilo kimi mastracode claude codex"
 USAGE="usage: $0 <install|uninstall> [--yes | ${PROVIDERS// /|}]"
 case "$ACTION" in install|uninstall|found) ;; *) echo "$USAGE" >&2; exit 2 ;; esac
 ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
@@ -37,7 +37,7 @@ if [ "$ACTION" != found ] && { [ -z "$PROVIDER" ] || [ "$PROVIDER" = --yes ] || 
 fi
 
 case "$PROVIDER" in
-  pi|omp|opencode|kilo|kimi|mastracode|claude) ;;
+  pi|omp|opencode|kilo|kimi|mastracode|claude|codex) ;;
   *) echo "$USAGE" >&2; exit 2 ;;
 esac
 
@@ -171,6 +171,10 @@ case "$PROVIDER" in
     # Hook event -> hook-event.sh action.
     events='[{"event":"SessionStart","action":"session"},{"event":"SessionEnd","action":"end"},{"event":"UserPromptSubmit","action":"working"},{"event":"AgentStart","action":"working"},{"event":"PreToolUse","action":"working"},{"event":"PermissionRequest","action":"blocked"},{"event":"PermissionResult","action":"working"},{"event":"SubagentStart","action":"working"},{"event":"SubagentEnd","action":"working"},{"event":"Interrupt","action":"interrupt"},{"event":"AgentEnd","action":"idle"},{"event":"Stop","action":"idle"}]'
     ;;
+  codex)
+    base="${CODEX_HOME:-$HOME/.codex}"
+    config="$base/hooks.json"
+    ;;
 esac
 if [ "$ACTION" = found ]; then
   # An explicit Pi extensions dir counts as installed, as it does for install.
@@ -185,6 +189,103 @@ if [ "$PROVIDER" = kimi ] || [ "$PROVIDER" = mastracode ]; then
   hook="$(sh_word "$ROOT/scripts/agent/hook-event.sh") $PROVIDER"
   src="$ROOT/scripts/$PROVIDER/agent-status.sh" dest="$base/hooks/agent-status.tmux.sh"
 fi
+
+# Codex: one group per event in hooks.json, each running hook-event.sh with
+# the event's action. Codex trusts a hook by its key (file, event, group and
+# handler index) and a hash of its definition, and silently skips one that
+# is new or changed until the user trusts it. So the groups are edited in
+# place: an unchanged reinstall writes nothing, a changed command replaces our
+# group where it is, a new one goes last, and other tools' groups keep their
+# index whenever possible. Interrupt and SessionEnd allow at most 3 seconds.
+codex_groups() {
+  local hook
+  hook="$(sh_word "$ROOT/scripts/agent/hook-event.sh") codex"
+  jq -n --arg hook "$hook" '[["SessionStart", "session", 10], ["UserPromptSubmit", "working", 10],
+      ["PreToolUse", "tool", 10], ["PermissionRequest", "blocked", 10], ["PostToolUse", "working", 10],
+      ["SubagentStop", "working", 10], ["Stop", "idle", 10], ["Interrupt", "interrupt", 3], ["SessionEnd", "end", 3]]
+    | map({key: .[0], value: {hooks: [{type: "command", command: "\($hook) \(.[1])", timeout: .[2]}]}})
+    | from_entries'
+}
+# Our hooks: hook-event.sh for codex from any checkout, and the Claude hooks
+# Codex copies from Claude's settings when it migrates them (they would
+# report a Codex session as Claude).
+# shellcheck disable=SC2016 # jq variables, not shell variables
+CODEX_OURS='def ours: type == "object" and ((.command // "") | type == "string" and (test("/scripts/agent/hook-event\\.sh'"'"' codex [a-z]+$")
+    or test("/(claude-)?agent-status\\.tmux/scripts/agent/(set-state|clear-state|auto-desc)\\.sh(['"'"' ]|$)")
+    or ((contains($s + "/") or contains($r + "/")) and test("/(set-state|clear-state|auto-desc)\\.sh(['"'"' ]|$)"))));
+  def owned: type == "object" and ((.hooks // null) | type == "array") and any(.hooks[]; ours);'
+# shellcheck disable=SC2016
+codex_filter="$CODEX_OURS"'
+  def pure: owned and all(.hooks[]; ours);
+  # Drop our handlers and the groups they leave empty; nothing else changes.
+  def strip: map(if owned then .hooks |= map(select(ours | not)) | select(.hooks | length > 0) else . end);
+  if type != "object" then error("root must be an object") else . end
+  | if (.hooks // {} | type) != "object" then error("hooks must be an object") else . end
+  | if any(.hooks // {} | .[]; type != "array") then error("each event must be an array") else . end
+  | if $install then .hooks //= {} else . end
+  | reduce (.hooks // {} | keys_unsorted[]) as $e (.;
+      if $install and $groups[$e] != null then . else
+        (.hooks[$e] | any(.[]; owned)) as $had
+        | .hooks[$e] |= strip
+        | if $had and (.hooks[$e] | length) == 0 then del(.hooks[$e]) else . end end)
+  | if $install then
+      reduce ($groups | to_entries[]) as $g (.;
+        (.hooks[$g.key] // []) as $a
+        | ([$a | to_entries[] | select(.value | pure) | .key] | first) as $i
+        | .hooks[$g.key] = (if $i == null then ($a | strip) + [$g.value]
+            else ($a[:$i] | strip) + [$g.value] + ($a[$i + 1:] | strip) end))
+    else . end'
+# codex_moved OLD NEW: how many other tools' hooks NEW moves to another key.
+codex_moved() {
+  # shellcheck disable=SC2016
+  jq -n --slurpfile a "$1" --slurpfile b "$2" --arg s "$ROOT/scripts/agent" --arg r "$(cd "$ROOT/scripts/agent" && pwd -P)" "$CODEX_OURS"'
+    def keyed: [.hooks // {} | objects | to_entries[] | .key as $e | .value | arrays | to_entries[] | .key as $g
+      | .value | objects | .hooks // [] | arrays | to_entries[] | select(.value | ours | not) | [$e, $g, .key, .value]];
+    ($a[0] | keyed) - ($b[0] | keyed) | length'
+}
+# codex_hooks_off: config.toml turns hooks off ([features] hooks = false).
+codex_hooks_off() {
+  [ -f "$base/config.toml" ] || return 1
+  awk '
+    { line = $0; gsub(/[[:space:]]/, "", line) }
+    line ~ /^\[/ { features = (line ~ /^\[features\](#.*)?$/); next }
+    (features && line ~ /^(codex_)?hooks=false/) || line ~ /^features\.(codex_)?hooks=false/ { off = 1 }
+    END { exit !off }' "$base/config.toml"
+}
+# codex_update install|uninstall: edit hooks.json, backing up the old one.
+CODEX_NEW=""
+codex_update() {
+  local new backup="" moved=0 f stamp
+  require_jq "$config"
+  require_regular_config "$config"
+  new=$(mktemp "$config.agent-status.XXXXXX") || exit 1
+  CODEX_NEW="$new"
+  trap 'rm -f "$CODEX_NEW"' EXIT
+  { if [ -f "$config" ]; then cat "$config"; else printf '{}\n'; fi; } \
+    | jq --argjson install "$([ "$1" = install ] && echo true || echo false)" --argjson groups "$(codex_groups)" \
+      --arg s "$ROOT/scripts/agent" --arg r "$(cd "$ROOT/scripts/agent" && pwd -P)" "$codex_filter" > "$new" \
+    || { echo "agent-status: refusing to edit $config: not a Codex hooks file" >&2; exit 1; }
+  if [ -f "$config" ]; then
+    # Unchanged (formatting aside): leave the file alone.
+    if [ "$(jq -cS . "$config")" = "$(jq -cS . "$new")" ]; then
+      echo "agent-status: $config already $([ "$1" = install ] && echo has the current hooks || echo has no agent-status hooks)"
+      return 0
+    fi
+    moved=$(codex_moved "$config" "$new")
+    backup=$(mktemp "$config.bak-$(date +%s).XXXXXX") || exit 1
+    cp -p "$config" "$backup"
+  fi
+  replace_from_file "$config" "$new"
+  # Keep only our newest 3 backups (the exact mktemp name pattern above).
+  for f in "$config".bak-*; do
+    stamp="${f#"$config".bak-}"
+    [[ "$stamp" =~ ^[0-9]+\.[A-Za-z0-9]{6}$ ]] && [ -f "$f" ] && [ ! -L "$f" ] || continue
+    printf '%s\t%s\n' "${stamp%%.*}" "$f"
+  done | sort -t $'\t' -k1,1nr | tail -n +4 | cut -f2- | while IFS= read -r f; do rm -f -- "$f"; done
+  echo "agent-status: hooks $([ "$1" = install ] && echo written to || echo removed from) $config"
+  [ -z "$backup" ] || echo "agent-status: backup saved to $backup"
+  case "$moved" in 0) ;; *) echo "agent-status: $moved hook(s) of other tools moved in $config; Codex asks you to review them again" ;; esac
+}
 
 if [ "$ACTION" = install ]; then
   # Explicit test/user destination overrides preserve the old Pi behavior of
@@ -240,9 +341,22 @@ KIMI
       # shellcheck disable=SC2016 # jq variables, not shell variables
       json_update "$config" "$strip"' | reduce $events[] as $e (.; .[$e.event] = (.[$e.event] // []) + [{type:"command",command:"\($hook) \($e.action)",timeout:10000}])' --arg hook "$hook" --arg legacy "$(sh_word "$dest")" --argjson events "$events"
       ;;
+    codex) codex_update install ;;
     *) link_install "$src" "$dest" ;;
   esac
   echo "agent-status: installed $PROVIDER adapter"
+  if [ "$PROVIDER" = codex ]; then
+    ! codex_hooks_off || echo "agent-status: $base/config.toml turns Codex hooks off: set hooks = true under [features]" >&2
+    cat <<'EOF'
+agent-status: Codex runs a new or changed hook only once you trust it. If
+  Codex says "Hooks need review" when it starts, choose "Review hooks" (or
+  run /hooks) and trust the hook-event.sh ones.
+agent-status: in tmux, run Codex as `codex --no-daemon` (e.g. an alias). Its
+  shared background server runs the hooks of every session with the
+  environment of the terminal that started it, so they can't tell which
+  pane is theirs and report nothing.
+EOF
+  fi
 else
   case "$PROVIDER" in
     opencode)
@@ -265,6 +379,7 @@ else
       fi
       link_remove "$src" "$dest"
       ;;
+    codex) if [ -e "$config" ] || [ -L "$config" ]; then codex_update uninstall; fi ;;
     *) link_remove "$src" "$dest" ;;
   esac
   echo "agent-status: uninstalled $PROVIDER adapter"

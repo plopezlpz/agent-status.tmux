@@ -8,29 +8,32 @@ TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 fail(){ echo "FAIL: $1" >&2; exit 1; }
 command -v jq >/dev/null 2>&1 || { echo "SKIP: install all (jq missing)"; exit 0; }
 unset PI_EXTENSIONS_DIR PI_CODING_AGENT_DIR PI_CONFIG_DIR OMP_EXTENSIONS_DIR OPENCODE_CONFIG_DIR \
-  KILO_CONFIG_DIR KIMI_CODE_HOME MASTRACODE_HOME CLAUDE_SETTINGS CLAUDE_CONFIG_DIR
+  KILO_CONFIG_DIR KIMI_CODE_HOME MASTRACODE_HOME CLAUDE_SETTINGS CLAUDE_CONFIG_DIR CODEX_HOME
 
-# Only Kilo and Claude are installed.
-export HOME="$TMP/home"; mkdir -p "$HOME/.config/kilo" "$HOME/.claude"
+# Only Kilo, Claude and Codex are installed.
+export HOME="$TMP/home"; mkdir -p "$HOME/.config/kilo" "$HOME/.claude" "$HOME/.codex"
 bash "$ROOT/manage-provider.sh" install >/dev/null 2>&1 || fail "install all failed"
 [ -L "$HOME/.config/kilo/plugin/agent-status.tmux.js" ] || fail "kilo adapter not installed"
 grep -qF "$ROOT/" "$HOME/.claude/settings.json" || fail "claude hooks not installed"
+grep -qF "$ROOT/" "$HOME/.codex/hooks.json" || fail "codex hooks not installed"
 for d in .pi .omp .config/opencode .kimi-code .mastracode; do
   [ ! -e "$HOME/$d" ] || fail "created $d for an agent that isn't installed"
 done
-hooks() { grep -oF "$ROOT/" "$HOME/.claude/settings.json" | wc -l; }
+hooks() { cat "$HOME/.claude/settings.json" "$HOME/.codex/hooks.json" | grep -oF "$ROOT/" | wc -l; }
 before=$(hooks)
 bash "$ROOT/manage-provider.sh" install >/dev/null 2>&1 || fail "a second install all failed"
-[ "$(hooks)" -eq "$before" ] || fail "a second install all duplicated the claude hooks"
+[ "$(hooks)" -eq "$before" ] || fail "a second install all duplicated the claude or codex hooks"
 
 bash "$ROOT/manage-provider.sh" uninstall >/dev/null 2>&1 || fail "uninstall all failed"
 [ ! -e "$HOME/.config/kilo/plugin/agent-status.tmux.js" ] || fail "kilo adapter not removed"
 ! grep -qF "$ROOT/" "$HOME/.claude/settings.json" || fail "claude hooks not removed"
+! grep -qF "$ROOT/" "$HOME/.codex/hooks.json" || fail "codex hooks not removed"
 
 # Without ~/.claude, Claude is skipped and nothing is created for it.
 export HOME="$TMP/home2"; mkdir -p "$HOME"
 bash "$ROOT/manage-provider.sh" install >/dev/null 2>&1 || fail "install all with no agents failed"
 [ ! -e "$HOME/.claude" ] || fail "created ~/.claude for a machine without Claude"
+[ ! -e "$HOME/.codex" ] || fail "created ~/.codex for a machine without Codex"
 # Claude with its config moved (CLAUDE_CONFIG_DIR) is found there.
 mkdir "$TMP/claude-config"
 CLAUDE_CONFIG_DIR="$TMP/claude-config" bash "$ROOT/manage-provider.sh" found claude || fail "Claude under CLAUDE_CONFIG_DIR not found"

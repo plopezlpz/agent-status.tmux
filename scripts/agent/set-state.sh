@@ -2,9 +2,10 @@
 # Update the current pane's agent state and optionally notify.
 # Usage: set-state.sh <working|asking|finished|idle> [message] [instance] [seq] [kind] [reset]
 # `finished` is stored as idle + unseen: an idle completion not yet seen.
-# Claude hooks pass the state alone, with their payload on stdin (kind
-# $AGENT_STATUS_KIND, else claude); for them it also keeps the first prompt as
-# @agent-auto-description and tracks open permission prompts in @agent-asks.
+# Claude hooks (and Codex hooks, through hook-event.sh) pass the state alone,
+# with their payload on stdin (kind $AGENT_STATUS_KIND, else claude); for them
+# it also keeps the first prompt as @agent-auto-description and tracks open
+# permission prompts in @agent-asks.
 set -eu
 
 SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
@@ -109,6 +110,9 @@ case "$transcript" in *[[:cntrl:]]*) transcript="" ;; esac
 
 agent_lock "pane-${TMUX_PANE#%}"
 read_pane
+# A Codex subagent's end only ends its own asks: it never wakes a pane that
+# has settled (its parent may have stopped before it).
+if [ "$hook_name" = SubagentStop ] && [ "$prev_state" != asking ]; then exit 0; fi
 if [ -n "$compact" ] && [ -n "$prev_state" ]; then
   state="$prev_state" unseen="${prev_unseen:-0}" raw_state=compact
 fi
@@ -134,10 +138,11 @@ if [ "$raw_state" = idle ]; then
 fi
 case "$unseen" in 0|1) ;; *) unseen=0 ;; esac
 
-# Claude permission prompts: tool hooks of parallel tools and subagents keep
-# coming while a dialog is open, so an ask holds the pane asking until the
-# turn ends or the agent that asked proceeds: its asked tool returns, or it
-# starts another. @agent-asks lists the open ones as "<agent_id>/<tool>".
+# Claude and Codex permission prompts: tool hooks of parallel tools and
+# subagents keep coming while a dialog is open, so an ask holds the pane
+# asking until the turn ends or the agent that asked proceeds: its asked tool
+# returns, it starts another, it gets a new prompt or (Codex) it ends.
+# @agent-asks lists the open ones as "<agent_id>/<tool>".
 # A main-thread Task/Agent that returns with no subagent left running ends
 # the subagents' asks too: hook sets without PostToolUseFailure never report
 # an approved tool that failed.
@@ -152,8 +157,10 @@ if [ -n "$hook_name" ] && [ -z "$compact" ]; then
       esac
       asks=""
       for ask in $prev_asks; do
+        # A prompt to the main thread ends every ask.
+        [ "$hook_name:$agent" != UserPromptSubmit: ] || continue
         case "$hook_name:$ask" in
-          UserPromptSubmit:*|PreToolUse:"$agent/"*|Stop*:"$agent/"*|PostToolUse*:"$agent/$tool") continue ;;
+          UserPromptSubmit:"$agent/"*|PreToolUse:"$agent/"*|Stop*:"$agent/"*|SubagentStop:"$agent/"*|PostToolUse*:"$agent/$tool") continue ;;
         esac
         [ -z "$subagents_done" ] || [ -z "${ask%%/*}" ] || continue
         asks="${asks:+$asks }$ask"
@@ -201,9 +208,10 @@ fi
 if [ "$changed" -eq 1 ]; then
   args+=("${w[@]}" @agent-notify-token "$$" \; set-option -wF -t "$TMUX_PANE" @agent-icon "$AGENT_ICON" \;)
 fi
-# The first prompt describes the pane until a new session. It is free text,
-# so it goes last: tmux skips the rest of a chain after a failed command.
-if [ "$hook_name" = UserPromptSubmit ] && [ -z "$described" ]; then
+# The first prompt describes the pane until a new session (a Codex
+# subagent's prompt doesn't). It is free text, so it goes last: tmux skips the
+# rest of a chain after a failed command.
+if [ "$hook_name" = UserPromptSubmit ] && [ -z "$agent" ] && [ -z "$described" ]; then
   agent_auto_text "$prompt"
   [ -z "$AUTO" ] || args+=("${w[@]}" @agent-auto-description "$AUTO")
 elif [ "$hook_name" = SessionStart ] && [ -z "$compact" ] && [ -n "$described" ]; then
