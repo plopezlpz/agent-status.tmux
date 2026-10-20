@@ -9,7 +9,8 @@ SOCK="agent-status-test-$$"
 
 command -v tmux >/dev/null 2>&1 || { echo "SKIP: tmux not installed"; exit 0; }
 
-cleanup() { tmux -L "$SOCK" kill-server 2>/dev/null || true; }
+TMP="$(mktemp -d)"
+cleanup() { tmux -L "$SOCK" kill-server 2>/dev/null || true; rm -rf "$TMP"; }
 trap cleanup EXIT
 fail() { echo "FAIL: $1" >&2; exit 1; }
 
@@ -34,4 +35,9 @@ cmd="$(tmux -L "$SOCK" show-option -gqv @agent-suggest-command 2>/dev/null || tr
 case "$cmd" in */describe.sh\ suggest) ;; *) fail "@agent-suggest-command is not describe.sh suggest: $cmd" ;; esac
 rc=0; sh -c "$cmd \"\$1\"" sh not-a-pane 2>/dev/null || rc=$?
 [ "$rc" = 2 ] || fail "@agent-suggest-command did not run through sh (status $rc)"
+# A reload from a moved checkout points the adapters at it.
+cp -R "$PLUGIN_DIR/agent-status.tmux" "$PLUGIN_DIR/scripts" "$TMP/"
+tmux -L "$SOCK" run-shell "$TMP/agent-status.tmux" 2>/dev/null || true
+moved="$(tmux -L "$SOCK" show-option -gqv @agent-scripts-dir 2>/dev/null || true)"
+[ "$moved" = "$(cd "$TMP" && pwd)/scripts/agent" ] || fail "@agent-scripts-dir did not follow a moved checkout: $moved"
 echo "PASS: engine advertises @agent-scripts-dir ($dir), @agent-suggest-command and Herdr-style indicators"

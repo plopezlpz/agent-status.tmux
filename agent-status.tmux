@@ -50,8 +50,9 @@ tmux set-option -g @agent-suggest-command "$_suggest"
 # like tmux-resurrect.
 tmux set-option -gqo @agent-log "${XDG_DATA_HOME:-$HOME/.local/share}/tmux/agent-status/agent.log"
 # Advertise where the per-pane state scripts live so provider extensions can
-# locate shared scripts without a baked path.
-tmux set-option -gqo @agent-scripts-dir       "$SCRIPTS/agent"
+# locate shared scripts without a baked path. Set on every load: it names
+# this checkout, which may have moved.
+tmux set-option -g @agent-scripts-dir "$SCRIPTS/agent"
 # Optional: macOS terminal app to activate on notification click (e.g.
 # "Ghostty", "iTerm", "Terminal"). Empty = don't activate any app.
 tmux set-option -gqo @agent-terminal-app ''
