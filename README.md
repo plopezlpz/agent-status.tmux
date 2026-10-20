@@ -6,7 +6,8 @@ agent state a UI such as [paddock](https://github.com/plopezlpz/paddock) shows.
 - **working / asking / idle** state per pane; a completion you haven't seen
   yet shows as **finished**
 - worst-state window icon (asking > working > finished > idle)
-- clickable desktop notifications
+- desktop notifications; a click focuses the pane (alerter or
+  terminal-notifier)
 - per-pane titles: the first prompt, or one you set or have pi suggest
 - no daemon, no polling of pane output or processes
 
@@ -26,11 +27,31 @@ Run `prefix I`, then hook up your agents and restart them:
 bash ~/.tmux/plugins/agent-status.tmux/manage-provider.sh install
 ```
 
-It lists the supported agents it finds on this machine and asks before hooking
-them up (`--yes` doesn't ask); the others are skipped.
+It lists the supported agents it finds on this machine and, in a terminal,
+asks before hooking them up (`--yes` doesn't ask); the others are skipped.
 `manage-provider.sh install claude` does just one, and `manage-provider.sh uninstall`
 (with or without a name) undoes it. Installers only add or remove their own
-entries and refuse to overwrite files they don't own.
+entries and refuse to overwrite files they don't own. Codex needs more
+setup: see [Codex](#codex).
+
+TPM may keep plugins in `~/.config/tmux/plugins/` instead of
+`~/.tmux/plugins/`; adjust the paths if so. Without TPM, clone the repo:
+
+```bash
+git clone https://github.com/plopezlpz/agent-status.tmux ~/.tmux/plugins/agent-status.tmux
+```
+
+and load it from your tmux config, with any options set before the
+`run-shell` line:
+
+```tmux
+set -g @agent-icon-in-status on
+run-shell 'bash ~/.tmux/plugins/agent-status.tmux/agent-status.tmux'
+```
+
+Then reload tmux (`tmux source-file ~/.tmux.conf`) and run the installer
+above. To update a clone, run `git -C ~/.tmux/plugins/agent-status.tmux pull`,
+reload tmux and run the installer again.
 
 Rather place the icon yourself? Leave `@agent-icon-in-status` off and add
 `#{?@agent-icon,#{@agent-icon} ,}` to your window status formats, e.g.:
@@ -43,22 +64,59 @@ setw -g window-status-current-format "#{?@agent-icon,#{@agent-icon} ,}#I:#W "
 ## Update
 
 Update with `prefix U`, reload tmux, then run the installer again so your
-agents get the current hook commands. It replaces the entries it wrote before,
-and hooks from an earlier release keep working until you do:
+agents get the current hook commands, and restart them. It replaces the
+entries it wrote before, and hooks from an earlier release keep working until
+you do:
 
 ```bash
 bash ~/.tmux/plugins/agent-status.tmux/manage-provider.sh install
 ```
 
+What changed in each release: [CHANGELOG.md](CHANGELOG.md).
+
+From 0.4.0: the installer adds the new Claude Code hooks (until then, MCP
+forms and sandbox network prompts don't show as asking), the OpenCode 2.x
+plugin, and the new Kimi Code and MastraCode hooks; restart running
+MastraCode sessions afterwards. If you run `omp --profile <name>`, install
+OMP with `OMP_PROFILE=<name>`. `AGENT_STATUS_OMP_RETRY_GRACE_MS`
+(`HERDR_OMP_RETRY_GRACE_MS` before) is gone: OMP retries before it ends a
+turn, so a turn that ends in an error asks at once. A Kilo TUI attached to a
+`kilo daemon` doesn't report: run Kilo with `KILO_NO_DAEMON=1` while a daemon
+runs. Codex is new: see [Codex](#codex).
+
+From 0.3.0: tmux 3.8 or later is required, and fzf no longer is. The
+`prefix A` navigator popup is gone ([paddock](https://github.com/plopezlpz/paddock)
+is the UI now). Its options went with it: `@agent-navigator-key`,
+`@agent-popup-width` and `@agent-popup-height`. `@agent-state-dir` and
+`@agent-descriptions-dir` are gone too, because state and titles now live in
+pane options. Descriptions you saved in the navigator are not carried over.
+A running tmux server keeps the old binding until it restarts. `tmux unbind A`
+drops it now; if you changed `@agent-navigator-key`, unbind that key instead.
+If you never changed the icons, the old Nerd Font defaults become `●`/`○` on
+reload.
+
 Older releases' `install-pi-extension.sh`, `uninstall-pi-extension.sh` and
 `uninstall-claude-hooks.sh` are gone: use `manage-provider.sh install pi`,
 `manage-provider.sh uninstall pi` and `manage-provider.sh uninstall claude`.
 OMP no longer reads `HERDR_OMP_IDLE_DEBOUNCE_MS`: set
-`AGENT_STATUS_OMP_IDLE_DEBOUNCE_MS` instead. `AGENT_STATUS_OMP_RETRY_GRACE_MS`
-(`HERDR_OMP_RETRY_GRACE_MS` before) is gone: OMP retries before it ends a
-turn, so a turn that ends in an error asks at once. `@agent-log` lines now
-carry the tmux server's local time with its UTC offset
-(`2026-10-20T11:09:03+0300`) instead of UTC (`...Z`).
+`AGENT_STATUS_OMP_IDLE_DEBOUNCE_MS` instead. `@agent-log` lines now carry the
+tmux server's local time with its UTC offset (`2026-10-20T11:09:03+0300`)
+instead of UTC (`...Z`).
+
+## Uninstall
+
+First, while the plugin is still installed, remove its hooks and extensions
+from every agent it finds:
+
+```bash
+bash ~/.tmux/plugins/agent-status.tmux/manage-provider.sh uninstall
+```
+
+Then remove the `@plugin 'plopezlpz/agent-status.tmux'` line (and any
+`@agent-*` options) from your tmux config, and press `prefix alt-u` to have
+TPM delete the plugin. Restart tmux to drop the plugin's hooks and
+window-status format changes from the running server, and restart any running
+agents.
 
 ## Providers
 
@@ -77,9 +135,11 @@ Other agents, such as Gemini CLI and Cursor's agent, have no adapter yet.
 Agents without lifecycle hooks can't have one: their state can't be known
 without polling the pane.
 
-Headless runs (`claude -p` and the Agent SDK, `opencode run` and `serve`,
-`kilo run` and `serve`, `kimi -p` run by another agent, `mastracode
---prompt`, a prompt argument or `--acp`, `codex exec` and `codex review`) are
+Headless runs (`claude -p` and the Agent SDK, pi and OMP outside their TUI,
+`opencode run`, `serve` and OpenCode's other non-interactive commands, the
+same for Kilo (`kilo run`, `serve`, `remote`, ...), `kimi -p` or `kimi acp`
+run by another agent, `mastracode --prompt`, a prompt argument or `--acp`,
+`codex exec`, `codex review` and Codex's other non-interactive commands) are
 ignored. Kimi hides its arguments, so a kimi reports only as the foreground
 job of its terminal: a `kimi -p` or `kimi acp` you start yourself in a shell
 or an editor reports into that pane. Run any other nested headless agent
@@ -141,13 +201,18 @@ Set options before TPM runs.
 | `@agent-terminal-app` | empty (macOS app to raise on a notification click, e.g. `Ghostty`) |
 | `@agent-notify-timeout` | `300` (seconds before an alerter notification closes; `0` = never) |
 | `@agent-notify-team-delay` | `10` (seconds a Claude agent-team lead's notification waits for its teammates; `0` = off) |
-| `@agent-describe-model` | `openai-codex/gpt-6-luna` (pi model for suggested titles) |
+| `@agent-describe-model` | `openai-codex/gpt-6-luna` (pi `--model` pattern for suggested titles; pick a model your pi has credentials for) |
 | `@agent-log` | `${XDG_DATA_HOME:-$HOME/.local/share}/tmux/agent-status/agent.log` |
+
+The plugin turns on tmux's `focus-events` every time it loads, overriding
+`focus-events off`: focusing a pane is what clears its finished marker. An
+empty `@agent-color-*` shows that state's icon uncoloured.
 
 ## Requirements
 
 tmux 3.8, Bash 3.2, jq; optionally alerter, terminal-notifier or notify-send
-for notifications, and pi for suggested titles.
+for notifications (the first one found is used; notify-send's can't be
+clicked), and pi for suggested titles.
 
 ## Internals
 
