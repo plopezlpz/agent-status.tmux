@@ -32,7 +32,7 @@ dir="$(tmux -L "$SOCK" show-option -gqv @agent-scripts-dir 2>/dev/null || true)"
 [ "$(tmux -L "$SOCK" show-option -gqv @agent-color-finished)" = cyan ] || fail "done color is not cyan"
 # The suggest command is run by UIs through sh with a pane id appended.
 cmd="$(tmux -L "$SOCK" show-option -gqv @agent-suggest-command 2>/dev/null || true)"
-case "$cmd" in */describe.sh\ suggest) ;; *) fail "@agent-suggest-command is not describe.sh suggest: $cmd" ;; esac
+case "$cmd" in */describe.sh\'\ suggest) ;; *) fail "@agent-suggest-command is not describe.sh suggest: $cmd" ;; esac
 rc=0; sh -c "$cmd \"\$1\"" sh not-a-pane 2>/dev/null || rc=$?
 [ "$rc" = 2 ] || fail "@agent-suggest-command did not run through sh (status $rc)"
 # A reload from a moved checkout points the adapters at it.

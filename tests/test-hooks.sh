@@ -69,11 +69,12 @@ tmux set-hook -ga pane-focus-in "run-shell -b '$FOREIGN'"
 tmux set-hook -ga window-layout-changed "run-shell -b '$FOREIGN'"
 # A checkout in another directory (a clone not named agent-status.tmux, or a
 # moved one): reloading from it, then from here, replaces its entries too.
-ELSEWHERE="$TMP/else where \$x'#"
+# Its path is not ASCII, and it loads in the C locale.
+ELSEWHERE="$TMP/else whére \$x'#"
 mkdir "$ELSEWHERE"
 cp -R "$PLUGIN_DIR/agent-status.tmux" "$PLUGIN_DIR/scripts" "$ELSEWHERE/"
-bash "$ELSEWHERE/agent-status.tmux"
-bash "$ELSEWHERE/agent-status.tmux"
+LC_ALL=C bash "$ELSEWHERE/agent-status.tmux"
+LC_ALL=C bash "$ELSEWHERE/agent-status.tmux"
 bash "$PLUGIN_DIR/agent-status.tmux"
 bash "$PLUGIN_DIR/agent-status.tmux"
 for h in pane-focus-in pane-exited pane-died window-layout-changed pane-moved; do
@@ -88,18 +89,18 @@ for h in pane-focus-in window-layout-changed; do
 done
 # Scripts run in the background, and only when there is work: a routine
 # focus change, layout change or pane exit starts no process at all.
-tmux show-hooks -g pane-died | grep -F "run-shell -b \"$AGENT/clear-pane.sh" | grep -F '#{hook_pane}' >/dev/null || fail "pane-died hook is not run-shell -b with #{hook_pane}"
-tmux show-hooks -g pane-focus-in | grep -F 'if-shell -F "#{&&:#{==:#{@agent-state},idle},#{==:#{@agent-unseen},1}}"' | grep -F "run-shell -b \"$AGENT/clear-finished.sh" >/dev/null || fail "pane-focus-in does not check for an unseen completion in tmux"
+tmux show-hooks -g pane-died | grep -F "run-shell -b \"'$AGENT/clear-pane.sh'" | grep -F '#{hook_pane}' >/dev/null || fail "pane-died hook is not run-shell -b with #{hook_pane}"
+tmux show-hooks -g pane-focus-in | grep -F 'if-shell -F "#{&&:#{==:#{@agent-state},idle},#{==:#{@agent-unseen},1}}"' | grep -F "run-shell -b \"'$AGENT/clear-finished.sh'" >/dev/null || fail "pane-focus-in does not check for an unseen completion in tmux"
 # The icon hooks name the hook's window and write only a changed icon.
 for h in pane-exited window-layout-changed pane-moved; do
   line=$(tmux show-hooks -g "$h" | grep -F '@agent-icon-format')
   [ "${line#*] }" = "run-shell -C \"if -F -t '#{hook_window}' '##{!=:##{@agent-icon},##{E:@agent-icon-format}}' { set-option -wqF -t '#{hook_window}' @agent-icon '##{E:@agent-icon-format}' }\"" ] || fail "$h hook is not a guarded icon update of its window: $line"
 done
 tmux show-hooks -g pane-exited | grep -F 'user-hook' >/dev/null || fail "reload dropped a user pane-exited hook"
-# From here on the hooks run the copy, whose path has a space, a $, a quote
-# and a #: tmux and sh must still find its scripts (the focus and pane-died
-# cases below).
-bash "$ELSEWHERE/agent-status.tmux"
+# From here on the hooks run the copy, whose path has a space, a $, a quote,
+# a # and an é: tmux and sh must still find its scripts (the focus and
+# pane-died cases below).
+LC_ALL=C bash "$ELSEWHERE/agent-status.tmux"
 
 # ----- pane-exited clears the exited pane, not the session's current one ---
 # Record what tmux passes as #{hook_window}: the plugin relies on it.
