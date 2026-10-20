@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Install/uninstall lifecycle adapters without touching unrelated provider config.
-# Usage: manage-provider.sh <install|uninstall> [--yes | pi|omp|opencode|kilo|kimi|mastracode|claude|codex]
+# Usage: manage-provider.sh <install|uninstall> [-y|--yes | pi|omp|opencode|kilo|kimi|mastracode|claude|codex]
 # Without a provider it finds the supported agents on this machine and, in a
 # terminal, asks before hooking them up (--yes doesn't ask). The rest are skipped.
 #   manage-provider.sh found <provider>   exit 0 if that agent is installed (its config home exists)
 set -eu
 ACTION="${1:-}" PROVIDER="${2:-}"
 PROVIDERS="pi omp opencode kilo kimi mastracode claude codex"
-USAGE="usage: $0 <install|uninstall> [--yes | ${PROVIDERS// /|}]"
+USAGE="usage: $0 <install|uninstall> [-y|--yes | ${PROVIDERS// /|}]
+       $0 found <${PROVIDERS// /|}>"
 case "$ACTION" in install|uninstall|found) ;; *) echo "$USAGE" >&2; exit 2 ;; esac
 ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
@@ -147,7 +148,7 @@ json_update() {
   require_regular_config "$file"
   tmp=$(mktemp "$file.agent-status.XXXXXX") || exit 1
   if [ -f "$file" ]; then
-    if ! jq "$@" "$filter" "$file" > "$tmp"; then rm "$tmp"; echo "agent-status: refusing invalid JSON/JSONC config $file" >&2; exit 1; fi
+    if ! jq "$@" "$filter" "$file" > "$tmp"; then rm "$tmp"; echo "agent-status: refusing to edit $file: it must be plain JSON (no comments) with an object at the top level" >&2; exit 1; fi
   else
     if ! printf '{}\n' | jq "$@" "$filter" > "$tmp"; then rm "$tmp"; exit 1; fi
   fi
@@ -336,7 +337,7 @@ if [ "$ACTION" = install ]; then
       require_jq
       require_regular_config "$config"
       if [ -f "$config" ]; then
-        jq -e 'type == "object" and ((.plugin // []) | type == "array")' "$config" >/dev/null 2>&1 || { echo "agent-status: refusing invalid JSON/JSONC plugin config $config" >&2; exit 1; }
+        jq -e 'type == "object" and ((.plugin // []) | type == "array")' "$config" >/dev/null 2>&1 || { echo "agent-status: refusing to edit $config: it must be plain JSON (no comments) with an object at the top level and \"plugin\" as a list" >&2; exit 1; }
       fi
       link_validate "$src" "$dest"; link_validate "$tui_src" "$tui_dest"; link_validate "$v2_src" "$v2_dest"
       # shellcheck disable=SC2016 # jq variables, not shell variables
