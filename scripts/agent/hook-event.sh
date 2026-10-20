@@ -6,7 +6,7 @@ set -eu
 kind="${1:-}" action="${2:-}"
 case "$kind" in kimi|mastracode) ;; *) exit 0 ;; esac
 
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
 payload=$(cat 2>/dev/null || true)
 instance="" message="" source="" reason=""
 if command -v jq >/dev/null 2>&1; then

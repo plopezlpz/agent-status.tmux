@@ -13,11 +13,19 @@ provider lifecycle event
 ```
 
 `finished` is stored as `idle + unseen`; focusing the pane acknowledges it.
-A completion or permission prompt in the pane a terminal-focused client is
-already showing is not notified; a completion keeps the finished marker until
-focus or the next prompt. A notification click switches a local client (one
-not running under sshd or mosh-server), preferring the one captured at notify
-time; a remote client such as a phone is never switched.
+A completion or permission prompt is not notified when the most recently
+active client is showing its pane with terminal focus; other clients don't
+count, since one left attached elsewhere (a phone over mosh) never reports
+losing focus. A completion keeps the finished marker until focus or the next
+prompt. A notification click switches a local client (one not running under
+sshd or mosh-server), preferring the one captured at notify time; a remote
+client such as a phone is never switched. The click also marks the pane
+seen, which focus alone does not while another client already shows it.
+
+A state change is one tmux read and one chained write (pane options, the
+window icon), so attached clients redraw once. A report that repeats the
+pane's state (each Claude tool call makes two) is settled from a single read,
+before the payload is parsed or the pane lock taken.
 
 The window icon `@agent-icon` is a plain window option, but tmux computes it:
 `set-option -wF @agent-icon '#{E:@agent-icon-format}'` evaluates the worst

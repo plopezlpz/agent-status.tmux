@@ -144,6 +144,18 @@ if [ -n "$JQ" ]; then
     TMUX_PANE="$p1" AGENT_STATUS_KIND=claude "$SET" finished
   [ "$(get "$p1" @agent-state):$(get "$p1" @agent-unseen)" = idle:1 ] || fail "final Stop did not complete the pane"
 
+  # A report that repeats the pane's state settles before reading stdin, yet
+  # still records what the pane lacks. Without AGENT_STATUS_KIND (hooks
+  # installed by this release) the stdin form is Claude's.
+  printf '%s\n' '{"session_id":"claude-1","hook_event_name":"UserPromptSubmit"}' | TMUX_PANE="$p1" "$SET" working
+  tmux set-option -p -u -t "$p1" @agent-state-at
+  printf '%s\n' '{"session_id":"claude-1","hook_event_name":"PreToolUse"}' | TMUX_PANE="$p1" "$SET" working
+  case "$(get "$p1" @agent-state-at)" in ''|*[!0-9]*) fail "a repeated report did not stamp an unstamped pane" ;; esac
+  tmux set-option -p -u -t "$p1" @agent-instance
+  tmux set-option -p -u -t "$p1" @agent-kind
+  printf '%s\n' '{"session_id":"claude-1","hook_event_name":"PostToolUse"}' | TMUX_PANE="$p1" "$SET" working
+  [ "$(get "$p1" @agent-instance):$(get "$p1" @agent-kind)" = claude:claude-1:claude ] || fail "a repeated report did not record the pane's first identity"
+
   # Claude's transcript_path is recorded for generated descriptions; non-.jsonl or relative
   # paths are ignored.
   printf '%s\n' '{"session_id":"claude-1","hook_event_name":"UserPromptSubmit","transcript_path":"relative.jsonl"}' | \

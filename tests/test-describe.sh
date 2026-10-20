@@ -38,12 +38,10 @@ stub_pi(){ printf '#!/bin/sh\n%s\n' "$1" > "$TMP/stub/pi"; chmod +x "$TMP/stub/p
 wait_for(){ for _ in $(seq 1 50); do eval "$1" && return 0; sleep 0.2; done; return 1; }
 alive(){ [ -s "$TMP/pi-pid" ] && kill -0 "$(cat "$TMP/pi-pid")" 2>/dev/null; }
 
-# 1. Titles: set cleaned and trimmed, bumping the revision; blank clears;
-# keys that aren't pane ids are rejected.
-rev=$(tmux show -gqv @agent-revision)
+# 1. Titles: set cleaned and trimmed; blank clears; keys that aren't pane ids
+# are rejected.
 "$DESCRIBE" set "$p1" $'  safe\033[31m label\tdata '
 [ "$(title)" = 'safe[31m label data' ] || fail "title not set cleaned: $(title)"
-[ "$(tmux show -gqv @agent-revision)" != "$rev" ] || fail "setting did not bump @agent-revision"
 "$DESCRIBE" set "$p1" '  '
 [ -z "$(title)" ] || fail "a blank title did not clear it"
 rc=0; "$DESCRIBE" set '../../escape' x 2>/dev/null || rc=$?
@@ -138,12 +136,11 @@ grep -F 'keep x1b[1m literal' "$TMP/pi-input" >/dev/null || fail "screen context
 
 # 8. suggest prints pi's title, cleaned and cut, and sets nothing; failures
 # say why on stderr.
-"$DESCRIBE" set "$p1" kept; rev=$(tmux show -gqv @agent-revision)
+"$DESCRIBE" set "$p1" kept
 stub_pi "cat >/dev/null; printf '\"Fix the\\033 cart page\"\\n'"
 [ "$("$DESCRIBE" suggest "$p1")" = 'Fix the cart page' ] || fail "suggest did not print the cleaned title"
 [ "$(title)" = kept ] || fail "suggest changed the title"
 [ -z "$(marker)" ] || fail "suggest set a marker"
-[ "$(tmux show -gqv @agent-revision)" = "$rev" ] || fail "suggest bumped @agent-revision"
 stub_pi "cat >/dev/null; printf '%s\\n' '$(printf 'y%.0s' $(seq 1 100))'"
 [ "$("$DESCRIBE" suggest "$p1")" = "$(printf 'y%.0s' $(seq 1 80))" ] || fail "suggest did not cut to 80 characters"
 suggest_err(){ local out; if out=$("$DESCRIBE" suggest "$1" 2>&1); then fail "suggest succeeded: $out"; fi; printf '%s' "$out"; }

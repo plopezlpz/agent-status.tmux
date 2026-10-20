@@ -233,6 +233,14 @@ state "$p1" working "" a-1 21 test & pid=$!
 finishes_within 8 "$pid" || fail "a wedged holder blocked set-state past the bound"
 [ "$(get "$p1" @agent-state)" = working ] || fail "update lost after breaking a wedged lock"
 kill "$hpid" 2>/dev/null || true; wait "$hpid" 2>/dev/null || true
+# A report that repeats the pane's state settles without the lock: parallel
+# tool hooks never queue behind each other.
+holder "$p1" hang & hpid=$!
+eventually test -s "$TMP/lockpath" || fail "hung holder did not lock"
+printf '%s\n' '{"session_id":"c-1","hook_event_name":"PreToolUse"}' | TMUX_PANE="$p1" "$SET" working & pid=$!
+finishes_within 1 "$pid" || fail "a repeated report waited for the pane lock"
+kill "$hpid" 2>/dev/null || true; wait "$hpid" 2>/dev/null || true
+rm -f "$(cat "$TMP/lockpath")"
 holder "$p1" term & hpid=$!
 eventually test -s "$TMP/lockpath" || fail "TERM holder did not lock"
 sleep 0.2; kill -TERM "$hpid"; wait "$hpid" 2>/dev/null || true
@@ -328,6 +336,32 @@ nstate "$p1" asking "" a-1 52 test
 sleep 0.3; ! notified "$p1" || fail "permission prompt in the focused pane was notified"
 nstate "$p1" working "" a-1 53 test
 [ "$(get "$p1" @agent-unseen)" = 0 ] || fail "next prompt did not clear the unseen marker"
+# Only the most recently active client counts: one left attached elsewhere
+# (a phone over mosh, which never reports focus-out) must not hide the
+# completion from the user at another.
+local_client=$(tmux list-clients -F '#{client_name}')
+tmux new-session -d -s side
+outer new-window -d -t o "env -u TMUX $REAL_TMUX -S $SOCK_PATH attach -t side"
+both(){ [ "$(tmux list-clients | wc -l | tr -d ' ')" = 2 ]; }
+eventually both || fail "second test client did not attach"
+sleep 1.1; outer send-keys -t o:1 x   # client_activity counts seconds
+nstate "$p1" finished "" a-1 54 test
+eventually notified "$p1" || fail "a client active elsewhere did not get the completion"
+rm -f "$TMP/notified-agent-$p1"
+# Selecting a pane another client already shows fires no pane-focus-in: a
+# notification click still marks it seen.
+ps=$(tmux display -pt side: '#{pane_id}')
+nstate "$ps" working "" s-1 1 test reset
+nstate "$ps" finished "" s-1 2 test
+[ "$(get "$ps" @agent-unseen)" = 1 ] || fail "completion on the second client was not unseen"
+"$AGENT/focus-pane.sh" "$ps" "$SOCK_PATH" "$local_client"
+eventually test "$(get "$ps" @agent-unseen)" = 0 || fail "notification click did not mark a pane seen"
+outer kill-window -t o:1
+one(){ [ "$(tmux list-clients | wc -l | tr -d ' ')" = 1 ]; }
+eventually one || fail "second test client did not detach"
+tmux switch-client -c "$local_client" -t "$p1"
+tmux kill-session -t side
+nstate "$p1" working "" a-1 55 test
 nstate "$p8" working "" a-8 1 test reset
 nstate "$p8" finished "" a-8 2 test
 [ "$(get "$p8" @agent-unseen)" = 1 ] || fail "completion in a background pane was not unseen"
@@ -343,7 +377,7 @@ tmux kill-window -t "$p8"
 outer send-keys -t o -H 1b 5b 4f   # terminal focus-out
 unfocused(){ ! focused; }
 eventually unfocused || fail "client did not lose focus"
-nstate "$p1" finished "" a-1 54 test
+nstate "$p1" finished "" a-1 56 test
 [ "$(get "$p1" @agent-unseen)" = 1 ] || fail "completion in an unfocused terminal was not unseen"
 eventually notified "$p1" || fail "completion in an unfocused terminal was not notified"
 

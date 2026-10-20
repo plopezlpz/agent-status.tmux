@@ -9,12 +9,30 @@ tmux() { command tmux -u "$@"; }
 # Pane options owned by a registration; cleared together on exit.
 AGENT_PANE_OPTIONS="@agent-state @agent-unseen @agent-instance @agent-seq @agent-kind @agent-state-at @agent-auto-description @agent-description @agent-generating @agent-transcript @agent-notify-token"
 
-# agent_clear_pane PANE: unset the registration's options.
+# agent_pane_guard: exit unless run in a tmux pane ($TMUX_PANE). A headless
+# run (claude -p, the Agent SDK: entrypoint sdk-*) inherits the pane from
+# whatever started it; the pane's own agent is someone else.
+agent_pane_guard() {
+  [[ "${TMUX_PANE:-}" =~ ^%[0-9]+$ ]] || exit 0
+  case "${CLAUDE_CODE_ENTRYPOINT:-}" in sdk-*) exit 0 ;; esac
+}
+
+# agent_shown STATE UNSEEN: SHOWN, the state as UIs show it: an idle pane with
+# an unseen completion is "finished".
+# shellcheck disable=SC2034 # SHOWN: read by the caller
+agent_shown() {
+  SHOWN="$1"
+  [ "$1:$2" != idle:1 ] || SHOWN=finished
+}
+
+# agent_clear_pane PANE: unset the registration's options and recompute the
+# pane's window icon, in one tmux call.
 agent_clear_pane() {
-  local option
+  local option args=()
   for option in $AGENT_PANE_OPTIONS; do
-    tmux set-option -p -u -t "$1" "$option" 2>/dev/null || true
+    args+=(set-option -p -u -t "$1" "$option" \;)
   done
+  tmux "${args[@]}" set-option -wF -t "$1" @agent-icon "$AGENT_ICON" 2>/dev/null || true
 }
 
 # AGENT_ICON: a window's icon as a tmux format: the worst agent state among
@@ -40,11 +58,6 @@ agent_update_window() {
   tmux set-option -wF -t "$1" @agent-icon "$AGENT_ICON" 2>/dev/null || true
 }
 
-# agent_bump_revision: change the global token UIs watch for any update.
-agent_bump_revision() {
-  tmux set-option -g @agent-revision "$(date +%s).$$.$RANDOM" 2>/dev/null || true
-}
-
 # agent_identity: bound and sanitize $instance and $kind, then scope the
 # instance to its provider ("kind:id"): delayed events from another adapter
 # must never collide merely because two providers chose the same session ID.
@@ -57,14 +70,17 @@ agent_identity() {
   fi
 }
 
-# agent_log MESSAGE: append a timestamped audit line. Never fails: an
-# unwritable or full log must not abort a hook before its notification and
-# window update.
+# AGENT_LOG_FIELDS: the audit log's path and the time, for a caller's pane
+# read (display -p expands the strftime specifiers), so logging costs no
+# process of its own.
+# shellcheck disable=SC2034 # read by the scripts that source this
+AGENT_LOG_FIELDS=$'#{@agent-log}\037%FT%T%z'
+# agent_log FILE TIME MESSAGE: append "TIME MESSAGE" to FILE (empty: the
+# default log). Never fails: an unwritable or full log must not abort a hook
+# before its notification.
 agent_log() {
-  local log_file
-  log_file=$(tmux show-option -gqv @agent-log 2>/dev/null || true)
-  : "${log_file:=${XDG_DATA_HOME:-$HOME/.local/share}/tmux/agent-status/agent.log}"
-  { mkdir -p "${log_file%/*}" && printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" >> "$log_file"; } 2>/dev/null || true
+  local file="${1:-${XDG_DATA_HOME:-$HOME/.local/share}/tmux/agent-status/agent.log}"
+  { [ -d "${file%/*}" ] || mkdir -p "${file%/*}"; printf '%s %s\n' "$2" "$3" >> "$file"; } 2>/dev/null || true
 }
 
 # agent_lock NAME / agent_unlock: bounded mutual exclusion per tmux server.
@@ -75,8 +91,9 @@ agent_log() {
 # milliseconds) as stale, so a lost unlock can never wedge a pane's hooks.
 # (A wedged owner that wakes in the instant of a break could still remove
 # the breaker's lock; dead owners, the real case, are broken safely.)
-# Signals unlock via the EXIT trap. A process holds at most one lock, so
-# ordering cannot deadlock.
+# Waiters poll every 10 ms; the bounds are in seconds ($SECONDS), so they
+# hold however slowly a loaded machine runs the loop. Signals unlock via the
+# EXIT trap. A process holds at most one lock, so ordering cannot deadlock.
 #
 # Locks live beside the server socket in tmux's per-user 0700 tmux-UID
 # directory, which every client of the server agrees on whatever its TMPDIR.
@@ -84,7 +101,7 @@ agent_log() {
 # custom -S socket outside a tmux-* directory.
 AGENT_LOCK=""
 agent_lock() {
-  local sock="${TMUX:-}" pid root="" owner seen="" tries=0 total=0
+  local sock="${TMUX:-}" pid root="" owner seen="" since=$SECONDS start=$SECONDS
   pid="${sock#*,}"; pid="${pid%%,*}"; sock="${sock%%,*}"
   root="${sock%/*}"
   case "${root##*/}" in tmux-*) root="$root/agent-status" ;; *) root="" ;; esac
@@ -99,18 +116,16 @@ agent_lock() {
   trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM
   until agent_try_lock "$AGENT_LOCK"; do
     # Hard cap (~20s) for a lock file that can never be created.
-    total=$((total + 1))
-    if [ "$total" -ge 400 ]; then AGENT_LOCK=""; return 0; fi
+    if [ $((SECONDS - start)) -ge 20 ]; then AGENT_LOCK=""; return 0; fi
     owner=""
     { read -r owner < "$AGENT_LOCK"; } 2>/dev/null || true
     # The bound restarts whenever the lock changes hands: a burst of waiters
     # is progress, not staleness.
-    [ "$owner" = "$seen" ] || { seen="$owner"; tries=0; }
-    if { [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; } || [ "$tries" -ge 60 ]; then
+    [ "$owner" = "$seen" ] || { seen="$owner"; since=$SECONDS; }
+    if { [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; } || [ $((SECONDS - since)) -ge 3 ]; then
       ! agent_break_lock "$AGENT_LOCK" "$owner" || return 0
     fi
-    tries=$((tries + 1))
-    sleep 0.05
+    sleep 0.01
   done
 }
 # agent_lock_root DIR: DIR exists (created 0700 if missing) and is ours.
@@ -122,7 +137,7 @@ agent_lock_root() {
 # serialize on LOCK.break, re-check the owner, then atomically rename their
 # own lock over the stale one, so the lock is never vacant for a third
 # process to grab and two waiters cannot both break the same stale owner.
-AGENT_EMPTY_BREAKER=0
+AGENT_EMPTY_SINCE=""
 agent_break_lock() {
   local breaker="$1.break" now="" rc=1
   if ! agent_try_lock "$breaker"; then
@@ -131,10 +146,10 @@ agent_break_lock() {
     # write) for the whole wait bound.
     { read -r now < "$breaker"; } 2>/dev/null || true
     if [ -z "$now" ] && [ -e "$breaker" ]; then
-      AGENT_EMPTY_BREAKER=$((AGENT_EMPTY_BREAKER + 1))
-      if [ "$AGENT_EMPTY_BREAKER" -ge 60 ]; then agent_clear_stale "$breaker" ""; AGENT_EMPTY_BREAKER=0; fi
+      : "${AGENT_EMPTY_SINCE:=$SECONDS}"
+      if [ $((SECONDS - AGENT_EMPTY_SINCE)) -ge 3 ]; then agent_clear_stale "$breaker" ""; AGENT_EMPTY_SINCE=""; fi
     else
-      AGENT_EMPTY_BREAKER=0
+      AGENT_EMPTY_SINCE=""
       if [ -n "$now" ] && ! kill -0 "$now" 2>/dev/null; then agent_clear_stale "$breaker" "$now"; fi
     fi
     return 1

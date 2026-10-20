@@ -12,9 +12,8 @@
 # "<start epoch>.<pid>.<random>".
 set -eu
 
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 # shellcheck source=lib.sh
-. "$SCRIPT_DIR/lib.sh"
+. "${BASH_SOURCE[0]%/*}/lib.sh"
 SEP=$'\037'
 # Where pi may live outside the tmux server's PATH: fnm's per-shell bin dirs
 # go stale, its default alias does not. Empty: PATH only.
@@ -69,7 +68,6 @@ set_title() {
   else
     tmux set-option -p -u -t "$target" @agent-description
   fi
-  agent_bump_revision
 }
 
 # find_pi: pi on PATH, also trying AGENT_PI_FALLBACK_PATH.
@@ -225,7 +223,6 @@ generate_start() {
   fi
   tmux set-option -p -t "$target" @agent-generating "$token"
   agent_unlock
-  agent_bump_revision
   # The server's environment may lack this shell's PATH (pi lives under fnm).
   printf -v path_q '%q' "$PATH"; printf -v self_arg '%q' "$0"
   # run-shell format-expands its command; %q leaves '#' alone, so double it.
@@ -239,7 +236,6 @@ generate_cleanup() {
   ask_cleanup
   [ "$(pane_option "$GEN_PANE" @agent-generating)" != "$GEN_TOKEN" ] \
     || tmux set-option -p -u -t "$GEN_PANE" @agent-generating 2>/dev/null || true
-  agent_bump_revision
 }
 
 generate_run() {

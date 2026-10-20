@@ -75,14 +75,14 @@ uninstall_filter="$strip"'
 install_filter="$strip"'
   def put($event; entry): .hooks[$event] = ((.hooks[$event] // []) | strip) + [entry];
   def run($cmd): {type:"command", command:"\($r)/\($cmd)"};
-  def state($s): {type:"command", command:"env AGENT_STATUS_KIND=claude \($r)/set-state.sh \($s)"};
+  def state($s): {type:"command", command:"\($r)/set-state.sh \($s)"};
   # Older plugin releases registered PermissionDenied, which fires on auto-mode
   # classifier denials mid-turn and is not a state change. Remove only our old
   # entry and preserve any unrelated user configuration.
   .hooks.PermissionDenied = ((.hooks.PermissionDenied // []) | strip) |
   if (.hooks.PermissionDenied | length) == 0 then del(.hooks.PermissionDenied) else . end |
   put("SessionStart"; {hooks:[state("idle"), run("auto-desc.sh clear")]}) |
-  put("SessionEnd"; {hooks:[{type:"command", command:"env AGENT_STATUS_KIND=claude \($r)/clear-state.sh"}]}) |
+  put("SessionEnd"; {hooks:[run("clear-state.sh")]}) |
   put("UserPromptSubmit"; {hooks:[state("working"), run("auto-desc.sh set")]}) |
   put("Stop"; {hooks:[state("finished")]}) |
   # A turn that ends in an API error (rate limit, overload, auth) fires

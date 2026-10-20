@@ -2,13 +2,14 @@
 # Update the current pane's agent state and optionally notify.
 # Usage: set-state.sh <working|asking|finished|idle> [message] [instance] [seq] [kind] [reset]
 # `finished` is stored as idle + unseen: an idle completion not yet seen.
+# Claude hooks pass the state alone, with their payload on stdin (kind
+# $AGENT_STATUS_KIND, else claude).
 set -eu
 
-[ -z "${TMUX_PANE:-}" ] && exit 0
-[[ "$TMUX_PANE" =~ ^%[0-9]+$ ]] || exit 0
-# A headless run (claude -p, the Agent SDK: entrypoint sdk-*) inherits the
-# pane from whatever started it; the pane's own agent is someone else.
-case "${CLAUDE_CODE_ENTRYPOINT:-}" in sdk-*) exit 0 ;; esac
+SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
+# shellcheck source=lib.sh
+. "$SCRIPT_DIR/lib.sh"
+agent_pane_guard
 
 raw_state="${1:-}"
 message="${2:-}"
@@ -25,20 +26,44 @@ case "$raw_state" in
   *) echo "set-state: invalid state '$raw_state'" >&2; exit 2 ;;
 esac
 
+# read_pane: all a report needs from tmux, in one call: the pane's agent
+# options, the time (%s), notification and log settings, and whether the
+# most recently active client shows the pane with terminal focus.
+sep=$'\037'
+read_pane() {
+  IFS="$sep" read -r cur_pane pane_dead prev_state prev_unseen prev_instance prev_seq prev_kind \
+    prev_state_at prev_transcript now notify_timeout team_delay pane_active viewers clients \
+    socket client log_file log_time name <<< "$(tmux display -t "$TMUX_PANE" -p "#{pane_id}$sep#{pane_dead}$sep#{@agent-state}$sep#{@agent-unseen}$sep#{@agent-instance}$sep#{@agent-seq}$sep#{@agent-kind}$sep#{@agent-state-at}$sep#{@agent-transcript}$sep%s$sep#{@agent-notify-timeout}$sep#{@agent-notify-team-delay}$sep#{pane_active}$sep#{window_active_clients_list}$sep#{L/t:#{?client_control_mode,,#{client_name}=#{client_flags} }}$sep#{socket_path}$sep#{client_name}$sep$AGENT_LOG_FIELDS$sep#S / #W" 2>/dev/null || true)"
+  # display -t on a vanished pane silently describes another one.
+  [ "$cur_pane" = "$TMUX_PANE" ] && [ "$pane_dead" != 1 ] || exit 0
+}
+
+# A report that repeats the pane's state changes nothing, and each Claude tool
+# call makes two, often several at once: settle those (working or asking,
+# without seq or reset) from one read, before stdin, jq or the lock. Identity
+# cannot change then either, since a pane with an instance rejects any other.
+if [ "$unseen" = 0 ] && [ -z "$seq$reset" ]; then
+  read_pane
+  case "$prev_state_at" in ''|*[!0-9]*) ;; *)
+    if [ "$state:0" = "$prev_state:$prev_unseen" ] && [ -n "$prev_instance" ] && [ "${kind:-$prev_kind}" = "$prev_kind" ]; then
+      exit 0
+    fi
+  esac
+fi
+
 # Claude hooks provide identity and event metadata on stdin; their commands
 # pass the state alone. Adapters always pass positional arguments and may leave
-# stdin open (Node execFile), so never read it for them: `cat` would block.
-payload="" hook_name="" background="" team="" transcript="" src="" sep=$'\037'
-if [ "$#" -eq 1 ] && [ ! -t 0 ]; then
-  payload=$(cat) || true
-fi
-if [ -n "$payload" ] && command -v jq >/dev/null 2>&1; then
+# stdin open (Node execFile), so never read it for them: jq would block.
+hook_name="" background="" team="" transcript="" src="" hook_message="" hook_error=""
+if [ "$#" -eq 1 ] && [ ! -t 0 ] && command -v jq >/dev/null 2>&1; then
   # background: in-flight subagents/workflows. Background shells and monitors
   # can run indefinitely and never resume the turn by themselves.
   # team: live agent-team teammates. They stay "running" while idle, so they
   # cannot hold a Stop, but each message from one resumes the lead turn.
   # Entry types are friendly labels, or the raw discriminant when unknown.
-  metadata=$(printf '%s' "$payload" | jq -r 'def live(types): (.background_tasks // [])
+  # message, error: for the notification (StopFailure carries only its error
+  # type: rate_limit, overloaded, ...), on one line.
+  metadata=$(jq -r 'def live(types): (.background_tasks // [])
       | if type == "array" then . else [] end
       | map(select(type == "object" and ((.type // "") | IN(types))
           and ((.status // "running") | IN("running", "pending"))))
@@ -46,8 +71,11 @@ if [ -n "$payload" ] && command -v jq >/dev/null 2>&1; then
     [.session_id // "", .hook_event_name // "",
       live("subagent", "workflow", "local_agent", "local_workflow"),
       live("teammate", "in_process_teammate"),
-      (.transcript_path // "" | tostring), (.source // "" | tostring)] | join("\u001f")' 2>/dev/null || true)
-  IFS="$sep" read -r instance hook_name background team transcript src <<< "$metadata"
+      (.transcript_path // "" | tostring), (.source // "" | tostring),
+      (.message // .title // "", .error // "error" | tostring | gsub("[\u0000-\u001f]"; " "))]
+    | join("\u001f")' 2>/dev/null || true)
+  IFS="$sep" read -r instance hook_name background team transcript src hook_message hook_error <<< "$metadata"
+  [ -z "$hook_name" ] || kind="${kind:-claude}"
 fi
 # Auto-compaction restarts the session mid-turn (SessionStart source=compact)
 # under the same session ID: keep the live state, refresh metadata only.
@@ -64,9 +92,6 @@ if [ "$raw_state" = finished ] && [ "$background" -gt 0 ]; then
   raw_state=working state=working unseen=0 notify_state="" held=" (background=$background)"
 fi
 
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-# shellcheck source=lib.sh
-. "$SCRIPT_DIR/lib.sh"
 # Keep option values bounded and sequence comparisons inside signed 64-bit.
 agent_identity
 case "$seq" in ""|*[!0-9]*) seq="" ;; esac
@@ -77,10 +102,7 @@ case "$transcript" in *[[:cntrl:]]*) transcript="" ;; esac
 [ "${#seq}" -le 18 ] || seq=""
 
 agent_lock "pane-${TMUX_PANE#%}"
-
-metadata=$(tmux display -t "$TMUX_PANE" -p $'#{pane_id}\037#{@agent-state}\037#{@agent-unseen}\037#{@agent-instance}\037#{@agent-seq}\037#{@agent-kind}\037#{@agent-state-at}\037#{pane_dead}\037#{@agent-transcript}' 2>/dev/null || true)
-IFS="$sep" read -r cur_pane prev_state prev_unseen prev_instance prev_seq prev_kind prev_state_at pane_dead prev_transcript <<< "$metadata"
-[ "$cur_pane" = "$TMUX_PANE" ] && [ "$pane_dead" != 1 ] || exit 0
+read_pane
 if [ -n "$compact" ] && [ -n "$prev_state" ]; then
   state="$prev_state" unseen="${prev_unseen:-0}" raw_state=compact
 fi
@@ -105,61 +127,65 @@ case "$unseen" in 0|1) ;; *) unseen=0 ;; esac
 changed=0
 [ "$state" = "$prev_state" ] && [ "$unseen" = "${prev_unseen:-0}" ] || changed=1
 
-# Set only changed options. Same-state reports normally advance just @agent-seq.
-[ "$state" = "$prev_state" ] || tmux set-option -p -t "$TMUX_PANE" @agent-state "$state"
-[ "$unseen" = "$prev_unseen" ] || tmux set-option -p -t "$TMUX_PANE" @agent-unseen "$unseen"
+# Write only changed options, all in one tmux call (each call redraws every
+# client). Same-state reports normally advance just @agent-seq.
+w=(set-option -p -t "$TMUX_PANE")
+args=()
+[ "$state" = "$prev_state" ] || args+=("${w[@]}" @agent-state "$state" \;)
+[ "$unseen" = "$prev_unseen" ] || args+=("${w[@]}" @agent-unseen "$unseen" \;)
 case "$prev_state_at" in ''|*[!0-9]*) timestamp_needed=1 ;; *) timestamp_needed=0 ;; esac
 if [ "$changed" -eq 1 ] || [ "$reset" = reset ] || [ "$timestamp_needed" -eq 1 ]; then
-  tmux set-option -p -t "$TMUX_PANE" @agent-state-at "$(date +%s)"
+  args+=("${w[@]}" @agent-state-at "$now" \;)
 fi
 if [ -n "$instance" ]; then
-  [ "$instance" = "$prev_instance" ] || tmux set-option -p -t "$TMUX_PANE" @agent-instance "$instance"
+  [ "$instance" = "$prev_instance" ] || args+=("${w[@]}" @agent-instance "$instance" \;)
 elif [ "$reset" = reset ] && [ -n "$prev_instance" ]; then
-  tmux set-option -p -u -t "$TMUX_PANE" @agent-instance 2>/dev/null || true
+  args+=("${w[@]}" -u @agent-instance \;)
 fi
 if [ -n "$seq" ]; then
-  [ "$seq" = "$prev_seq" ] || tmux set-option -p -t "$TMUX_PANE" @agent-seq "$seq"
+  [ "$seq" = "$prev_seq" ] || args+=("${w[@]}" @agent-seq "$seq" \;)
 elif [ "$reset" = reset ] && [ -n "$prev_seq" ]; then
-  tmux set-option -p -u -t "$TMUX_PANE" @agent-seq 2>/dev/null || true
+  args+=("${w[@]}" -u @agent-seq \;)
 fi
 if [ -n "$kind" ] && [ "$kind" != "$prev_kind" ]; then
-  tmux set-option -p -t "$TMUX_PANE" @agent-kind "$kind"
+  args+=("${w[@]}" @agent-kind "$kind" \;)
 fi
 if [ -n "$transcript" ] && [ "$transcript" != "$prev_transcript" ]; then
-  tmux set-option -p -t "$TMUX_PANE" @agent-transcript "$transcript"
+  args+=("${w[@]}" @agent-transcript "$transcript" \;)
 fi
-# Any state change cancels a pending delayed notification (see below).
-[ "$changed" -eq 0 ] || tmux set-option -p -t "$TMUX_PANE" @agent-notify-token "$$"
+# Any state change cancels a pending delayed notification (see below), and
+# recomputes the window icon.
+if [ "$changed" -eq 1 ]; then
+  args+=("${w[@]}" @agent-notify-token "$$" \; set-option -wF -t "$TMUX_PANE" @agent-icon "$AGENT_ICON")
+fi
+# The pane vanished since the read: nothing left to update.
+[ "${#args[@]}" -eq 0 ] || tmux "${args[@]}" 2>/dev/null || exit 0
 
 agent_unlock
 
 # Metadata-only reports need no log, notification, aggregation, or redraw.
 [ "$changed" -eq 1 ] || exit 0
 
-# Skip the desktop notification for the pane a client is showing with
-# terminal focus (focus-events): a completion or permission prompt there is
-# already in view. A completion's unseen marker stays: tmux counts a client as
-# focused until a focus-out arrives, so a locked screen or a terminal without
-# focus reporting would otherwise lose it entirely. Focusing the pane or the
+# Skip the desktop notification when the pane is already in view: the most
+# recently active client shows it with terminal focus (focus-events). Only
+# that client counts: tmux treats a client as focused until its terminal
+# reports otherwise, and one left attached elsewhere (a phone over mosh)
+# never does. A completion's unseen marker stays, since a locked screen or a
+# terminal without focus reporting looks the same; focusing the pane or the
 # next prompt (working) clears it.
-if [ -n "$notify_state" ]; then
-  while IFS="$sep" read -r client_pane client_flags; do
-    [ "$client_pane" = "$TMUX_PANE" ] || continue
-    case ",$client_flags," in
-      *,focused,*) notify_state="" held=" (focused, not notified)"; break ;;
-    esac
-  done < <(tmux list-clients -F $'#{pane_id}\037#{client_flags}' 2>/dev/null || true)
+top="${clients%% *}"
+if [ -n "$notify_state" ] && [ -n "$top" ] && [ "$pane_active" = 1 ] &&
+  [[ ",$viewers," == *",${top%%=*},"* && ",${top#*=}," == *,focused,* ]]; then
+  notify_state="" held=" (focused, not notified)"
 fi
 
-prev_display="$prev_state"
-if [ "$prev_state" = idle ] && [ "$prev_unseen" = 1 ]; then prev_display=finished; fi
-agent_log "pane=$TMUX_PANE ${prev_display:-none}->$raw_state$held"
+agent_shown "$prev_state" "$prev_unseen"
+agent_log "$log_file" "$log_time" "pane=$TMUX_PANE ${SHOWN:-none}->$raw_state$held"
 
 # send_notification: show $title/$message with the first notifier found.
 send_notification() {
   if command -v alerter >/dev/null 2>&1; then
-    timeout=$(tmux show-option -gqv @agent-notify-timeout 2>/dev/null || true)
-    case "$timeout" in ''|*[!0-9]*) timeout=300 ;; esac
+    case "$notify_timeout" in ''|*[!0-9]*) notify_timeout=300 ;; esac
     (
       # This subshell inherits set -e: a dismissed/failed alerter must not
       # kill it before the click check.
@@ -167,7 +193,7 @@ send_notification() {
         --title "$title" \
         --message "$message" \
         --group "agent-$TMUX_PANE" \
-        --timeout "$timeout" \
+        --timeout "$notify_timeout" \
         --json 2>/dev/null) || true
       act=$(printf '%s' "$result" | jq -r '.activationType // empty' 2>/dev/null || true)
       case "$act" in
@@ -189,17 +215,11 @@ send_notification() {
 
 case "$notify_state" in
   asking|finished)
-    info=$(tmux display -t "$TMUX_PANE" -p $'#{pane_id}\037#{socket_path}\037#{client_name}\037#S / #W' 2>/dev/null || true)
-    IFS="$sep" read -r cur_pane socket client name <<< "$info"
-    [ "$cur_pane" = "$TMUX_PANE" ] || exit 0
     title="Agent • $notify_state"
     if [ "$hook_name" = StopFailure ]; then
-      # A turn that died on an API error: StopFailure carries only its type
-      # (rate_limit, overloaded, ...).
-      title="Agent • failed"
-      message="$name: $(printf '%s' "$payload" | jq -r '.error // "error" | tostring' 2>/dev/null || true)"
-    elif [ -z "$message" ] && [ -n "$payload" ] && command -v jq >/dev/null 2>&1; then
-      message=$(printf '%s' "$payload" | jq -r '.message // .title // ""' 2>/dev/null || true)
+      title="Agent • failed" message="$name: $hook_error"
+    elif [ -z "$message" ]; then
+      message="$hook_message"
     fi
     [ -n "$message" ] || message="$name"
     message=$(printf '%s' "$message" | LC_ALL=C tr -d '\000-\010\013\014\016-\037\177' | tr '\n\r\t' '   ' | cut -c1-240)
@@ -213,8 +233,7 @@ case "$notify_state" in
     delay=0
     case "$team" in ''|*[!0-9]*) team=0 ;; esac
     if [ "$notify_state" = finished ] && [ "$team" -gt 0 ]; then
-      delay=$(tmux show-option -gqv @agent-notify-team-delay 2>/dev/null || true)
-      case "$delay" in ''|*[!0-9]*) delay=10 ;; esac
+      case "$team_delay" in ''|*[!0-9]*) delay=10 ;; *) delay="$team_delay" ;; esac
     fi
     if [ "$delay" -gt 0 ]; then
       (
@@ -228,5 +247,3 @@ case "$notify_state" in
     fi
     ;;
 esac
-
-agent_update_window "$TMUX_PANE"

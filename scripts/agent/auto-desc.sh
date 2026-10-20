@@ -4,14 +4,10 @@
 #   auto-desc.sh clear [src]  # Claude form: stdin .source=="compact" -> keep
 set -eu
 
-[ -z "${TMUX_PANE:-}" ] && exit 0
-[[ "$TMUX_PANE" =~ ^%[0-9]+$ ]] || exit 0
-# A headless run (claude -p, the Agent SDK: entrypoint sdk-*) inherits the
-# pane from whatever started it; the pane's own agent is someone else.
-case "${CLAUDE_CODE_ENTRYPOINT:-}" in sdk-*) exit 0 ;; esac
-cmd="${1:-}"
 # shellcheck source=lib.sh
-. "$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )/lib.sh"
+. "${BASH_SOURCE[0]%/*}/lib.sh"
+agent_pane_guard
+cmd="${1:-}"
 agent_lock "pane-${TMUX_PANE#%}"
 
 case "$cmd" in
@@ -28,7 +24,6 @@ case "$cmd" in
       cleaned="$(printf '%s' "$cleaned" | cut -c1-49)…"
     fi
     tmux set-option -p -t "$TMUX_PANE" @agent-auto-description "$cleaned"
-    agent_bump_revision
     ;;
   clear)
     src="${2:-}"
@@ -37,7 +32,6 @@ case "$cmd" in
     fi
     [ "$src" = compact ] && exit 0
     tmux set-option -p -u -t "$TMUX_PANE" @agent-auto-description 2>/dev/null || true
-    agent_bump_revision
     ;;
   *)
     echo "auto-desc: usage: auto-desc.sh set [text] | clear" >&2

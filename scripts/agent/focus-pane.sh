@@ -14,8 +14,8 @@ case "$client" in *[!A-Za-z0-9._:/-]*) client="" ;; esac
 
 # No id can contain a space. display -t on a vanished pane silently describes
 # another one, so the pane id must match.
-metadata=$("${tmux_cmd[@]}" display -t "$pane" -p '#{pane_id} #{session_id} #{window_id}' 2>/dev/null) || exit 0
-read -r found session window <<< "$metadata"
+metadata=$("${tmux_cmd[@]}" display -t "$pane" -p '#{pane_id} #{session_id} #{window_id} #{pid} #{socket_path}' 2>/dev/null) || exit 0
+read -r found session window server_pid server <<< "$metadata"
 [ "$found" = "$pane" ] || exit 0
 [[ "$session" =~ ^\$[0-9]+$ ]] || exit 0
 [[ "$window" =~ ^@[0-9]+$ ]] || exit 0
@@ -60,3 +60,7 @@ elif [ "$remotes" -gt 0 ]; then
 fi
 "${tmux_cmd[@]}" select-window -t "$window" 2>/dev/null || exit 0
 "${tmux_cmd[@]}" select-pane -t "$pane" 2>/dev/null || true
+# Mark a completion seen. pane-focus-in usually does, but not while another
+# client (a phone left attached) already shows the pane: tmux sees no focus
+# change then.
+TMUX="$server,$server_pid,0" "${BASH_SOURCE[0]%/*}/clear-finished.sh" "$pane" || true

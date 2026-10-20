@@ -6,9 +6,12 @@ PLUGIN_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
 command -v jq >/dev/null 2>&1 || { echo "SKIP: jq not installed"; exit 0; }
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 export CLAUDE_SETTINGS="$TMP/settings.json"
+# Seeded with entries an older release wrote, which install must replace.
 jq -n --arg s "$PLUGIN_DIR/scripts/agent" '{hooks:{PermissionDenied:[{hooks:[
   {type:"command",command:($s + "/set-state.sh working")},
   {type:"command",command:"keep-me"}
+]}], UserPromptSubmit:[{hooks:[
+  {type:"command",command:("env AGENT_STATUS_KIND=claude " + $s + "/set-state.sh working")}
 ]}]}}' > "$CLAUDE_SETTINGS"
 chmod 600 "$CLAUDE_SETTINGS"
 fail(){ echo "FAIL: $1" >&2; exit 1; }
@@ -18,7 +21,9 @@ mode=$(stat -c %a "$CLAUDE_SETTINGS" 2>/dev/null || stat -f %Lp "$CLAUDE_SETTING
 [ "$mode" = 600 ] || fail "install changed settings permissions"
 jq -e '.hooks.SessionStart[].hooks[].command | select(test("auto-desc.sh clear"))' "$CLAUDE_SETTINGS" >/dev/null || fail "SessionStart missing auto-desc clear"
 jq -e '.hooks.UserPromptSubmit[].hooks[].command | select(test("auto-desc.sh set"))' "$CLAUDE_SETTINGS" >/dev/null || fail "UserPromptSubmit missing auto-desc set"
-jq -e '.hooks.UserPromptSubmit[].hooks[].command | select(test("AGENT_STATUS_KIND=claude .*set-state.sh working"))' "$CLAUDE_SETTINGS" >/dev/null || fail "UserPromptSubmit lost typed working state"
+jq -e '.hooks.UserPromptSubmit[].hooks[].command | select(test("set-state.sh working$"))' "$CLAUDE_SETTINGS" >/dev/null || fail "UserPromptSubmit lost working state"
+n=$(jq '[.. | .command? // empty | select(test("set-state.sh working"))] | length' "$CLAUDE_SETTINGS")
+[ "$n" -eq 3 ] || fail "install did not replace the older env-prefixed entry ($n working hooks, expected 3)"
 jq -e '.hooks.Stop[].hooks[].command | select(test("set-state.sh finished"))' "$CLAUDE_SETTINGS" >/dev/null || fail "Stop lost completion event"
 jq -e '.hooks.StopFailure[].hooks[].command | select(test("set-state.sh finished"))' "$CLAUDE_SETTINGS" >/dev/null || fail "StopFailure does not end the turn"
 jq -e '.hooks.Notification[] | select(.matcher == "idle_prompt") | .hooks[].command | select(test("set-state.sh idle"))' "$CLAUDE_SETTINGS" >/dev/null || fail "idle_prompt does not close interrupted turns"

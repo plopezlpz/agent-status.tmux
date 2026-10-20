@@ -57,7 +57,6 @@ _options=(
   # Seconds a Claude agent-team lead's completion notification waits while
   # its teammates are alive; dropped if the lead resumes. 0 = notify at once.
   set-option -gqo @agent-notify-team-delay '10' \;
-  set-option -gqo @agent-revision '0' \;
   # Set on every load, since they name this checkout and this version: how a
   # UI asks for a title suggestion (the command, run with a pane id as its
   # last argument, prints one); where provider extensions find the shared
