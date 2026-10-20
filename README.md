@@ -69,13 +69,34 @@ UTC offset (`2026-10-20T11:09:03+0300`) instead of UTC (`...Z`).
 | MastraCode | | not verified locally |
 | Kilo Code | partial: Kilo has no exit event | not verified locally |
 | Claude Code | an Esc or a denied prompt shows idle only after Claude's `idle_prompt` (about 60s) | 2.1.296 |
+| Codex | run it as `codex --no-daemon` and trust its hooks once (see below); shows from the first prompt; a turn that ends in an error stays working until the next prompt | 0.163.0 (hooks load; not run live) |
 
-Agents without lifecycle hooks (Codex, Gemini, Cursor and others) are not
+Agents without lifecycle hooks (Gemini, Cursor and others) are not
 supported: their state can't be known without polling the pane.
 
 Headless runs (`claude -p` and the Agent SDK, `kilo run`, `kimi -p`,
-`mastracode --prompt`) are ignored. Run any other nested headless agent with
-`TMUX_PANE` cleared, or it takes over the pane it runs in.
+`mastracode --prompt`, `codex exec` and `codex review`) are ignored. Run any
+other nested headless agent with `TMUX_PANE` cleared, or it takes over the
+pane it runs in.
+
+### Codex
+
+Codex runs a hook only once you have trusted it. After installing (and after
+an update that changes a hook), Codex says "Hooks need review" when it starts:
+choose "Review hooks", or run `/hooks`, and trust the `hook-event.sh` ones.
+
+By default Codex runs its sessions, and so their hooks, in a shared background
+server, with the environment of the terminal that started it: a hook there
+can't tell which pane it belongs to, so it reports nothing. Run Codex in tmux
+without it, e.g. with an alias:
+
+```bash
+alias codex='codex --no-daemon'
+```
+
+The installer edits `${CODEX_HOME:-~/.codex}/hooks.json` in place, so other
+tools' hooks keep the place Codex trusts them by. Uninstalling moves up any
+hook added after ours, and Codex asks to review those again.
 
 ## Configuration
 

@@ -66,7 +66,7 @@ A future provider adapter must:
    session;
 5. avoid blocking or breaking the provider when status reporting fails.
    Always pass positional arguments: `set-state.sh` reads a stdin payload
-   only in the single-argument Claude hook form.
+   only in the single-argument hook form Claude and Codex hooks use.
 
 ## Providers in detail
 
@@ -78,11 +78,13 @@ A future provider adapter must:
 | Kilo Code | plugin; no exit event, so the pane is cleared from a process exit/signal handler; a prompt in another root session (`kilo -c`, picking a session) rebinds the pane; headless commands are detected from argv |
 | Kimi Code | native hooks incl. `SessionEnd`; headless runs (`-p`, `acp`, `web`, `rc`) are detected from the kimi process argv |
 | MastraCode | native hooks incl. `SessionEnd`; headless `--prompt` runs are detected from argv |
+| Codex | native hooks in `hooks.json` run `hook-event.sh codex`, which hands the payload to the hook form of `set-state.sh`/`clear-state.sh` (kind `codex`), so asks work as for Claude: a subagent's ask also ends with its `SubagentStop` (which never wakes a settled pane), the model's `request_user_input` question asks, `Interrupt` settles idle and `SessionEnd` clears; `SessionStart` fires only at the first prompt, and a turn that ends in an error fires no event; headless runs (`exec`, `review`, `app-server`, including the shared background server whose hooks carry the environment of whichever terminal started it) are detected from the nearest codex process's argv; trust is keyed by each hook's place in the file, so the installer edits it in place |
 | Claude Code | native hooks, one `set-state.sh` process per event (it also keeps the first prompt); no interrupt or permission-resolved event, so an Esc or a denied prompt settles on `idle_prompt`; a permission prompt stays asking through the tool hooks of parallel tools and subagents until the agent that asked proceeds (`@agent-asks`); API errors end the turn through `StopFailure`; a Stop while background subagents run stays working; headless runs (`claude -p`, the Agent SDK: `CLAUDE_CODE_ENTRYPOINT=sdk-*`) are ignored |
 
 Adapters run the scripts of the checkout they come from: the extensions and
 plugins are symlinks into it and find `scripts/agent` beside their real path,
-and Kimi and MastraCode hooks run `scripts/agent/hook-event.sh` by its path.
+and Kimi, MastraCode and Codex hooks run `scripts/agent/hook-event.sh` by
+its path.
 `hook-event.sh` cannot read an interactive flag from the payload, so it
 inspects the provider process's argv once per hook, honoring only options
 before the first non-option word (`ps` drops quoting); a headless run it
@@ -91,7 +93,7 @@ cannot recognize may still report into the pane it inherited.
 Installer path overrides follow each provider's conventions: pi
 `PI_CODING_AGENT_DIR`, `PI_EXTENSIONS_DIR`; OMP `PI_CONFIG_DIR`,
 `OMP_EXTENSIONS_DIR`; `OPENCODE_CONFIG_DIR`, `KILO_CONFIG_DIR`,
-`KIMI_CODE_HOME`, `MASTRACODE_HOME`, and Claude's `CLAUDE_CONFIG_DIR` (or
+`KIMI_CODE_HOME`, `MASTRACODE_HOME`, `CODEX_HOME`, and Claude's `CLAUDE_CONFIG_DIR` (or
 `CLAUDE_SETTINGS`, the settings file itself). Providers whose
 config directory is missing are skipped (Claude's `settings.json` is created).
 `install-claude-hooks.sh [install|uninstall]` is what `manage-provider.sh`
