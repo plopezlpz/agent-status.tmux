@@ -58,7 +58,7 @@ fi
 # Claude hooks provide identity and event metadata on stdin; their commands
 # pass the state alone. Adapters always pass positional arguments and may leave
 # stdin open (Node execFile), so never read it for them: jq would block.
-hook_name="" background="" team="" transcript="" src="" agent="" tool="" prompt="" hook_message="" hook_error="" call="" title=""
+hook_name="" background="" team="" transcript="" src="" agent="" tool="" prompt="" hook_message="" hook_error="" call="" returned="" title=""
 if [ "$#" -eq 1 ] && [ ! -t 0 ] && command -v jq >/dev/null 2>&1; then
   # background: in-flight subagents/workflows. Background shells and monitors
   # can run indefinitely and never resume the turn by themselves.
@@ -72,19 +72,22 @@ if [ "$#" -eq 1 ] && [ ! -t 0 ] && command -v jq >/dev/null 2>&1; then
   # type: rate_limit, overloaded, ...), on one line.
   # call (Codex): a hash of the tool's command (a shell command or a patch),
   # the same in its PreToolUse, PermissionRequest and PostToolUse, which
-  # carry no common call id. title (Claude): the session's own title
-  # (--name, /rename), if it has one.
+  # carry no common call id.
+  # returned (Claude): the subagent a main-thread Agent (Task) call ran in
+  # the foreground and that has now returned. title (Claude): the session's
+  # own title (--name, /rename), if it has one.
   metadata=$(jq -r --arg kind "$kind" 'def live(types): (.background_tasks // [])
       | if type == "array" then . else [] end
       | map(select(type == "object" and ((.type // "") | IN(types))
           and ((.status // "running") | IN("running", "pending"))))
       | length | tostring;
+    def word: . // "" | tostring | .[:128] | gsub("[^A-Za-z0-9._:-]"; "_");
     def line: tostring | .[:500] | gsub("[\n\r\t]"; " ") | gsub("[\u0000-\u001f\u007f]"; "");
     [.session_id // "", .hook_event_name // "",
       live("subagent", "workflow", "local_agent", "local_workflow"),
       live("teammate", "in_process_teammate"),
       (.transcript_path // "" | tostring), (.source // "" | tostring),
-      (.agent_id, .tool_name | . // "" | tostring | .[:128] | gsub("[^A-Za-z0-9._:-]"; "_")),
+      (.agent_id, .tool_name | word),
       (.prompt // "" | tostring
         | (gsub("<pasted_content[^>]*>[\\s\\S]*?</pasted_content[^>]*>"; " ") | select(test("\\S")))
           // gsub("</?pasted_content[^>]*>"; " ")
@@ -93,9 +96,12 @@ if [ "$#" -eq 1 ] && [ ! -t 0 ] && command -v jq >/dev/null 2>&1; then
       (if $kind == "codex" then .tool_input.command? // null else null end
         | if type == "string" then .[:4096] + "#\(length)" | explode
             | reduce .[] as $c (5381; (. * 33 + $c) % 4294967296) | tostring else "" end),
+      (if .hook_event_name == "PostToolUse" and (.agent_id // "") == "" and (.tool_name | IN("Agent", "Task"))
+          and (.tool_response | type) == "object" and .tool_response.status == "completed"
+        then .tool_response.agentId else "" end | word),
       (.session_title // "" | line)]
     | join("\u001f")' 2>/dev/null || true)
-  IFS="$sep" read -r instance hook_name background team transcript src agent tool prompt hook_message hook_error call title <<< "$metadata"
+  IFS="$sep" read -r instance hook_name background team transcript src agent tool prompt hook_message hook_error call returned title <<< "$metadata"
   [ -z "$hook_name" ] || kind="${kind:-claude}"
 fi
 # Auto-compaction restarts the session mid-turn (SessionStart source=compact)
@@ -124,18 +130,21 @@ case "$transcript" in *[[:cntrl:]]*) transcript="" ;; esac
 
 agent_lock "pane-${TMUX_PANE#%}"
 read_pane
-# A Codex subagent's end only ends its own asks: it never wakes a pane that
-# has settled (its parent may have stopped before it).
+# A subagent's end only ends its own asks: it never wakes a pane that has
+# settled (its parent may have stopped before it).
 if [ "$hook_name" = SubagentStop ] && [ "$prev_state" != asking ]; then exit 0; fi
 # Nor do its other events: Codex subagents run in the background and may
 # outlive their parent's turn, and nothing settles the pane after them. An
 # ask from one still shows; @agent-settled keeps the settled pane's unseen
 # value until its asks end. A main-thread event settles or resumes the pane
-# itself.
+# itself. So do Claude dialogs without a tool: an MCP server may ask between
+# turns.
 settled=""
+dialog=""
+case "$raw_state:$hook_name" in asking:Elicitation|asking:Notification|working:ElicitationResult) dialog=1 ;; esac
 if [ -n "$compact" ]; then
   settled="$prev_settled"
-elif [ "$kind" = codex ] && [ -n "$hook_name" ] && [ -n "$agent" ]; then
+elif { [ "$kind" = codex ] && [ -n "$hook_name" ] && [ -n "$agent" ]; } || [ -n "$dialog" ]; then
   case "$prev_state" in
     idle) [ "$state" = asking ] || exit 0; settled="${prev_unseen:-0}" ;;
     asking) settled="$prev_settled" ;;
@@ -178,52 +187,50 @@ case "$unseen" in 0|1) ;; *) unseen=0 ;; esac
 # Claude and Codex permission prompts: tool hooks of parallel tools and
 # subagents keep coming while a dialog is open, so an ask holds the pane
 # asking until the turn ends or the agent that asked proceeds: its asked tool
-# returns, it starts another, it gets a new prompt or (Codex) it ends.
-# @agent-asks lists the open ones as "<agent_id>/<tool>".
-# A main-thread Task/Agent that returns with no subagent left running ends
-# the subagents' asks too: hook sets without PostToolUseFailure never report
-# an approved tool that failed.
+# returns, it starts another, it gets a new prompt or it ends (Claude: or the
+# Agent call that ran it in the foreground returns).
+# @agent-asks lists the open ones as "<agent_id>/<tool>#<call>@<opened>".
 # Codex runs an agent's shell calls in parallel and names every one Bash, so
-# an ask there is "<agent_id>/<tool>#<call>@<opened>", call being the hash of
-# its command (none for a tool without one). Only its own call's return ends
-# it (a tool without a command: any return of that tool; write_stdin: the
-# Bash call it writes to), or a later call: siblings of the asking call
-# start with it, while a call starting a few seconds on comes after the
-# answer (a denied call returns nothing).
+# call is the hash of its command (none for a tool without one, and none
+# from Claude). Only its own call's return ends it (a tool without a
+# command: any return of that tool; write_stdin: the Bash call it writes
+# to), or a later call: siblings of the asking call start with it (Claude
+# runs read-only tools in parallel), while a call starting a few seconds on
+# comes after the answer (a denied call returns nothing).
+# Claude dialogs without a tool (an MCP server's form or URL, a sandboxed
+# command's network request) carry no agent: "/@<opened>", ended by the
+# answer to the form or by the main thread's next tool hook. Their
+# notification adds one only when nothing else asks: a tool's own prompt has
+# its PermissionRequest.
+# Earlier releases kept Claude asks as "<agent_id>/<tool>": a pane may still
+# hold one.
 asks="$prev_asks"
 if [ -n "$hook_name" ] && [ -z "$compact" ]; then
-  case "$raw_state:$kind" in
-    asking:codex)
+  case "$raw_state" in
+    asking)
       key="$agent/$tool${call:+#$call}"
-      case " $asks " in *" $key@"*) ;; *) asks="${asks:+$asks }$key@$now" ;; esac
-      ;;
-    asking:*) case " $asks " in *" $agent/$tool "*) ;; *) asks="${asks:+$asks }$agent/$tool" ;; esac ;;
-    working:*)
-      subagents_done=""
-      case "$hook_name:$agent:$tool" in
-        PostToolUse*::Task|PostToolUse*::Agent) [ "$background" -gt 0 ] || subagents_done=1 ;;
+      case " $asks " in
+        *" $key@"*|*" $key "*) ;;
+        *) [ "$hook_name" = Notification ] && [ -n "$asks" ] || asks="${asks:+$asks }$key@$now" ;;
       esac
+      ;;
+    working)
       asks=""
       for ask in $prev_asks; do
         # A prompt to the main thread ends every ask.
         [ "$hook_name:$agent" != UserPromptSubmit: ] || continue
-        if [ "$kind" = codex ]; then
-          case "$hook_name:$ask" in
-            UserPromptSubmit:"$agent/"*|Stop*:"$agent/"*|SubagentStop:"$agent/"*) continue ;;
-            PostToolUse*:"$agent/$tool#$call@"*|PostToolUse*:"$agent/$tool@"*) continue ;;
-            PostToolUse*:"$agent/write_stdin"[#@]*) [ "$tool" != Bash ] || continue ;;
-            PreToolUse:"$agent/"*)
-              opened="${ask##*@}"
-              case "$opened:$now" in *[!0-9:]*|:*|*:) continue ;; esac
-              [ $((now - opened)) -lt 3 ] || continue
-              ;;
-          esac
-        else
-          case "$hook_name:$ask" in
-            UserPromptSubmit:"$agent/"*|PreToolUse:"$agent/"*|Stop*:"$agent/"*|SubagentStop:"$agent/"*|PostToolUse*:"$agent/$tool") continue ;;
-          esac
-        fi
-        [ -z "$subagents_done" ] || [ -z "${ask%%/*}" ] || continue
+        case "$hook_name:$ask" in
+          UserPromptSubmit:"$agent/"*|Stop*:"$agent/"*|SubagentStop:"$agent/"*) continue ;;
+          PostToolUse*:"$agent/$tool#$call@"*|PostToolUse*:"$agent/$tool@"*|PostToolUse*:"$agent/$tool") continue ;;
+          PostToolUse*:"$agent/@"*|ElicitationResult:"$agent/@"*) continue ;;
+          PostToolUse*:"$agent/write_stdin"[#@]*) [ "$tool" != Bash ] || continue ;;
+          PreToolUse:"$agent/"*)
+            opened="${ask##*@}"
+            case "$opened:$now" in *[!0-9:]*|:*|*:) continue ;; esac
+            [ $((now - opened)) -lt 3 ] || continue
+            ;;
+        esac
+        [ -z "$returned" ] || case "$ask" in "$returned/"*) continue ;; esac
         asks="${asks:+$asks }$ask"
       done
       [ -z "$asks" ] || state=asking

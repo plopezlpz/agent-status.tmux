@@ -97,11 +97,19 @@ install_filter="$uninstall_filter"' |
   # PostToolUseFailure) of the asking agent fires after its approved tool
   # runs, and set-state keeps the pane asking through the tool hooks of other
   # tools and agents meanwhile; a denial ends the turn like an interrupt, so
-  # the idle_prompt notification above closes it.
+  # the idle_prompt notification above closes it. A subagent that stops
+  # ends its own asks.
   put("PermissionRequest"; {hooks:[state("asking")]}) |
   put("PreToolUse"; {hooks:[state("working")]}) |
   put("PostToolUse"; {hooks:[state("working")]}) |
-  put("PostToolUseFailure"; {hooks:[state("working")]})
+  put("PostToolUseFailure"; {hooks:[state("working")]}) |
+  put("SubagentStop"; {hooks:[state("working")]}) |
+  # Dialogs that fire no PermissionRequest: a form or URL an MCP server asks
+  # for (answered: ElicitationResult), and the network request of a sandboxed
+  # command, which only notifies, once the dialog has waited about 6s.
+  put("Elicitation"; {hooks:[state("asking")]}) |
+  put("ElicitationResult"; {hooks:[state("working")]}) |
+  put("Notification"; {matcher:"permission_prompt|elicitation_dialog|elicitation_url_dialog", hooks:[state("asking")]})
 '
 if [ "$ACTION" = install ]; then filter="$install_filter"; else filter="$uninstall_filter"; fi
 new=$({ if [ "$input" = /dev/null ]; then printf '{}\n'; else cat "$input"; fi; } | jq --arg s "$SCRIPTS" --arg r "$SCRIPTS_REAL" --arg ours "$OURS" "$filter")

@@ -31,7 +31,11 @@ mode=$(stat -c %a "$CLAUDE_SETTINGS" 2>/dev/null || stat -f %Lp "$CLAUDE_SETTING
 jq -e --arg c "'$PLUGIN_DIR/scripts/agent/set-state.sh' working" '[.hooks.UserPromptSubmit[].hooks[].command] == [$c]' "$CLAUDE_SETTINGS" >/dev/null || fail "UserPromptSubmit is not one quoted set-state working hook"
 jq -e --arg c "'$PLUGIN_DIR/scripts/agent/set-state.sh' idle" '[.hooks.SessionStart[].hooks[].command] == [$c]' "$CLAUDE_SETTINGS" >/dev/null || fail "SessionStart is not one quoted set-state idle hook"
 n=$(jq '[.. | .command? // empty | select(test("set-state.sh. working"))] | length' "$CLAUDE_SETTINGS")
-[ "$n" -eq 4 ] || fail "install did not replace the older env-prefixed entry ($n working hooks, expected 4)"
+[ "$n" -eq 6 ] || fail "install did not replace the older env-prefixed entry ($n working hooks, expected 6)"
+jq -e '.hooks.SubagentStop[].hooks[].command | select(test("set-state.sh. working$"))' "$CLAUDE_SETTINGS" >/dev/null || fail "a stopped subagent does not end its asks"
+jq -e '.hooks.Elicitation[].hooks[].command | select(test("set-state.sh. asking$"))' "$CLAUDE_SETTINGS" >/dev/null || fail "an MCP elicitation does not ask"
+jq -e '.hooks.ElicitationResult[].hooks[].command | select(test("set-state.sh. working$"))' "$CLAUDE_SETTINGS" >/dev/null || fail "an answered MCP elicitation does not end its ask"
+jq -e '.hooks.Notification[] | select(.matcher == "permission_prompt|elicitation_dialog|elicitation_url_dialog") | .hooks[].command | select(test("set-state.sh. asking$"))' "$CLAUDE_SETTINGS" >/dev/null || fail "a network request prompt does not ask"
 jq -e '.hooks.PostToolUseFailure[].hooks[].command | select(test("set-state.sh. working$"))' "$CLAUDE_SETTINGS" >/dev/null || fail "a failed approved tool does not end the ask"
 jq -e '.hooks.Stop[].hooks[].command | select(test("set-state.sh. finished"))' "$CLAUDE_SETTINGS" >/dev/null || fail "Stop lost completion event"
 jq -e '.hooks.StopFailure[].hooks[].command | select(test("set-state.sh. finished"))' "$CLAUDE_SETTINGS" >/dev/null || fail "StopFailure does not end the turn"

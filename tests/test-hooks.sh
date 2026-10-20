@@ -276,7 +276,9 @@ tmux kill-window -t "$w7"
 p6=$(tmux split-window -d -P -F '#{pane_id}' -t "$p1")
 ev(){ claude "$p6" "{\"session_id\":\"c-4\",\"hook_event_name\":\"$1\"${3:+,$3}}" "$2"; }
 tool(){ ev "$1" "$2" "\"tool_name\":\"$3\"${4:+,\"agent_id\":\"$4\"}${5:+,$5}"; }
-shown(){ printf '%s:%s' "$(get "$p6" @agent-state)" "$(get "$p6" @agent-asks)"; }
+shown(){ printf '%s:%s' "$(get "$p6" @agent-state)" "$(get "$p6" @agent-asks | sed -E 's/@[0-9]+//g')"; }
+# age: make every open ask older than a parallel batch's start.
+age(){ tmux set-option -p -t "$p6" @agent-asks "$(get "$p6" @agent-asks | sed -E 's/@[0-9]+/@1000/g')"; }
 ev SessionStart idle '"source":"startup"'
 # One hook process per event: set-state keeps the first prompt as the title.
 ev UserPromptSubmit working '"prompt":"  check   the\nlogs\u001b  "'
@@ -288,29 +290,63 @@ tool PreToolUse working Read a2
 tool PostToolUse working Read a2
 tool PostToolUse working Bash
 [ "$(shown)" = "asking:a1/Bash" ] || fail "other agents' tool hooks ended a permission prompt: $(shown)"
-# The main thread asks too, for a WebFetch beside its parallel Reads.
+# The main thread asks too, for a WebFetch, and a Read beside it starts
+# while its dialog is open.
 tool PermissionRequest asking WebFetch
+tool PreToolUse working Read
 tool PostToolUse working Read
 tool PostToolUse working Bash a1
-[ "$(shown)" = "asking:/WebFetch" ] || fail "an approved tool did not end only its own ask: $(shown)"
+[ "$(shown)" = "asking:/WebFetch" ] || fail "a parallel tool or another agent's return ended an ask: $(shown)"
 # The approved WebFetch fails: PostToolUseFailure ends the ask.
 tool PostToolUseFailure working WebFetch
 [ "$(shown)" = "working:" ] || fail "PostToolUseFailure did not end the ask: $(shown)"
-# An agent that moves on to another tool is no longer asking.
+# An agent that moves on to another tool after the answer is no longer asking.
 tool PermissionRequest asking Edit a3
+age
 tool PreToolUse working Grep a3
 [ "$(shown)" = "working:" ] || fail "the asking agent's next tool did not end its ask: $(shown)"
-# Hooks without PostToolUseFailure miss a subagent's approved tool failing:
-# the main thread's Task returning ends that ask, unless a background
-# subagent (here the one just launched) may still be asking.
+# Launching a background subagent leaves every ask; a foreground subagent's
+# Agent call that returns ends that subagent's asks only.
 tool PermissionRequest asking Bash a5
+tool PermissionRequest asking Bash a6
+tool PostToolUse working Agent '' '"tool_response":{"status":"async_launched","agentId":"a7"}'
+tool PostToolUse working Task '' '"tool_response":{"status":"async_launched","agentId":"a8"}'
+[ "$(shown)" = "asking:a5/Bash a6/Bash" ] || fail "a background Agent launch ended a subagent's ask: $(shown)"
+tool PostToolUse working Agent '' '"tool_response":{"status":"completed","agentId":"a5","content":[]}'
+[ "$(shown)" = "asking:a6/Bash" ] || fail "a returned Agent call did not end only its subagent's asks: $(shown)"
+# A subagent that stops ends its own asks.
 tool PermissionRequest asking WebFetch
-tool PostToolUse working Task '' '"background_tasks":[{"id":"a6","type":"subagent","status":"running"}]'
-[ "$(shown)" = "asking:a5/Bash /WebFetch" ] || fail "a background Task launch ended a subagent's ask: $(shown)"
-tool PostToolUse working Agent '' '"background_tasks":[]'
-[ "$(shown)" = "asking:/WebFetch" ] || fail "a returned Task did not end its subagent's ask: $(shown)"
+ev SubagentStop working '"agent_id":"a6","agent_type":"general-purpose","background_tasks":[]'
+[ "$(shown)" = "asking:/WebFetch" ] || fail "SubagentStop did not end only its own asks: $(shown)"
 tool PostToolUse working WebFetch
 [ "$(shown)" = "working:" ] || fail "the approved WebFetch did not end its ask: $(shown)"
+# An ask kept by an earlier release (no time) still ends.
+tmux set-option -p -t "$p6" @agent-asks "/Bash a9/Read"
+tmux set-option -p -t "$p6" @agent-state asking
+tool PermissionRequest asking Bash
+tool PostToolUse working Bash
+[ "$(shown)" = "asking:a9/Read" ] || fail "an earlier release's ask did not end with its tool: $(shown)"
+tool PreToolUse working Glob a9
+[ "$(shown)" = "working:" ] || fail "an earlier release's ask did not end with the agent's next tool: $(shown)"
+# Dialogs without a PermissionRequest: an MCP server's form asks until it is
+# answered, and its notification adds nothing.
+ev Elicitation asking '"mcp_server_name":"tracker","message":"Pick a project","mode":"form"'
+ev Notification asking '"notification_type":"elicitation_dialog","message":"tracker needs input"'
+[ "$(shown)" = "asking:/" ] || fail "an MCP elicitation did not ask once: $(shown)"
+ev ElicitationResult working '"mcp_server_name":"tracker","action":"accept","mode":"form"'
+[ "$(shown)" = "working:" ] || fail "an answered elicitation kept asking: $(shown)"
+# A sandboxed command's network request only notifies; the command's return
+# ends it. With a tool's own ask open, the notification adds nothing.
+tool PreToolUse working Bash
+ev Notification asking '"notification_type":"permission_prompt","message":"Claude needs your permission"'
+[ "$(shown)" = "asking:/" ] || fail "a network request prompt did not ask: $(shown)"
+tool PostToolUse working Bash
+[ "$(shown)" = "working:" ] || fail "the approved command's return did not end the network ask: $(shown)"
+tool PermissionRequest asking Bash a4
+ev Notification asking '"notification_type":"permission_prompt","message":"Claude needs your permission"'
+[ "$(shown)" = "asking:a4/Bash" ] || fail "a permission prompt's notification added an ask: $(shown)"
+tool PostToolUse working Bash a4
+[ "$(shown)" = "working:" ] || fail "the approved tool did not end its ask: $(shown)"
 # A Stop held by a background subagent that asks keeps the pane asking; the
 # final Stop ends every ask.
 tool PermissionRequest asking Bash a4
@@ -319,6 +355,14 @@ ev Stop finished '"background_tasks":[{"id":"a4","type":"subagent","status":"run
 tool PermissionRequest asking Bash
 ev Stop finished '"background_tasks":[]'
 [ "$(shown):$(get "$p6" @agent-unseen)" = "idle::1" ] || fail "the final Stop did not end the asks: $(shown)"
+# An MCP server may ask between turns: once answered, the pane is settled
+# again, its completion still unseen. A late answer wakes nothing.
+ev Elicitation asking '"mcp_server_name":"tracker","message":"Pick a project","mode":"form"'
+[ "$(shown):$(get "$p6" @agent-unseen)" = "asking:/:0" ] || fail "an elicitation between turns did not ask: $(shown)"
+ev ElicitationResult working '"mcp_server_name":"tracker","action":"cancel","mode":"form"'
+[ "$(shown):$(get "$p6" @agent-unseen):$(get "$p6" @agent-settled)" = "idle::1:" ] || fail "an answered elicitation between turns did not settle the pane: $(shown)"
+ev ElicitationResult working '"mcp_server_name":"tracker","action":"cancel","mode":"form"'
+[ "$(shown):$(get "$p6" @agent-unseen)" = "idle::1" ] || fail "a late elicitation answer woke the pane: $(shown)"
 # Later prompts keep the title; a new session clears it, a compaction doesn't.
 ev UserPromptSubmit working '"prompt":"something else"'
 [ "$(get "$p6" @agent-auto-description)" = "check the logs" ] || fail "a later prompt replaced the title"
