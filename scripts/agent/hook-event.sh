@@ -34,17 +34,31 @@ esac
 # Headless runs (`kimi -p`, `kimi acp|web|rc`, `mastracode --prompt`,
 # `codex exec`, Codex's background server) can inherit TMUX_PANE from an agent
 # pane and must not report or steal its identity. The payload has no mode
-# field, so read the nearest provider ancestor's argv. `ps` loses quoting, so
-# only words before the first non-option word count (a prompt like "fix the -p
-# flag" is never parsed).
+# field, so read the nearest provider ancestor's argv. Only words before the
+# first non-option word count (a prompt like "fix the -p flag" is never
+# parsed). Where /proc has the argv, a quoted prompt stays one word, and one
+# with a blank in it is a prompt. Elsewhere `ps` loses quoting, so a prompt
+# given on the command line that starts with a subcommand's name ("review my
+# change") reads as that subcommand.
 headless() {
-  local pid=$PPID depth=0 args word seen skip n ppid
+  local pid=$PPID depth=0 args word seen skip n ppid words
   set -f
   while [ "$depth" -lt 4 ] && [ "${pid:-0}" -gt 1 ]; do
     read -r ppid args <<< "$(ps -o ppid=,args= -p "$pid" 2>/dev/null)" || break
     [ -n "$args" ] || break
+    # shellcheck disable=SC2206 # split on blanks, globbing is off
+    words=($args)
+    if [ -r "/proc/$pid/cmdline" ]; then
+      words=()
+      while IFS= read -r -d '' word || [ -n "$word" ]; do words+=("$word"); done 2>/dev/null < "/proc/$pid/cmdline" || true
+      # None, or one rewritten into a title: back to the split.
+      if [ "${#words[@]}" = 0 ] || { [ "${#words[@]}" = 1 ] && [[ "${words[0]}" == *[[:space:]]* ]]; }; then
+        # shellcheck disable=SC2206
+        words=($args)
+      fi
+    fi
     seen=0 skip="" n=0
-    for word in $args; do
+    for word in "${words[@]}"; do
       n=$((n + 1))
       if [ "$seen" = 0 ]; then
         if [[ " $names " == *" ${word##*/} "* ]]; then seen=1; continue; fi
@@ -65,6 +79,7 @@ headless() {
           [[ " $values " != *" $word "* ]] || skip=value
           [[ " $optional " != *" $word "* ]] || skip=optional
           ;;
+        *[[:space:]]*) break ;;
         *)
           [[ " $commands " != *" $word "* ]] || { set +f; return 0; }
           break

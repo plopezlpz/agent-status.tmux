@@ -38,7 +38,8 @@ keyed(){ jq -c '[.hooks | to_entries[] | .key as $e | .value | to_entries[] | .k
   | to_entries[] | select(.value.command | test("hook-event\\.sh. codex") | not) | [$e, $g, .key, .value]]' "$1"; }
 ours(){ jq -c --arg e "$2" '[.hooks[$e] // [] | to_entries[] | select(.value.hooks | any(.command | test("hook-event\\.sh. codex"))) | .key]' "$1"; }
 
-install
+out=$(bash "$ROOT/manage-provider.sh" install codex)
+case "$out" in *"jq's layout"*) fail "install called a jq-formatted file reformatted: $out" ;; esac
 [ "$(keyed "$H")" = "$(keyed "$TMP/orig.json")" ] || fail "install moved or changed another tool's hook"
 [ "$(jq -c 'keys' "$H")" = '["description","hooks"]' ] || fail "install changed the top level"
 for e in SessionStart UserPromptSubmit PreToolUse PermissionRequest PostToolUse SubagentStop Stop Interrupt SessionEnd; do
@@ -97,8 +98,23 @@ rm -f "$H"; install
 jq -e '.hooks | length == 9' "$H" >/dev/null || fail "install did not create hooks.json"
 install uninstall
 jq -e '.hooks == {}' "$H" >/dev/null || fail "uninstall left hooks in a created hooks.json"
-# Refusals change nothing: invalid JSON, a non-Codex shape, a symlink.
-for bad in '{"hooks": [] }' '[1]' '{"hooks": {"Stop": {}}}' '{ "hooks": '; do
+# An empty file is {} to the installer (Codex can't read it): hooks are
+# written, as one document, and an uninstall leaves it alone.
+for empty in '' '  '; do
+  printf '%s' "$empty" > "$H"; install uninstall
+  [ "$(cat "$H")" = "$empty" ] || fail "uninstall changed an empty hooks.json ('$empty')"
+  out=$(bash "$ROOT/manage-provider.sh" install codex)
+  case "$out" in *"already has"*) fail "an empty hooks.json ('$empty') counted as installed: $out" ;; esac
+  [ "$(jq -s 'length' "$H"):$(jq '.hooks | length' "$H")" = 1:9 ] || fail "install into an empty hooks.json ('$empty'): $(cat "$H")"
+done
+# A file in another layout is rewritten in jq's: install says so.
+jq --indent 4 . "$TMP/orig.json" > "$H"
+out=$(bash "$ROOT/manage-provider.sh" install codex)
+case "$out" in *"jq's layout"*) ;; *) fail "install did not say it reformats hooks.json: $out" ;; esac
+install uninstall
+# Refusals change nothing: invalid JSON, a non-Codex shape, several
+# documents (Codex reads none of them), a symlink.
+for bad in '{"hooks": [] }' '[1]' '{"hooks": {"Stop": {}}}' '{ "hooks": ' '{"hooks":{}} {"hooks":{}}'; do
   printf '%s\n' "$bad" > "$H"
   if install 2>/dev/null; then fail "install accepted $bad"; fi
   [ "$(cat "$H")" = "$bad" ] || fail "a refused install changed $bad"
@@ -137,7 +153,10 @@ TMUX="$(ctl display -pt "$p1" '#{socket_path},#{pid},0')"
 export TMUX
 tmux set-option -g @agent-log "$TMP/agent.log"
 get(){ tmux show-option -p -q -v -t "$p1" "$1" 2>/dev/null || true; }
-shown(){ printf '%s:%s:%s' "$(get @agent-state)" "$(get @agent-unseen)" "$(get @agent-asks)"; }
+# Asks without their call hash and opening time.
+shown(){ printf '%s:%s:%s' "$(get @agent-state)" "$(get @agent-unseen)" "$(get @agent-asks | sed -E 's/[#@][0-9]+//g')"; }
+# age: make every open ask older than a parallel batch's start.
+age(){ tmux set-option -p -t "$p1" @agent-asks "$(get @agent-asks | sed -E 's/@[0-9]+/@1000/g')"; }
 # ev ACTION EVENT [JSON fields]: a Codex hook for pane p1, as Codex runs it.
 ev(){
   local out rc=0
@@ -157,8 +176,31 @@ ev blocked PermissionRequest '"tool_name":"Bash","tool_input":{"command":"rm x"}
 ev tool PreToolUse '"agent_id":"a1","agent_type":"default","tool_name":"apply_patch","tool_input":{},"tool_use_id":"c2"'
 ev working PostToolUse '"agent_id":"a1","agent_type":"default","tool_name":"apply_patch","tool_input":{},"tool_use_id":"c2","tool_response":"ok"'
 [ "$(shown)" = "asking:0:/Bash" ] || fail "a subagent's tools ended the main thread's ask: $(shown)"
-ev working PostToolUse '"tool_name":"Bash","tool_input":{},"tool_use_id":"c3","tool_response":"ok"'
+ev working PostToolUse '"tool_name":"Bash","tool_input":{"command":"rm x"},"tool_use_id":"c3","tool_response":"ok"'
 [ "$(shown)" = "working:0:" ] || fail "the approved tool did not end its ask: $(shown)"
+# Codex runs shell calls in parallel, all named Bash: a sibling of the asking
+# call returning, or starting just after the ask, doesn't end it.
+ev tool PreToolUse '"tool_name":"Bash","tool_input":{"command":"rm y"},"tool_use_id":"a"'
+ev tool PreToolUse '"tool_name":"Bash","tool_input":{"command":"ls"},"tool_use_id":"b"'
+ev blocked PermissionRequest '"tool_name":"Bash","tool_input":{"command":"rm y","description":"why"}'
+[ "$(shown)" = "asking:0:/Bash" ] || fail "parallel PermissionRequest: $(shown)"
+ev working PostToolUse '"tool_name":"Bash","tool_input":{"command":"ls"},"tool_use_id":"b","tool_response":"ok"'
+[ "$(shown)" = "asking:0:/Bash" ] || fail "a sibling's return ended the ask: $(shown)"
+ev tool PreToolUse '"tool_name":"Bash","tool_input":{"command":"pwd"},"tool_use_id":"c"'
+[ "$(shown)" = "asking:0:/Bash" ] || fail "a sibling starting after the ask ended it: $(shown)"
+ev working PostToolUse '"tool_name":"Bash","tool_input":{"command":"rm y"},"tool_use_id":"a","tool_response":"ok"'
+[ "$(shown)" = "working:0:" ] || fail "the asking call's return did not end the ask: $(shown)"
+# A denied call returns nothing: the model's next call, later, ends the ask.
+ev blocked PermissionRequest '"tool_name":"Bash","tool_input":{"command":"rm z"}'
+age
+ev tool PreToolUse '"tool_name":"Bash","tool_input":{"command":"ls"},"tool_use_id":"d"'
+[ "$(shown)" = "working:0:" ] || fail "a call after a denied ask did not end it: $(shown)"
+# Writing to a running command asks as write_stdin; the command's Bash
+# return ends that ask.
+ev blocked PermissionRequest '"tool_name":"write_stdin","tool_input":{"session_id":1,"chars":"y"}'
+[ "$(shown)" = "asking:0:/write_stdin" ] || fail "write_stdin PermissionRequest: $(shown)"
+ev working PostToolUse '"tool_name":"Bash","tool_input":{"command":"make"},"tool_use_id":"e","tool_response":"ok"'
+[ "$(shown)" = "working:0:" ] || fail "the Bash return did not end the write_stdin ask: $(shown)"
 # A subagent's ask ends when the subagent does (its tool may never return),
 # and a prompt to it ends only its own asks.
 ev blocked PermissionRequest '"agent_id":"a1","agent_type":"default","tool_name":"apply_patch","tool_input":{}'
@@ -178,9 +220,30 @@ ev tool PreToolUse '"tool_name":"Bash","tool_input":{"command":"echo \"tool_name
 [ "$(shown)" = "working:0:" ] || fail "a mention of request_user_input asked: $(shown)"
 ev idle Stop '"stop_hook_active":false,"last_assistant_message":"done"'
 [ "$(shown)" = "idle:1:" ] || fail "Stop did not finish: $(shown)"
-# A subagent ending after its parent stopped doesn't wake the pane.
+# A subagent outliving its parent's turn doesn't wake the pane: neither its
+# tools nor its end. Its ask shows, then the pane settles as it was.
+ev tool PreToolUse '"agent_id":"a2","agent_type":"default","tool_name":"Bash","tool_input":{"command":"ls"},"tool_use_id":"s1"'
+ev working PostToolUse '"agent_id":"a2","agent_type":"default","tool_name":"Bash","tool_input":{"command":"ls"},"tool_use_id":"s1","tool_response":"ok"'
+ev working UserPromptSubmit '"agent_id":"a2","agent_type":"default","prompt":"go on"'
+[ "$(shown)" = "idle:1:" ] || fail "a late subagent's tools woke the pane: $(shown)"
 ev working SubagentStop '"agent_id":"a2","agent_type":"default","agent_transcript_path":null,"stop_hook_active":false,"last_assistant_message":"late"'
 [ "$(shown)" = "idle:1:" ] || fail "a late SubagentStop woke the pane: $(shown)"
+ev blocked PermissionRequest '"agent_id":"a3","agent_type":"default","tool_name":"Bash","tool_input":{"command":"rm w"}'
+[ "$(shown):$(get @agent-settled)" = "asking:0:a3/Bash:1" ] || fail "a late subagent's ask: $(shown) $(get @agent-settled)"
+ev working PostToolUse '"agent_id":"a3","agent_type":"default","tool_name":"Bash","tool_input":{"command":"rm w"},"tool_use_id":"s2","tool_response":"ok"'
+[ "$(shown):$(get @agent-settled)" = "idle:1::" ] || fail "a late subagent's answered ask did not settle the pane: $(shown) $(get @agent-settled)"
+# A prompt meanwhile resumes the pane itself.
+ev blocked PermissionRequest '"agent_id":"a3","agent_type":"default","tool_name":"Bash","tool_input":{"command":"rm v"}'
+ev working UserPromptSubmit '"prompt":"next"'
+[ "$(shown):$(get @agent-settled)" = "working:0::" ] || fail "a prompt during a late subagent's ask: $(shown) $(get @agent-settled)"
+# After an Esc too: no unseen completion appears when its ask ends.
+ev interrupt Interrupt
+ev tool PreToolUse '"agent_id":"a4","agent_type":"default","tool_name":"Bash","tool_input":{"command":"ls"},"tool_use_id":"s3"'
+[ "$(shown)" = "idle:0:" ] || fail "a subagent's tool after an Esc woke the pane: $(shown)"
+ev blocked PermissionRequest '"agent_id":"a4","agent_type":"default","tool_name":"Bash","tool_input":{"command":"rm u"}'
+[ "$(shown)" = "asking:0:a4/Bash" ] || fail "a subagent's ask after an Esc: $(shown)"
+ev working SubagentStop '"agent_id":"a4","agent_type":"default","agent_transcript_path":null,"stop_hook_active":false,"last_assistant_message":"x"'
+[ "$(shown):$(get @agent-settled)" = "idle:0::" ] || fail "a subagent's end after an Esc: $(shown) $(get @agent-settled)"
 # Esc: idle, every ask gone, no unseen completion claimed.
 ev working UserPromptSubmit '"prompt":"again"'
 ev blocked PermissionRequest '"tool_name":"Bash","tool_input":{}'
@@ -218,6 +281,16 @@ for args in "" "--no-daemon" "--no-daemon resume abc" "fork --last" "-p work" "-
   # shellcheck disable=SC2086
   via $args
   [ "$(get @agent-state)" = idle ] || fail "interactive 'codex $args' did not report"
+done
+# A quoted prompt starting with a subcommand's name: /proc keeps it one word;
+# without /proc, ps can't tell it from the subcommand (a known limitation).
+for prompt in "review my last change" "e x"; do
+  via --no-daemon "$prompt"
+  if [ -r "/proc/$$/cmdline" ]; then
+    [ "$(get @agent-state)" = idle ] || fail "interactive 'codex \"$prompt\"' did not report"
+  else
+    [ -z "$(get @agent-state)" ] || fail "ps now keeps quoting? 'codex \"$prompt\"' reported: update the docs"
+  fi
 done
 # A command line that only mentions codex is not Codex.
 cat > "$TMP/bin/other" <<'EOF'

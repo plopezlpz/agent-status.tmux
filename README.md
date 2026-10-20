@@ -94,9 +94,24 @@ without it, e.g. with an alias:
 alias codex='codex --no-daemon'
 ```
 
+`codex agents` and `codex --remote` need that server and refuse
+`--no-daemon`: with the alias, run them as `command codex agents`.
+
 The installer edits `${CODEX_HOME:-~/.codex}/hooks.json` in place, so other
 tools' hooks keep the place Codex trusts them by. Uninstalling moves up any
-hook added after ours, and Codex asks to review those again.
+hook added after ours, and Codex asks to review those again. The file is
+written in jq's layout (2-space indent), so a file formatted otherwise is
+reformatted; the old file is kept as `hooks.json.bak-*`.
+
+Codex hooks can't tell everything apart:
+
+- With Auto-review (`approvals_reviewer = "auto_review"`), Codex announces
+  each escalated command to the hooks before its reviewer decides, so the
+  pane shows asking, and notifies, while nobody is asked.
+- On macOS, a prompt given on the command line whose first word is a
+  subcommand's name (`codex "review my change"`) reads as that headless
+  subcommand, and the session doesn't report. Type the first prompt in
+  Codex instead. Linux reads the real arguments from `/proc`.
 
 ## Configuration
 

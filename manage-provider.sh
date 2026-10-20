@@ -261,19 +261,26 @@ codex_update() {
   new=$(mktemp "$config.agent-status.XXXXXX") || exit 1
   CODEX_NEW="$new"
   trap 'rm -f "$CODEX_NEW"' EXIT
+  # Exactly one JSON document, as Codex reads it; an empty file is {}.
   { if [ -f "$config" ]; then cat "$config"; else printf '{}\n'; fi; } \
-    | jq --argjson install "$([ "$1" = install ] && echo true || echo false)" --argjson groups "$(codex_groups)" \
-      --arg s "$ROOT/scripts/agent" --arg r "$(cd "$ROOT/scripts/agent" && pwd -P)" "$codex_filter" > "$new" \
+    | jq -s --argjson install "$([ "$1" = install ] && echo true || echo false)" --argjson groups "$(codex_groups)" \
+      --arg s "$ROOT/scripts/agent" --arg r "$(cd "$ROOT/scripts/agent" && pwd -P)" \
+      'if length == 0 then {} elif length == 1 then .[0] else error("several JSON documents") end | '"$codex_filter" > "$new" \
+    && [ "$(jq -s length "$new" 2>/dev/null)" = 1 ] \
     || { echo "agent-status: refusing to edit $config: not a Codex hooks file" >&2; exit 1; }
   if [ -f "$config" ]; then
     # Unchanged (formatting aside): leave the file alone.
-    if [ "$(jq -cS . "$config")" = "$(jq -cS . "$new")" ]; then
+    if [ "$(jq -s -cS 'if length == 0 then [{}] else . end' "$config")" = "$(jq -s -cS . "$new")" ]; then
       echo "agent-status: $config already $([ "$1" = install ] && echo has the current hooks || echo has no agent-status hooks)"
       return 0
     fi
     moved=$(codex_moved "$config" "$new")
     backup=$(mktemp "$config.bak-$(date +%s).XXXXXX") || exit 1
     cp -p "$config" "$backup"
+    # jq writes the whole file in its own layout.
+    if [ -s "$config" ] && ! jq . "$config" | cmp -s - "$config"; then
+      echo "agent-status: $config is rewritten in jq's layout (2-space indent); its old text is in the backup"
+    fi
   fi
   replace_from_file "$config" "$new"
   # Keep only our newest 3 backups (the exact mktemp name pattern above).
@@ -351,10 +358,12 @@ KIMI
 agent-status: Codex runs a new or changed hook only once you trust it. If
   Codex says "Hooks need review" when it starts, choose "Review hooks" (or
   run /hooks) and trust the hook-event.sh ones.
-agent-status: in tmux, run Codex as `codex --no-daemon` (e.g. an alias). Its
-  shared background server runs the hooks of every session with the
-  environment of the terminal that started it, so they can't tell which
-  pane is theirs and report nothing.
+agent-status: in tmux, run Codex as `codex --no-daemon`. Its shared
+  background server runs the hooks of every session with the environment
+  of the terminal that started it, so they can't tell which pane is theirs
+  and report nothing. With an alias that adds --no-daemon, run
+  `codex agents` and `codex --remote` (which need that server) as
+  `command codex ...`.
 EOF
   fi
 else

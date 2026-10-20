@@ -5,7 +5,7 @@
 # Claude hooks (and Codex hooks, through hook-event.sh) pass the state alone,
 # with their payload on stdin (kind $AGENT_STATUS_KIND, else claude); for them
 # it also keeps the first prompt as @agent-auto-description and tracks open
-# permission prompts in @agent-asks.
+# permission prompts in @agent-asks (and, for Codex, @agent-settled).
 set -eu
 
 SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
@@ -34,8 +34,8 @@ esac
 sep=$'\037'
 read_pane() {
   IFS="$sep" read -r cur_pane pane_dead prev_state prev_unseen prev_instance prev_seq prev_kind \
-    prev_state_at prev_transcript prev_asks described now notify_timeout team_delay pane_active viewers clients \
-    socket client log_file log_time name <<< "$(tmux display -t "$TMUX_PANE" -p "#{pane_id}$sep#{pane_dead}$sep#{@agent-state}$sep#{@agent-unseen}$sep#{@agent-instance}$sep#{@agent-seq}$sep#{@agent-kind}$sep#{@agent-state-at}$sep#{@agent-transcript}$sep#{@agent-asks}$sep#{?@agent-auto-description,1,}$sep%s$sep#{@agent-notify-timeout}$sep#{@agent-notify-team-delay}$sep#{pane_active}$sep#{window_active_clients_list}$sep#{L/t:#{?client_control_mode,,#{client_name}=#{client_flags} }}$sep#{socket_path}$sep#{client_name}$sep$AGENT_LOG_FIELDS$sep#S / #W" 2>/dev/null || true)"
+    prev_state_at prev_transcript prev_asks prev_settled described now notify_timeout team_delay pane_active viewers clients \
+    socket client log_file log_time name <<< "$(tmux display -t "$TMUX_PANE" -p "#{pane_id}$sep#{pane_dead}$sep#{@agent-state}$sep#{@agent-unseen}$sep#{@agent-instance}$sep#{@agent-seq}$sep#{@agent-kind}$sep#{@agent-state-at}$sep#{@agent-transcript}$sep#{@agent-asks}$sep#{@agent-settled}$sep#{?@agent-auto-description,1,}$sep%s$sep#{@agent-notify-timeout}$sep#{@agent-notify-team-delay}$sep#{pane_active}$sep#{window_active_clients_list}$sep#{L/t:#{?client_control_mode,,#{client_name}=#{client_flags} }}$sep#{socket_path}$sep#{client_name}$sep$AGENT_LOG_FIELDS$sep#S / #W" 2>/dev/null || true)"
   # display -t on a vanished pane silently describes another one.
   [ "$cur_pane" = "$TMUX_PANE" ] && [ "$pane_dead" != 1 ] || exit 0
 }
@@ -57,7 +57,7 @@ fi
 # Claude hooks provide identity and event metadata on stdin; their commands
 # pass the state alone. Adapters always pass positional arguments and may leave
 # stdin open (Node execFile), so never read it for them: jq would block.
-hook_name="" background="" team="" transcript="" src="" agent="" tool="" prompt="" hook_message="" hook_error=""
+hook_name="" background="" team="" transcript="" src="" agent="" tool="" prompt="" hook_message="" hook_error="" call=""
 if [ "$#" -eq 1 ] && [ ! -t 0 ] && command -v jq >/dev/null 2>&1; then
   # background: in-flight subagents/workflows. Background shells and monitors
   # can run indefinitely and never resume the turn by themselves.
@@ -68,7 +68,10 @@ if [ "$#" -eq 1 ] && [ ! -t 0 ] && command -v jq >/dev/null 2>&1; then
   # as option-safe words. prompt: its start, on one line.
   # message, error: for the notification (StopFailure carries only its error
   # type: rate_limit, overloaded, ...), on one line.
-  metadata=$(jq -r 'def live(types): (.background_tasks // [])
+  # call (Codex): a hash of the tool's command (a shell command or a patch),
+  # the same in its PreToolUse, PermissionRequest and PostToolUse, which
+  # carry no common call id.
+  metadata=$(jq -r --arg kind "$kind" 'def live(types): (.background_tasks // [])
       | if type == "array" then . else [] end
       | map(select(type == "object" and ((.type // "") | IN(types))
           and ((.status // "running") | IN("running", "pending"))))
@@ -79,9 +82,12 @@ if [ "$#" -eq 1 ] && [ ! -t 0 ] && command -v jq >/dev/null 2>&1; then
       (.transcript_path // "" | tostring), (.source // "" | tostring),
       (.agent_id, .tool_name | . // "" | tostring | .[:128] | gsub("[^A-Za-z0-9._:-]"; "_")),
       (.prompt // "" | tostring | sub("^\\s+"; "") | .[:500] | gsub("[\n\r\t]"; " ") | gsub("[\u0000-\u001f\u007f]"; "")),
-      (.message // .title // "", .error // "error" | tostring | gsub("[\u0000-\u001f]"; " "))]
+      (.message // .title // "", .error // "error" | tostring | gsub("[\u0000-\u001f]"; " ")),
+      (if $kind == "codex" then .tool_input.command? // null else null end
+        | if type == "string" then .[:4096] + "#\(length)" | explode
+            | reduce .[] as $c (5381; (. * 33 + $c) % 4294967296) | tostring else "" end)]
     | join("\u001f")' 2>/dev/null || true)
-  IFS="$sep" read -r instance hook_name background team transcript src agent tool prompt hook_message hook_error <<< "$metadata"
+  IFS="$sep" read -r instance hook_name background team transcript src agent tool prompt hook_message hook_error call <<< "$metadata"
   [ -z "$hook_name" ] || kind="${kind:-claude}"
 fi
 # Auto-compaction restarts the session mid-turn (SessionStart source=compact)
@@ -113,6 +119,21 @@ read_pane
 # A Codex subagent's end only ends its own asks: it never wakes a pane that
 # has settled (its parent may have stopped before it).
 if [ "$hook_name" = SubagentStop ] && [ "$prev_state" != asking ]; then exit 0; fi
+# Nor do its other events: Codex subagents run in the background and may
+# outlive their parent's turn, and nothing settles the pane after them. An
+# ask from one still shows; @agent-settled keeps the settled pane's unseen
+# value until its asks end. A main-thread event settles or resumes the pane
+# itself.
+settled=""
+if [ -n "$compact" ]; then
+  settled="$prev_settled"
+elif [ "$kind" = codex ] && [ -n "$hook_name" ] && [ -n "$agent" ]; then
+  case "$prev_state" in
+    idle) [ "$state" = asking ] || exit 0; settled="${prev_unseen:-0}" ;;
+    asking) settled="$prev_settled" ;;
+  esac
+fi
+case "$settled" in ''|0|1) ;; *) settled=0 ;; esac
 if [ -n "$compact" ] && [ -n "$prev_state" ]; then
   state="$prev_state" unseen="${prev_unseen:-0}" raw_state=compact
 fi
@@ -146,11 +167,22 @@ case "$unseen" in 0|1) ;; *) unseen=0 ;; esac
 # A main-thread Task/Agent that returns with no subagent left running ends
 # the subagents' asks too: hook sets without PostToolUseFailure never report
 # an approved tool that failed.
+# Codex runs an agent's shell calls in parallel and names every one Bash, so
+# an ask there is "<agent_id>/<tool>#<call>@<opened>", call being the hash of
+# its command (none for a tool without one). Only its own call's return ends
+# it (a tool without a command: any return of that tool; write_stdin: the
+# Bash call it writes to), or a later call: siblings of the asking call
+# start with it, while a call starting a few seconds on comes after the
+# answer (a denied call returns nothing).
 asks="$prev_asks"
 if [ -n "$hook_name" ] && [ -z "$compact" ]; then
-  case "$raw_state" in
-    asking) case " $asks " in *" $agent/$tool "*) ;; *) asks="${asks:+$asks }$agent/$tool" ;; esac ;;
-    working)
+  case "$raw_state:$kind" in
+    asking:codex)
+      key="$agent/$tool${call:+#$call}"
+      case " $asks " in *" $key@"*) ;; *) asks="${asks:+$asks }$key@$now" ;; esac
+      ;;
+    asking:*) case " $asks " in *" $agent/$tool "*) ;; *) asks="${asks:+$asks }$agent/$tool" ;; esac ;;
+    working:*)
       subagents_done=""
       case "$hook_name:$agent:$tool" in
         PostToolUse*::Task|PostToolUse*::Agent) [ "$background" -gt 0 ] || subagents_done=1 ;;
@@ -159,13 +191,30 @@ if [ -n "$hook_name" ] && [ -z "$compact" ]; then
       for ask in $prev_asks; do
         # A prompt to the main thread ends every ask.
         [ "$hook_name:$agent" != UserPromptSubmit: ] || continue
-        case "$hook_name:$ask" in
-          UserPromptSubmit:"$agent/"*|PreToolUse:"$agent/"*|Stop*:"$agent/"*|SubagentStop:"$agent/"*|PostToolUse*:"$agent/$tool") continue ;;
-        esac
+        if [ "$kind" = codex ]; then
+          case "$hook_name:$ask" in
+            UserPromptSubmit:"$agent/"*|Stop*:"$agent/"*|SubagentStop:"$agent/"*) continue ;;
+            PostToolUse*:"$agent/$tool#$call@"*|PostToolUse*:"$agent/$tool@"*) continue ;;
+            PostToolUse*:"$agent/write_stdin"[#@]*) [ "$tool" != Bash ] || continue ;;
+            PreToolUse:"$agent/"*)
+              opened="${ask##*@}"
+              case "$opened:$now" in *[!0-9:]*|:*|*:) continue ;; esac
+              [ $((now - opened)) -lt 3 ] || continue
+              ;;
+          esac
+        else
+          case "$hook_name:$ask" in
+            UserPromptSubmit:"$agent/"*|PreToolUse:"$agent/"*|Stop*:"$agent/"*|SubagentStop:"$agent/"*|PostToolUse*:"$agent/$tool") continue ;;
+          esac
+        fi
         [ -z "$subagents_done" ] || [ -z "${ask%%/*}" ] || continue
         asks="${asks:+$asks }$ask"
       done
       [ -z "$asks" ] || state=asking
+      # A subagent's last ask on a settled pane ended: settled again.
+      if [ -z "$asks" ] && [ -n "$settled" ]; then
+        state=idle unseen="$settled" raw_state=idle settled=""
+      fi
       ;;
     *) asks="" ;;
   esac
@@ -202,6 +251,9 @@ if [ -n "$transcript" ] && [ "$transcript" != "$prev_transcript" ]; then
 fi
 if [ "$asks" != "$prev_asks" ]; then
   if [ -n "$asks" ]; then args+=("${w[@]}" @agent-asks "$asks" \;); else args+=("${w[@]}" -u @agent-asks \;); fi
+fi
+if [ "$settled" != "$prev_settled" ]; then
+  if [ -n "$settled" ]; then args+=("${w[@]}" @agent-settled "$settled" \;); else args+=("${w[@]}" -u @agent-settled \;); fi
 fi
 # Any state change cancels a pending delayed notification (see below), and
 # recomputes the window icon.
