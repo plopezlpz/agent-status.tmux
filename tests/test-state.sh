@@ -127,6 +127,18 @@ prompt oc-3 16 "a later prompt"
 [ "$(get "$p2" @agent-state):$(get "$p2" @agent-auto-description)" = "working:second session" ] || fail "a later prompt in the same root did not work, or changed the label"
 TMUX_PANE="$p2" "$CLEAR" quit oc-3 opencode </dev/null
 
+# only (MastraCode's tool hooks): a report reaches only a pane that already
+# holds its kind and instance.
+state "$p2" working "" 42 "" mastracode only
+[ -z "$(get "$p2" @agent-state)" ] || fail "only registered a plain pane"
+state "$p2" idle "" 42 "" mastracode reset
+state "$p2" working "" 43 "" mastracode only
+state "$p2" asking "" 42 "" pi only
+[ "$(get "$p2" @agent-state)" = idle ] || fail "only reported into another instance's pane"
+state "$p2" working "" 42 "" mastracode only
+[ "$(get "$p2" @agent-state):$(get "$p2" @agent-instance)" = working:mastracode:42 ] || fail "only did not report into its own pane"
+TMUX_PANE="$p2" "$CLEAR" quit 42 mastracode </dev/null
+
 if [ -n "$JQ" ]; then
   printf '%s\n' '{"session_id":"claude-1","hook_event_name":"SessionStart"}' | \
     TMUX_PANE="$p1" AGENT_STATUS_KIND=claude "$SET" idle

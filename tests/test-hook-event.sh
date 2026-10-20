@@ -175,9 +175,14 @@ mev idle Stop '"stop_reason":"aborted"' T2
 to=$pm; start mastracode "$TMP/m-h" detached
 send "$TMP/m-h" working '{"session_id":"h","hook_event_name":"PreToolUse","tool_name":"view"}'
 [ "$(shown "$pm")" = "idle:0" ] || fail "a headless mastracode reported into the TUI's pane: $(shown "$pm")"
+send "$TMP/m-h" blocked '{"session_id":"h","hook_event_name":"PermissionRequest","tool_name":"view"}'
+send "$TMP/m-h" idle '{"session_id":"h","hook_event_name":"AgentEnd","stop_reason":"complete"}'
+[ "$(shown "$pm")" = "idle:0" ] || fail "a headless mastracode's ask or end reached the TUI's pane: $(shown "$pm")"
 to=$(ctl new-window -d -P -F '#{pane_id}' 'exec sleep 600'); start mastracode "$TMP/m-h2" detached
 send "$TMP/m-h2" working '{"session_id":"h","hook_event_name":"PreToolUse","tool_name":"view"}'
 [ -z "$(get "$to" @agent-state)" ] || fail "a headless mastracode registered a plain pane"
+send "$TMP/m-h2" working '{"session_id":"h","hook_event_name":"UserPromptSubmit","user_message":"not mine"}'
+[ -z "$(get "$to" @agent-state)$(get "$to" @agent-auto-description)" ] || fail "an unregistered mastracode's prompt reached a plain pane"
 # Hooks installed by an older release; SessionEnd carries the thread id.
 ln -s "$ROOT/scripts/mastracode/agent-status.sh" "$TMP/legacy/mastracode.sh"
 send "$TMP/m" working '{"session_id":"T2","hook_event_name":"PreToolUse","tool_name":"view"}' "$TMP/legacy/mastracode.sh"

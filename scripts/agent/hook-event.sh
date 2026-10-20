@@ -144,7 +144,7 @@ if [ "$kind" = codex ]; then
 fi
 
 payload=$(cat 2>/dev/null || true)
-instance="" event="" message="" source="" reason="" stop="" prompt=""
+only="" instance="" event="" message="" source="" reason="" stop="" prompt=""
 if command -v jq >/dev/null 2>&1; then
   # One line: set-state and auto-desc turn newlines into spaces and drop
   # control characters anyway. The prompt: Kimi sends its content parts,
@@ -164,9 +164,13 @@ if [ "$kind" = mastracode ]; then
   # MastraCode's session_id is "session-init" until its first thread exists,
   # then follows the thread (/new, a switch), with no new SessionStart: its
   # process is the identity. Only that process's TUI fires SessionStart, so
-  # every other event reports only into the pane it registered.
+  # every other event reports only into the pane it registered. Tool hooks,
+  # the hot path, leave that to set-state's own read of the pane (only); a
+  # prompt, which titles the pane first, and an end check it here.
   instance="$agent_pid"
-  if [ "$action" != session ]; then
+  if [ "$action" != session ] && [ "$action" != end ] && [ -z "$prompt" ]; then
+    only=only
+  elif [ "$action" != session ]; then
     registered=$(tmux display -p -t "$TMUX_PANE" '#{@agent-kind}:#{@agent-instance}' 2>/dev/null || true)
     if [ "$registered" != "mastracode:${instance:+mastracode:$instance}" ]; then
       # MastraCode exits without waiting for its SessionEnd hook, which may
@@ -221,12 +225,12 @@ case "$action" in
     ;;
   working|tool)
     [ -z "$prompt" ] || "$SCRIPT_DIR/auto-desc.sh" set "$prompt" </dev/null || true
-    "$SCRIPT_DIR/set-state.sh" working "" "$instance" "" "$kind" </dev/null
+    "$SCRIPT_DIR/set-state.sh" working "" "$instance" "" "$kind" "$only" </dev/null
     ;;
-  blocked) "$SCRIPT_DIR/set-state.sh" asking "$message" "$instance" "" "$kind" </dev/null ;;
-  idle) "$SCRIPT_DIR/set-state.sh" finished "" "$instance" "" "$kind" </dev/null ;;
+  blocked) "$SCRIPT_DIR/set-state.sh" asking "$message" "$instance" "" "$kind" "$only" </dev/null ;;
+  idle) "$SCRIPT_DIR/set-state.sh" finished "" "$instance" "" "$kind" "$only" </dev/null ;;
   # The user's own Esc: settle without claiming an unseen completion.
-  interrupt) "$SCRIPT_DIR/set-state.sh" idle "" "$instance" "" "$kind" </dev/null ;;
+  interrupt) "$SCRIPT_DIR/set-state.sh" idle "" "$instance" "" "$kind" "$only" </dev/null ;;
   end)
     [ -n "$instance" ] || [ "$kind" = mastracode ] || exit 0
     "$SCRIPT_DIR/clear-state.sh" "${reason:-exit}" "$instance" "$kind" </dev/null

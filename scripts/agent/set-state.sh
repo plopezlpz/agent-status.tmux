@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Update the current pane's agent state and optionally notify.
-# Usage: set-state.sh <working|asking|finished|idle> [message] [instance] [seq] [kind] [reset|bind]
-# `bind` is a reset unless the pane already reports that instance.
+# Usage: set-state.sh <working|asking|finished|idle> [message] [instance] [seq] [kind] [reset|bind|only]
+# `bind` is a reset unless the pane already reports that instance; `only`
+# reports only into a pane that already does.
 # `finished` is stored as idle + unseen: an idle completion not yet seen.
 # Claude hooks (and Codex hooks, through hook-event.sh) pass the state alone,
 # with their payload on stdin (kind $AGENT_STATUS_KIND, else claude); for them
@@ -46,7 +47,7 @@ read_pane() {
 # without seq or reset) from one read, before stdin, jq or the lock. Identity
 # cannot change then either, since a pane with an instance rejects any other.
 # A Claude ask still counts: it records who asks.
-if [ "$unseen" = 0 ] && [ -z "$seq$reset" ] && { [ "$state" = working ] || [ "$#" -gt 1 ]; }; then
+if [ "$unseen" = 0 ] && [ -z "$seq" ] && { [ -z "$reset" ] || [ "$reset" = only ]; } && { [ "$state" = working ] || [ "$#" -gt 1 ]; }; then
   read_pane
   case "$prev_state_at" in ''|*[!0-9]*) ;; *)
     if [ "$state:0" = "$prev_state:$prev_unseen" ] && [ -n "$prev_instance" ] && [ "${kind:-$prev_kind}" = "$prev_kind" ]; then
@@ -163,7 +164,10 @@ if [ -z "$prev_kind" ] && [ -n "$kind" ] && [ "$kind:$prev_instance" = "$instanc
 # plugin the root session of each prompt: a pane already bound to it keeps
 # its label and state. A real rebind also drops the old session's label.
 rebind=""
-if [ "$reset" = bind ]; then
+if [ "$reset" = only ]; then
+  [ -n "$instance" ] && [ "$kind:$instance" = "$prev_kind:$prev_instance" ] || exit 0
+  reset=""
+elif [ "$reset" = bind ]; then
   [ -n "$instance" ] && [ "$instance" != "$same" ] || exit 0
   reset=reset rebind=1
 fi
