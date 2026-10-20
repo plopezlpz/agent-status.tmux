@@ -41,13 +41,22 @@ clean_text() {
 }
 
 # agent_auto_text PROMPT: AUTO, a first prompt as @agent-auto-description:
-# cleaned, blanks squeezed, at most 50 characters (49 and an ellipsis).
+# cleaned, blanks squeezed, at most 50 characters (49 and an ellipsis), as a
+# tmux argument (tmux_literal).
 agent_auto_text() {
   utf8_cut 500 "$1"; clean_text "$CUT"  # only the start of a long prompt shows
   AUTO=$CLEAN
   while [[ $AUTO == *"  "* ]]; do AUTO=${AUTO//  / }; done
   utf8_cut 50 "$AUTO"
   [ "$CUT" = "$AUTO" ] || { utf8_cut 49 "$AUTO"; AUTO="${CUT}…"; }
+  tmux_literal "$AUTO"; AUTO=$LITERAL
+}
+
+# tmux_literal TEXT: LITERAL, TEXT as a tmux argument that stays text: tmux
+# reads an argument ending in ";" as a command separator unless it is "\;".
+tmux_literal() {
+  LITERAL=$1
+  case "$1" in *\;) LITERAL="${1%;}\\;" ;; esac
 }
 
 # agent_shown STATE UNSEEN: SHOWN, the state as UIs show it: an idle pane with

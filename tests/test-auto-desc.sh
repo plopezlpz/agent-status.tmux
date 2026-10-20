@@ -49,6 +49,14 @@ unset_desc
 bash "$SCRIPT" set "    "
 [ -z "$(get)" ] || fail "empty input wrote an option"
 
+# tmux would read a trailing ";" as a command separator.
+unset_desc
+bash "$SCRIPT" set ";"
+[ "$(get)" = ";" ] || fail "';' prompt not kept: [$(get)]"
+unset_desc
+bash "$SCRIPT" set 'run it\;'
+[ "$(get)" = 'run it\;' ] || fail "trailing '\\;' not kept: [$(get)]"
+
 bash "$SCRIPT" set $'safe\033bad\037end'
 case "$(get)" in *$'\033'*|*$'\037'*) fail "control characters were retained" ;; esac
 unset_desc

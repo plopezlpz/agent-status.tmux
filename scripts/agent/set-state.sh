@@ -184,17 +184,18 @@ fi
 if [ "$asks" != "$prev_asks" ]; then
   if [ -n "$asks" ]; then args+=("${w[@]}" @agent-asks "$asks" \;); else args+=("${w[@]}" -u @agent-asks \;); fi
 fi
-# The first prompt describes the pane until a new session.
-if [ "$hook_name" = UserPromptSubmit ] && [ -z "$described" ]; then
-  agent_auto_text "$prompt"
-  [ -z "$AUTO" ] || args+=("${w[@]}" @agent-auto-description "$AUTO" \;)
-elif [ "$hook_name" = SessionStart ] && [ -z "$compact" ] && [ -n "$described" ]; then
-  args+=("${w[@]}" -u @agent-auto-description \;)
-fi
 # Any state change cancels a pending delayed notification (see below), and
 # recomputes the window icon.
 if [ "$changed" -eq 1 ]; then
-  args+=("${w[@]}" @agent-notify-token "$$" \; set-option -wF -t "$TMUX_PANE" @agent-icon "$AGENT_ICON")
+  args+=("${w[@]}" @agent-notify-token "$$" \; set-option -wF -t "$TMUX_PANE" @agent-icon "$AGENT_ICON" \;)
+fi
+# The first prompt describes the pane until a new session. It is free text,
+# so it goes last: tmux skips the rest of a chain after a failed command.
+if [ "$hook_name" = UserPromptSubmit ] && [ -z "$described" ]; then
+  agent_auto_text "$prompt"
+  [ -z "$AUTO" ] || args+=("${w[@]}" @agent-auto-description "$AUTO")
+elif [ "$hook_name" = SessionStart ] && [ -z "$compact" ] && [ -n "$described" ]; then
+  args+=("${w[@]}" -u @agent-auto-description)
 fi
 # The pane vanished since the read: nothing left to update.
 [ "${#args[@]}" -eq 0 ] || tmux "${args[@]}" 2>/dev/null || exit 0

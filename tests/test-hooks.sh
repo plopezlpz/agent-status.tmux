@@ -262,6 +262,16 @@ headless "$p6" '{"prompt":"headless task"}' "$AGENT/auto-desc.sh" set
 [ -z "$(get "$p6" @agent-auto-description)" ] || fail "headless claude -p described the pane"
 tmux kill-pane -t "$p6"
 
+# ----- a first prompt that tmux could read as a command separator ----------
+w7=$(tmux new-window -d -P -F '#{window_id}' -t t:)
+p7=$(tmux display -p -t "$w7" '#{pane_id}')
+claude "$p7" '{"session_id":"c-7","hook_event_name":"SessionStart","source":"startup"}' idle
+claude "$p7" '{"session_id":"c-7","hook_event_name":"UserPromptSubmit","prompt":" ; "}' working
+[ "$(get "$p7" @agent-auto-description)" = ";" ] || fail "a ';' prompt was not kept: [$(get "$p7" @agent-auto-description)]"
+icon_is "$w7" working || fail "a ';' prompt left the window icon: $(icon "$w7")"
+grep -F "pane=$p7 idle->working" "$TMP/agent.log" >/dev/null || fail "a ';' prompt was not logged"
+tmux kill-window -t "$w7"
+
 # ----- a permission prompt outlasts other tools' hooks --------------------
 p6=$(tmux split-window -d -P -F '#{pane_id}' -t "$p1")
 ev(){ claude "$p6" "{\"session_id\":\"c-4\",\"hook_event_name\":\"$1\"${3:+,$3}}" "$2"; }

@@ -40,6 +40,8 @@ alive(){ [ -s "$TMP/pi-pid" ] && kill -0 "$(cat "$TMP/pi-pid")" 2>/dev/null; }
 # are rejected.
 "$DESCRIBE" set "$p1" $'  safe\033[31m label\tdata '
 [ "$(title)" = 'safe[31m label data' ] || fail "title not set cleaned: $(title)"
+"$DESCRIBE" set "$p1" 'fix it;'
+[ "$(title)" = 'fix it;' ] || fail "a trailing ';' was read as a tmux separator: $(title)"
 "$DESCRIBE" set "$p1" '  '
 [ -z "$(title)" ] || fail "a blank title did not clear it"
 rc=0; "$DESCRIBE" set '../../escape' x 2>/dev/null || rc=$?

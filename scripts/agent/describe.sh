@@ -31,7 +31,8 @@ set_title() {
   pane_alive "$target" || { echo "describe.sh: pane $target is gone" >&2; return 1; }
   clean_text "$2"
   if [ -n "$CLEAN" ]; then
-    tmux set-option -p -t "$target" @agent-description "$CLEAN"
+    tmux_literal "$CLEAN"
+    tmux set-option -p -t "$target" @agent-description "$LITERAL"
   else
     tmux set-option -p -u -t "$target" @agent-description
   fi
