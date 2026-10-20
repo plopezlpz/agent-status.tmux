@@ -133,9 +133,17 @@ fi
 # Routine events start no process: tmux tests and recomputes what it can
 # itself. Scripts run with run-shell -b, so a slow one never blocks tmux's
 # command queue.
+# background CMD: BG, `run-shell -b CMD` as tmux parses it. tmux unquotes the
+# string, then run-shell expands formats and hands the result to sh; _agent
+# is the scripts dir quoted for both, so any path works.
+printf -v _agent '%q' "$SCRIPTS/agent"; _agent=${_agent//#/##}
+background() {
+  local s=${1//\\/\\\\}; s=${s//\"/\\\"}; s=${s//\$/\\\$}
+  BG="run-shell -b \"$s\""
+}
 # Mark an unseen idle completion as seen when the pane gets focus.
-add_hook pane-focus-in \
-  "if -F '#{&&:#{==:#{@agent-state},idle},#{==:#{@agent-unseen},1}}' \"run-shell -b '$SCRIPTS/agent/clear-finished.sh \\\"#{pane_id}\\\"'\""
+background "$_agent/clear-finished.sh #{pane_id}"
+add_hook pane-focus-in "if -F '#{&&:#{==:#{@agent-state},idle},#{==:#{@agent-unseen},1}}' { $BG }"
 
 # Recompute the window icon when panes leave or join a window: kill-pane,
 # join-pane/move-pane and cross-window swap-pane change both windows'
@@ -147,5 +155,5 @@ add_hook window-layout-changed "$_icon"
 add_hook pane-moved "$_icon"
 # A remain-on-exit pane fires pane-died instead and keeps its options: clear
 # them. By then #{pane_id} may name another pane, so use the hook_* formats.
-add_hook pane-died \
-  "run-shell -b '$SCRIPTS/agent/clear-pane.sh \"#{hook_pane}\" \"#{hook_window}\"'"
+background "$_agent/clear-pane.sh #{hook_pane} #{hook_window}"
+add_hook pane-died "$BG"

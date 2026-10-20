@@ -42,8 +42,9 @@ case "$PROVIDER" in
 esac
 
 if [ "$PROVIDER" = claude ]; then
-  # Claude's installer would create ~/.claude/settings.json, so "found" means its home exists.
-  if [ "$ACTION" = found ]; then [ -d "$(dirname "${CLAUDE_SETTINGS:-$HOME/.claude/settings.json}")" ]; exit; fi
+  # Claude's installer would create its settings.json, so "found" means the
+  # directory for it exists (~/.claude, or $CLAUDE_CONFIG_DIR as Claude reads it).
+  if [ "$ACTION" = found ]; then [ -d "$(dirname "${CLAUDE_SETTINGS:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json}")" ]; exit; fi
   exec bash "$ROOT/install-claude-hooks.sh" "$ACTION"
 fi
 

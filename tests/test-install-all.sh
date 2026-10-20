@@ -8,7 +8,7 @@ TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 fail(){ echo "FAIL: $1" >&2; exit 1; }
 command -v jq >/dev/null 2>&1 || { echo "SKIP: install all (jq missing)"; exit 0; }
 unset PI_EXTENSIONS_DIR PI_CODING_AGENT_DIR PI_CONFIG_DIR OMP_EXTENSIONS_DIR OPENCODE_CONFIG_DIR \
-  KILO_CONFIG_DIR KIMI_CODE_HOME MASTRACODE_HOME CLAUDE_SETTINGS
+  KILO_CONFIG_DIR KIMI_CODE_HOME MASTRACODE_HOME CLAUDE_SETTINGS CLAUDE_CONFIG_DIR
 
 # Only Kilo and Claude are installed.
 export HOME="$TMP/home"; mkdir -p "$HOME/.config/kilo" "$HOME/.claude"
@@ -31,6 +31,9 @@ bash "$ROOT/manage-provider.sh" uninstall >/dev/null 2>&1 || fail "uninstall all
 export HOME="$TMP/home2"; mkdir -p "$HOME"
 bash "$ROOT/manage-provider.sh" install >/dev/null 2>&1 || fail "install all with no agents failed"
 [ ! -e "$HOME/.claude" ] || fail "created ~/.claude for a machine without Claude"
+# Claude with its config moved (CLAUDE_CONFIG_DIR) is found there.
+mkdir "$TMP/claude-config"
+CLAUDE_CONFIG_DIR="$TMP/claude-config" bash "$ROOT/manage-provider.sh" found claude || fail "Claude under CLAUDE_CONFIG_DIR not found"
 
 # Nothing found: says so, and changes nothing.
 out=$(bash "$ROOT/manage-provider.sh" install </dev/null 2>&1) || fail "install all with nothing found failed"
