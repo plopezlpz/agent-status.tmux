@@ -326,6 +326,17 @@ ev SessionStart idle '"source":"compact"'
 [ "$(get "$p6" @agent-auto-description)" = "check the logs" ] || fail "compaction cleared the title"
 ev SessionStart idle '"source":"clear"'
 [ -z "$(get "$p6" @agent-auto-description)" ] || fail "a new session kept the title"
+# Text pasted into the prompt is not the title, unless it is all there is.
+ev UserPromptSubmit working '"prompt":"<pasted_content id=\"1\">\nTraceback (most recent call last):\n</pasted_content id=\"1\">\nwhy does this fail?"'
+[ "$(get "$p6" @agent-auto-description)" = "why does this fail?" ] || fail "pasted text became the title: [$(get "$p6" @agent-auto-description)]"
+ev SessionStart idle '"source":"clear"'
+ev UserPromptSubmit working '"prompt":"<pasted_content id=\"2\">\nTraceback here\n</pasted_content id=\"2\">\n"'
+[ "$(get "$p6" @agent-auto-description)" = "Traceback here" ] || fail "a paste alone kept its markers: [$(get "$p6" @agent-auto-description)]"
+# A title the session has wins, from its start or its next prompt.
+ev SessionStart idle '"source":"resume","session_title":"fix login bug"'
+[ "$(get "$p6" @agent-auto-description)" = "fix login bug" ] || fail "a resumed session's title was not shown: [$(get "$p6" @agent-auto-description)]"
+ev UserPromptSubmit working '"prompt":"and the tests","session_title":"fix login and tests"'
+[ "$(get "$p6" @agent-auto-description)" = "fix login and tests" ] || fail "a renamed session kept its old title: [$(get "$p6" @agent-auto-description)]"
 tmux kill-pane -t "$p6"
 
 # ----- locks: stale and wedged holders cannot block hooks -----------------

@@ -58,7 +58,7 @@ fi
 # Claude hooks provide identity and event metadata on stdin; their commands
 # pass the state alone. Adapters always pass positional arguments and may leave
 # stdin open (Node execFile), so never read it for them: jq would block.
-hook_name="" background="" team="" transcript="" src="" agent="" tool="" prompt="" hook_message="" hook_error="" call=""
+hook_name="" background="" team="" transcript="" src="" agent="" tool="" prompt="" hook_message="" hook_error="" call="" title=""
 if [ "$#" -eq 1 ] && [ ! -t 0 ] && command -v jq >/dev/null 2>&1; then
   # background: in-flight subagents/workflows. Background shells and monitors
   # can run indefinitely and never resume the turn by themselves.
@@ -66,29 +66,36 @@ if [ "$#" -eq 1 ] && [ ! -t 0 ] && command -v jq >/dev/null 2>&1; then
   # cannot hold a Stop, but each message from one resumes the lead turn.
   # Entry types are friendly labels, or the raw discriminant when unknown.
   # agent, tool: who asks or proceeds (agent_id: empty on the main thread),
-  # as option-safe words. prompt: its start, on one line.
+  # as option-safe words. prompt: its start, on one line, without the text
+  # pasted into it (Claude marks it) unless that is all there is.
   # message, error: for the notification (StopFailure carries only its error
   # type: rate_limit, overloaded, ...), on one line.
   # call (Codex): a hash of the tool's command (a shell command or a patch),
   # the same in its PreToolUse, PermissionRequest and PostToolUse, which
-  # carry no common call id.
+  # carry no common call id. title (Claude): the session's own title
+  # (--name, /rename), if it has one.
   metadata=$(jq -r --arg kind "$kind" 'def live(types): (.background_tasks // [])
       | if type == "array" then . else [] end
       | map(select(type == "object" and ((.type // "") | IN(types))
           and ((.status // "running") | IN("running", "pending"))))
       | length | tostring;
+    def line: tostring | .[:500] | gsub("[\n\r\t]"; " ") | gsub("[\u0000-\u001f\u007f]"; "");
     [.session_id // "", .hook_event_name // "",
       live("subagent", "workflow", "local_agent", "local_workflow"),
       live("teammate", "in_process_teammate"),
       (.transcript_path // "" | tostring), (.source // "" | tostring),
       (.agent_id, .tool_name | . // "" | tostring | .[:128] | gsub("[^A-Za-z0-9._:-]"; "_")),
-      (.prompt // "" | tostring | sub("^\\s+"; "") | .[:500] | gsub("[\n\r\t]"; " ") | gsub("[\u0000-\u001f\u007f]"; "")),
+      (.prompt // "" | tostring
+        | (gsub("<pasted_content[^>]*>[\\s\\S]*?</pasted_content[^>]*>"; " ") | select(test("\\S")))
+          // gsub("</?pasted_content[^>]*>"; " ")
+        | sub("^\\s+"; "") | line),
       (.message // .title // "", .error // "error" | tostring | gsub("[\u0000-\u001f]"; " ")),
       (if $kind == "codex" then .tool_input.command? // null else null end
         | if type == "string" then .[:4096] + "#\(length)" | explode
-            | reduce .[] as $c (5381; (. * 33 + $c) % 4294967296) | tostring else "" end)]
+            | reduce .[] as $c (5381; (. * 33 + $c) % 4294967296) | tostring else "" end),
+      (.session_title // "" | line)]
     | join("\u001f")' 2>/dev/null || true)
-  IFS="$sep" read -r instance hook_name background team transcript src agent tool prompt hook_message hook_error call <<< "$metadata"
+  IFS="$sep" read -r instance hook_name background team transcript src agent tool prompt hook_message hook_error call title <<< "$metadata"
   [ -z "$hook_name" ] || kind="${kind:-claude}"
 fi
 # Auto-compaction restarts the session mid-turn (SessionStart source=compact)
@@ -270,11 +277,17 @@ if [ "$changed" -eq 1 ]; then
   args+=("${w[@]}" @agent-notify-token "$$" \; set-option -wF -t "$TMUX_PANE" @agent-icon "$AGENT_ICON" \;)
 fi
 # The first prompt describes the pane until a new session (a Codex
-# subagent's prompt doesn't). It is free text, so it goes last: tmux skips the
-# rest of a chain after a failed command.
-if [ "$hook_name" = UserPromptSubmit ] && [ -z "$agent" ] && [ -z "$described" ]; then
-  agent_auto_text "$prompt"
-  [ -z "$AUTO" ] || args+=("${w[@]}" @agent-auto-description "$AUTO")
+# subagent's prompt doesn't), and a title the session has (Claude: --name,
+# /rename) instead, from its start or the next prompt. It is free text, so it
+# goes last: tmux skips the rest of a chain after a failed command.
+text=""
+if [ -z "$agent" ]; then
+  case "$hook_name" in SessionStart|UserPromptSubmit) text="$title" ;; esac
+  [ -n "$text" ] || [ "$hook_name" != UserPromptSubmit ] || [ -n "$described" ] || text="$prompt"
+fi
+[ -z "$text" ] || agent_auto_text "$text"
+if [ -n "$text" ] && [ -n "$AUTO" ]; then
+  args+=("${w[@]}" @agent-auto-description "$AUTO")
 elif [ -n "$described" ] && { [ -n "$rebind" ] || { [ "$hook_name" = SessionStart ] && [ -z "$compact" ]; }; }; then
   args+=("${w[@]}" -u @agent-auto-description)
 fi
