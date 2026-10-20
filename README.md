@@ -64,7 +64,7 @@ UTC offset (`2026-10-20T11:09:03+0300`) instead of UTC (`...Z`).
 |---|---|---|
 | pi | | 1.1.0 (needs 0.84.4+) |
 | OMP (Oh My Pi) | | 18.8.9 |
-| OpenCode | `tui.jsonc` must be plain JSON (comments make install refuse) | 2.0.25 |
+| OpenCode | 1.x: `tui.jsonc` must be plain JSON (comments make install refuse). 2.x: the pane shows the active tab's session; `opencode mini` doesn't report | 1.19.3, 2.0.32 (2.x turns not run live) |
 | Kimi Code | | 2.1.1 |
 | MastraCode | | not verified locally |
 | Kilo Code | a TUI attached to a `kilo daemon`, or `kilo attach`, doesn't report: run it with `KILO_NO_DAEMON=1` while a daemon runs; suggestion and network prompts don't show as asking | 7.8.15 (no turn run) |

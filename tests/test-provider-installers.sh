@@ -28,6 +28,7 @@ bash "$TMP/plugin-alias/manage-provider.sh" install pi >/dev/null
 [ -L "$PI_EXTENSIONS_DIR/agent-status.ts" ] || fail "pi link missing"
 [ -L "$PI_CONFIG_DIR/agent/extensions/agent-status.ts" ] || fail "omp link missing"
 [ -L "$OPENCODE_CONFIG_DIR/plugins/agent-status.tmux.js" ] || fail "opencode plugin missing"
+[ "$(readlink "$OPENCODE_CONFIG_DIR/plugins/agent-status.tmux")" = "$ROOT/scripts/opencode/v2" ] || fail "opencode 2 plugin directory missing"
 [ "$(jq '[.plugin[] | select(. == "./agent-status-tui.js")] | length' "$OPENCODE_CONFIG_DIR/tui.jsonc")" -eq 1 ] || fail "opencode config duplicated"
 [ "$(jq -r .theme "$OPENCODE_CONFIG_DIR/tui.jsonc")" = safe ] || fail "opencode changed unrelated config"
 mode=$(stat -c %a "$OPENCODE_CONFIG_DIR/tui.jsonc" 2>/dev/null || stat -f %Lp "$OPENCODE_CONFIG_DIR/tui.jsonc")
@@ -50,7 +51,7 @@ grep -A1 '^event = "Interrupt"$' "$KIMI_CODE_HOME/config.toml" | grep -q "' kimi
 
 for provider in pi omp opencode kilo kimi mastracode; do bash "$ROOT/manage-provider.sh" uninstall "$provider" >/dev/null; done
 [ ! -e "$PI_EXTENSIONS_DIR/agent-status.ts" ] || fail "pi link remained"
-for link in plugins/agent-status.tmux.js agent-status-tui.js; do
+for link in plugins/agent-status.tmux.js plugins/agent-status.tmux agent-status-tui.js; do
   [ ! -e "$OPENCODE_CONFIG_DIR/$link" ] && [ ! -L "$OPENCODE_CONFIG_DIR/$link" ] || fail "opencode $link remained"
 done
 [ "$(jq -r .theme "$OPENCODE_CONFIG_DIR/tui.jsonc")" = safe ] || fail "opencode uninstall changed unrelated config"
@@ -71,7 +72,7 @@ done
     bash "$ROOT/manage-provider.sh" found "$provider" || fail "$provider under XDG_CONFIG_HOME not found"
     bash "$ROOT/manage-provider.sh" install "$provider" >/dev/null
   done
-  [ -L "$XDG_CONFIG_HOME/opencode/plugins/agent-status.tmux.js" ] || fail "opencode not installed under XDG_CONFIG_HOME"
+  [ -L "$XDG_CONFIG_HOME/opencode/plugins/agent-status.tmux" ] || fail "opencode not installed under XDG_CONFIG_HOME"
   [ -L "$XDG_CONFIG_HOME/kilo/plugin/agent-status.tmux.js" ] || fail "kilo not installed under XDG_CONFIG_HOME"
   [ ! -e "$HOME/.config" ] || fail "an installer wrote to ~/.config despite XDG_CONFIG_HOME"
 )
@@ -85,7 +86,7 @@ OPENCODE_CONFIG_DIR="$tuple_oc" bash "$ROOT/manage-provider.sh" uninstall openco
 
 bad_oc="$TMP/bad-opencode"; mkdir -p "$bad_oc"; printf '{ // comment\n}\n' > "$bad_oc/tui.jsonc"
 if OPENCODE_CONFIG_DIR="$bad_oc" bash "$ROOT/manage-provider.sh" install opencode >/dev/null 2>&1; then fail "opencode accepted unsupported JSONC"; fi
-[ ! -e "$bad_oc/plugins/agent-status.tmux.js" ] && [ ! -e "$bad_oc/agent-status-tui.js" ] || fail "opencode left links after config refusal"
+[ ! -e "$bad_oc/plugins/agent-status.tmux.js" ] && [ ! -e "$bad_oc/plugins/agent-status.tmux" ] && [ ! -e "$bad_oc/agent-status-tui.js" ] || fail "opencode left links after config refusal"
 bad_kimi="$TMP/bad-kimi"; mkdir -p "$bad_kimi"; printf 'keep = true\n# >>> agent-status.tmux kimi integration\n' > "$bad_kimi/config.toml"
 if KIMI_CODE_HOME="$bad_kimi" bash "$ROOT/manage-provider.sh" install kimi >/dev/null 2>&1; then fail "kimi accepted unmatched markers"; fi
 grep -F 'keep = true' "$bad_kimi/config.toml" >/dev/null || fail "kimi damaged refused config"

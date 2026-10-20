@@ -1,4 +1,4 @@
-// agent-status.tmux — bind OpenCode's selected root session to this pane.
+// agent-status.tmux — bind OpenCode 1.x's selected root session to this pane.
 import { execFile, execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { dirname, resolve } from "node:path";

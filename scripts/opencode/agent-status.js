@@ -1,4 +1,4 @@
-// agent-status.tmux — OpenCode lifecycle adapter.
+// agent-status.tmux — OpenCode 1.x lifecycle adapter.
 import { askingEvents, childStates, interactive, lifecycle, sessionID, statusState, stoppedSession, workingEvents } from "./lifecycle.js";
 
 const pane = process.env.TMUX_PANE;
@@ -46,3 +46,8 @@ export const AgentStatusPlugin = async () => {
     },
   };
 };
+
+// OpenCode 1.x calls `server`. OpenCode 2 loads this file too, in its shared
+// background service, which belongs to no pane: there `setup` does nothing,
+// and the TUI plugin (v2/tui.js) reports instead.
+export default { id: "agent-status.tmux.opencode", server: AgentStatusPlugin, setup: () => {} };

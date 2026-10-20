@@ -145,9 +145,13 @@ case "$PROVIDER" in
     src="$ROOT/scripts/omp/agent-status.ts"; dest="${OMP_EXTENSIONS_DIR:-$base/agent/extensions}/agent-status.ts"
     ;;
   opencode)
+    # OpenCode 1.x: a server plugin and a TUI plugin listed in tui.jsonc.
+    # OpenCode 2: a plugin directory; it ignores tui.jsonc and loads the 1.x
+    # server plugin as a no-op. Both are installed, so either version works.
     base="${OPENCODE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/opencode}"
     src="$ROOT/scripts/opencode/agent-status.js"; dest="$base/plugins/agent-status.tmux.js"
     tui_src="$ROOT/scripts/opencode/agent-status-tui.js"; tui_dest="$base/agent-status-tui.js"; config="$base/tui.jsonc"
+    v2_src="$ROOT/scripts/opencode/v2"; v2_dest="$base/plugins/agent-status.tmux"
     ;;
   kilo)
     base="${KILO_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/kilo}"
@@ -305,10 +309,10 @@ if [ "$ACTION" = install ]; then
       if [ -f "$config" ]; then
         jq -e 'type == "object" and ((.plugin // []) | type == "array")' "$config" >/dev/null 2>&1 || { echo "agent-status: refusing invalid JSON/JSONC plugin config $config" >&2; exit 1; }
       fi
-      link_validate "$src" "$dest"; link_validate "$tui_src" "$tui_dest"
+      link_validate "$src" "$dest"; link_validate "$tui_src" "$tui_dest"; link_validate "$v2_src" "$v2_dest"
       # shellcheck disable=SC2016 # jq variables, not shell variables
       json_update "$config" '(.plugin // []) as $p | .plugin = (if any($p[]; . == "./agent-status-tui.js" or (type == "array" and .[0] == "./agent-status-tui.js")) then $p else $p + ["./agent-status-tui.js"] end)'
-      link_install "$src" "$dest"; link_install "$tui_src" "$tui_dest"
+      link_install "$src" "$dest"; link_install "$tui_src" "$tui_dest"; link_install "$v2_src" "$v2_dest"
       ;;
     kimi)
       require_jq
@@ -370,7 +374,7 @@ else
   case "$PROVIDER" in
     opencode)
       if [ -e "$config" ] || [ -L "$config" ]; then require_regular_config "$config"; json_update "$config" 'if type != "object" then error("root must be object") elif (.plugin | type) == "array" then .plugin |= map(select(. != "./agent-status-tui.js" and (type != "array" or .[0] != "./agent-status-tui.js"))) else . end'; fi
-      link_remove "$src" "$dest"; link_remove "$tui_src" "$tui_dest"
+      link_remove "$src" "$dest"; link_remove "$tui_src" "$tui_dest"; link_remove "$v2_src" "$v2_dest"
       ;;
     kimi)
       if [ -e "$config" ] || [ -L "$config" ]; then

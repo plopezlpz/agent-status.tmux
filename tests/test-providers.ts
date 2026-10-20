@@ -157,13 +157,20 @@ process.env.AGENT_STATUS_OMP_RETRY_GRACE_MS = "5";
 }
 process.env.TMUX_PANE = "%2";
 {
-  const { AgentStatusPlugin } = await import(installed("opencode", "plugins"));
+  const mod = await import(installed("opencode", "plugins"));
+  const { AgentStatusPlugin } = mod;
+  // OpenCode 1.x calls the default export's server(); OpenCode 2 its setup(),
+  // in a shared service that belongs to no pane.
+  check(mod.default?.id && mod.default.server === AgentStatusPlugin && typeof mod.default.setup === "function", "OpenCode exports a definition for OpenCode 1.x and 2");
+  mod.default.setup({});
   const argv = process.argv;
   process.argv = [argv[0], argv[1], "serve", "--port", "4096"];
   check(Object.keys(await AgentStatusPlugin()).length === 0, "OpenCode headless `opencode serve` registers no hooks");
   process.argv = argv;
   const plugin = await AgentStatusPlugin();
   const event = (type: string, properties: any) => plugin.event({ event: { type, properties } });
+  await sleep(100);
+  check(since().length === 0, "OpenCode 2's setup() reports nothing");
   let sentinel = 0;
   // The chain is serialized, so a sentinel line proves every earlier call ran.
   const drain = async () => { const id = `sentinel-${++sentinel}`; await event("session.idle", { sessionID: id }); check(await waitFor(id), "OpenCode chain drains"); return since().filter(l => !l.includes("sentinel-")); };
@@ -361,6 +368,101 @@ process.env.TMUX_PANE = "%4";
   executable(resolve(late, "set-state.sh"), `#!/bin/sh\necho "set-state.sh|$3|late" >> "$AGENT_TEST_LOG"\n`);
   await sleep(500); stop();
   check(!since().some(l => l.includes("|E1|")), "TUI stops retrying once the scripts are missing");
+}
+
+// ------------------------------------------------------ OpenCode 2 TUI
+// OpenCode 2 runs sessions in a shared service; the TUI plugin reports alone,
+// from its events, for the root session of the active tab.
+process.env.TMUX_PANE = "%7";
+{
+  const v2 = (await import(resolve(root, "scripts/opencode/v2/tui.js"))).default;
+  check(typeof v2.id === "string" && typeof v2.setup === "function", "OpenCode 2 TUI plugin has an id and setup()");
+  const handlers: Record<string, Function[]> = {}, parents: Record<string, string> = {};
+  const running = new Set<string>();
+  let route: any = { type: "home" };
+  const ctx = {
+    ui: { router: { current: () => route } },
+    data: {
+      on: (type: string, fn: Function) => { (handlers[type] ??= []).push(fn); return () => { handlers[type] = handlers[type].filter(f => f !== fn); }; },
+      session: { root: (id: string) => { while (parents[id]) id = parents[id]; return id; }, status: (id: string) => running.has(id) ? "running" : "idle" },
+    },
+  };
+  const emit = (type: string, data: any) => { for (const fn of handlers[type] ?? []) fn({ id: "evt", type, data }); };
+  const quiet = async (what: string) => { await sleep(250); check(since().length === 0, `OpenCode 2: ${what} reports nothing`); };
+  const expect = async (what: string, ...want: string[]) => {
+    check(await waitFor(want.at(-1)!), `OpenCode 2: ${what}`);
+    await sleep(50);
+    const got = since();
+    check(got.length === want.length && want.every((w, i) => got[i]?.startsWith(w)), `OpenCode 2: ${what} (${JSON.stringify(got)})`);
+  };
+  const open = (id: string) => { route = { type: "session", sessionID: id }; };
+  const exitListeners = process.listenerCount("exit");
+  const cleanup = await v2.setup(ctx);
+  await quiet("the home screen");
+
+  // A first prompt from the home screen: the session works before the TUI
+  // shows it.
+  emit("session.created", { sessionID: "R1" });
+  emit("session.inbox.enqueued", { sessionID: "R1", inboxID: "m1", item: { type: "user", payload: { text: "fix the bug" }, delivery: "steer" } });
+  emit("session.execution.started", { sessionID: "R1" });
+  await quiet("an unselected session");
+  open("R1");
+  await expect("selecting a working session binds it working", "set-state.sh|working||R1|", "auto-desc.sh|clear|opencode|", "auto-desc.sh|set|fix the bug|");
+
+  // Asks, the subagent's too, count until each is answered.
+  emit("session.created", { sessionID: "C1", parentID: "R1" }); parents.C1 = "R1";
+  emit("permission.asked", { sessionID: "R1", id: "per_1", action: "bash", resources: [] });
+  await expect("a permission asks", "set-state.sh|asking||R1|");
+  emit("form.created", { form: { id: "frm_1", sessionID: "C1", title: "Which?" } });
+  emit("permission.replied", { sessionID: "R1", requestID: "per_1", reply: "once" });
+  await quiet("an answer while a subagent still asks");
+  emit("form.replied", { sessionID: "C1", id: "frm_1", answer: {} });
+  await expect("the last answer resumes work", "set-state.sh|working||R1|");
+  emit("session.execution.started", { sessionID: "C1" });
+  emit("session.execution.succeeded", { sessionID: "C1" });
+  await quiet("a subagent's turn");
+  emit("session.execution.succeeded", { sessionID: "R1" });
+  await expect("a completed turn finishes", "set-state.sh|finished||R1|");
+
+  // A turn the user stops is not a completion.
+  for (const [name, stop] of [
+    ["a rejected permission", () => { emit("permission.asked", { sessionID: "R1", id: "per_2" }); emit("permission.replied", { sessionID: "R1", requestID: "per_2", reply: "reject" }); emit("session.execution.succeeded", { sessionID: "R1" }); }],
+    ["a cancelled form", () => { emit("form.created", { form: { id: "frm_2", sessionID: "R1" } }); emit("form.cancelled", { sessionID: "R1", id: "frm_2" }); emit("session.execution.succeeded", { sessionID: "R1" }); }],
+    ["an interrupt", () => { emit("session.execution.interrupted", { sessionID: "R1", reason: "superseded" }); emit("session.execution.interrupted", { sessionID: "R1", reason: "user" }); }],
+  ] as const) {
+    emit("session.execution.started", { sessionID: "R1" });
+    stop();
+    check(await waitFor("set-state.sh|idle||R1|"), `OpenCode 2: ${name} settles idle`);
+    await sleep(50);
+    check(!since().some(l => l.startsWith("set-state.sh|finished")), `OpenCode 2: ${name} does not finish`);
+  }
+  emit("session.execution.started", { sessionID: "R1" });
+  emit("session.execution.failed", { sessionID: "R1", error: { type: "unknown", message: "boom" } });
+  await expect("a failed turn finishes", "set-state.sh|working||R1|", "set-state.sh|finished||R1|");
+
+  // Tabs: the pane follows the active one.
+  emit("session.execution.started", { sessionID: "R2" });
+  emit("session.execution.started", { sessionID: "OTHER" });
+  await quiet("a background tab or another TUI's session");
+  open("R2");
+  await expect("switching to a busy tab shows it working", "set-state.sh|working||R2|", "auto-desc.sh|clear|opencode|");
+  emit("session.execution.succeeded", { sessionID: "R2" });
+  await expect("the active tab finishes", "set-state.sh|finished||R2|");
+  emit("session.execution.started", { sessionID: "R1" });
+  emit("session.execution.succeeded", { sessionID: "R1" });
+  open("C1");
+  await expect("a subagent view shows its root, a finished turn as seen", "set-state.sh|idle||R1|", "auto-desc.sh|clear|opencode|", "auto-desc.sh|set|fix the bug|");
+  open("R1"); route = { type: "home" };
+  await quiet("returning to the root or the home screen");
+  running.add("R3"); open("R3");
+  await expect("a session running before the TUI started shows working", "set-state.sh|working||R3|", "auto-desc.sh|clear|opencode|");
+
+  check(process.listenerCount("exit") === exitListeners + 1, "OpenCode 2 TUI registers an exit cleanup");
+  await cleanup();
+  const got = since();
+  check(got.length === 1 && got[0].startsWith("clear-state.sh|quit|R3|opencode|"), "OpenCode 2 TUI cleanup clears the bound root synchronously");
+  check(process.listenerCount("exit") === exitListeners, "OpenCode 2 TUI cleanup removes its exit cleanup");
+  check(Object.values(handlers).every(list => list.length === 0), "OpenCode 2 TUI cleanup unsubscribes its events");
 }
 
 // ------------------------------------------------- Kimi / MastraCode hooks
