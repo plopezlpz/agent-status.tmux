@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Kimi, MastraCode, Gemini CLI and Qwen Code hooks (hook-event.sh) on an
-# isolated tmux server, with their real payload shapes. A stand-in provider
-# process runs each hook as its child, as the agents do: kimi, gemini and
-# qwen as the foreground job of a pane (or a headless one), MastraCode as one
-# long-lived process.
+# Kimi, MastraCode, Gemini CLI, Qwen Code and Antigravity CLI hooks
+# (hook-event.sh) on an isolated tmux server, with their real payload shapes.
+# A stand-in provider process runs each hook as its child, as the agents do:
+# kimi, gemini, qwen and agy as the foreground job of a pane (or a headless
+# one), MastraCode as one long-lived process.
 set -euo pipefail
 # Run from a headless agent (claude -p), the hooks would ignore every call.
 unset CLAUDE_CODE_ENTRYPOINT
@@ -14,7 +14,7 @@ TMP="$(mktemp -d)"
 fail(){ echo "FAIL: $1" >&2; exit 1; }
 ctl(){ TMUX='' tmux -L "$SOCK" "$@"; }
 # Stand-ins outside a pane's foreground outlive its server.
-cleanup(){ ctl kill-server 2>/dev/null || true; pkill -f "$TMP/agent.sh" 2>/dev/null || true; pkill -f "$TMP/bin/gemini" 2>/dev/null || true; pkill -f "$TMP/bin/qwen" 2>/dev/null || true; rm -rf "$TMP"; }
+cleanup(){ ctl kill-server 2>/dev/null || true; pkill -f "$TMP/agent.sh" 2>/dev/null || true; pkill -f "$TMP/bin/gemini" 2>/dev/null || true; pkill -f "$TMP/bin/qwen" 2>/dev/null || true; pkill -f "$TMP/bin/agy" 2>/dev/null || true; rm -rf "$TMP"; }
 trap cleanup EXIT
 command -v tmux >/dev/null 2>&1 || { echo "SKIP: hook-event (tmux not installed)"; exit 0; }
 command -v jq >/dev/null 2>&1 || { echo "SKIP: hook-event (jq not installed)"; exit 0; }
@@ -381,4 +381,114 @@ for action in session working blocked idle interrupt end; do
   [ "$rc:$out" = "0:" ] || fail "qwen $action hook printed or failed: $rc $out"
 done
 
+
+# ----- Antigravity CLI ----------------------------------------------------------
+# agy is one process that runs its hooks (through sh -c): the stand-in is a
+# script named agy run by sh. Its payloads (protojson: camelCase, default
+# values left out) are those of agy 1.4.3's hooks docs; its transcript has a
+# step per line, the user's prompt wrapped as agy 1.4.3 wrote it.
+# shellcheck disable=SC2016 # the stand-in's own variable
+sed 's/"\$1"/"$AGY_FIFO"/' "$TMP/agent.sh" > "$TMP/bin/agy"
+astart(){ mkfifo "$2"; "$3" "AGY_FIFO='$2' exec -a sh bash '$TMP/bin/agy' $1"; }
+KIND=antigravity
+pa=$(astart "" "$TMP/a" in_pane)
+apid=$(ctl display -p -t "$pa" '#{pane_pid}')
+c1=ec33ebf9-0cba-4100-8142-c61503f6c587 c2=5b0d3a7e-2c41-4f7e-9a51-0f6f1c2d9e10 c3=9f1e2d3c-4b5a-4697-8877-665544332211
+brain="$TMP/home/.gemini/antigravity-cli/brain"
+for c in $c1 $c2 $c3; do mkdir -p "$brain/$c/.system_generated/logs"; done
+printf '%s\n' '{"step_index":0,"source":"USER_EXPLICIT","type":"USER_INPUT","status":"DONE","created_at":"2026-10-20T15:10:06Z","content":"<USER_REQUEST>\nfix the login bug\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\nThe current local time is: 2026-10-20T18:10:06+03:00.\n</ADDITIONAL_METADATA>"}' \
+  '{"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","created_at":"2026-10-20T14:03:15Z","content":"Looking.","tool_calls":[]}' \
+  > "$brain/$c1/.system_generated/logs/transcript.jsonl"
+printf '%s\n' '{"step_index":0,"source":"MODEL","type":"USER_INPUT","status":"DONE","created_at":"2026-10-20T15:12:00Z","content":"scan the tests"}' > "$brain/$c2/.system_generated/logs/transcript.jsonl"
+printf '%s\n' '{"step_index":0,"source":"USER_EXPLICIT","type":"USER_INPUT","status":"DONE","created_at":"2026-10-20T15:20:00Z","content":"<USER_REQUEST>\nsecond task\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\nThe current local time is: 2026-10-20T18:20:00+03:00.\n</ADDITIONAL_METADATA>"}' > "$brain/$c3/.system_generated/logs/transcript.jsonl"
+# aev FIFO ACTION CONVERSATION [FIELDS]: one hook, as agy sends it.
+aev(){ send "$1" "$2" "{\"conversationId\":\"$3\",\"workspacePaths\":[\"/w\"],\"transcriptPath\":\"$brain/$3/.system_generated/logs/transcript.jsonl\",\"artifactDirectoryPath\":\"$brain/$3\",\"modelName\":\"auto\"${4:+,$4}}"; }
+a(){ aev "$TMP/a" "$1" "${3:-$c1}" "${2:-}"; }
+# The first model call binds the pane to the process's conversation and
+# names it after the first prompt.
+a working '"invocationNum":1'
+[ "$(get "$pa" @agent-kind):$(get "$pa" @agent-instance):$(shown "$pa"):$(get "$pa" @agent-auto-description)" = "antigravity:antigravity:$apid:$c1:working:0:fix the login bug" ] \
+  || fail "agy PreInvocation: $(get "$pa" @agent-instance) $(shown "$pa") $(get "$pa" @agent-auto-description)"
+a working '"invocationNum":2,"initialNumSteps":3'
+# The model's question asks; the turn stops on it, and still asks until
+# it is answered.
+a blocked '"toolCall":{"name":"ask_question","args":{"Questions":[{"Question":"Which branch?"}]}},"stepIdx":4'
+[ "$(shown "$pa")" = "asking:0" ] || fail "agy ask_question: $(shown "$pa")"
+a idle '"executionNum":1,"terminationReason":"TERMINAL_STEP_TYPE","fullyIdle":true'
+[ "$(shown "$pa")" = "asking:0" ] || fail "agy Stop on the question: $(shown "$pa")"
+a working '"toolCall":{"name":"ask_question","args":{}},"stepIdx":4'
+[ "$(shown "$pa")" = "working:0" ] || fail "agy answered question: $(shown "$pa")"
+a idle '"executionNum":1,"terminationReason":"NO_TOOL_CALL","fullyIdle":true'
+[ "$(shown "$pa")" = "idle:1" ] || fail "agy Stop: $(shown "$pa")"
+# An Esc settles idle; an error or any other stop finishes.
+a working '"invocationNum":1'
+a idle '"executionNum":2,"terminationReason":"USER_CANCELED"'
+[ "$(shown "$pa")" = "idle:0" ] || fail "agy Esc: $(shown "$pa")"
+a working '"invocationNum":1'
+a idle '"executionNum":3,"terminationReason":"ERROR","error":"rpc error: code = Unavailable"'
+[ "$(shown "$pa")" = "idle:1" ] || fail "agy Stop on an error: $(shown "$pa")"
+a working '"invocationNum":1'
+a idle '"executionNum":4,"terminationReason":"TERMINAL_STEP_TYPE"'
+[ "$(shown "$pa")" = "idle:1" ] || fail "agy Stop on a terminal step: $(shown "$pa")"
+# While the pane works, another conversation of the process is a
+# subagent's: it doesn't take the pane over.
+a working '"invocationNum":1'
+a working '"invocationNum":1' "$c2"
+a blocked '"toolCall":{"name":"ask_question","args":{}},"stepIdx":1' "$c2"
+a idle '"executionNum":1,"terminationReason":"NO_TOOL_CALL","fullyIdle":true' "$c2"
+[ "$(get "$pa" @agent-instance):$(shown "$pa"):$(get "$pa" @agent-auto-description)" = "antigravity:$apid:$c1:working:0:fix the login bug" ] \
+  || fail "a subagent's conversation reached the pane: $(get "$pa" @agent-instance) $(shown "$pa") $(get "$pa" @agent-auto-description)"
+a idle '"executionNum":5,"terminationReason":"NO_TOOL_CALL","fullyIdle":true'
+# /clear or /resume: the next model call, in another conversation, rebinds
+# the settled pane, and its first prompt names it.
+a working '"invocationNum":1' "$c3"
+[ "$(get "$pa" @agent-instance):$(shown "$pa"):$(get "$pa" @agent-auto-description)" = "antigravity:$apid:$c3:working:0:second task" ] \
+  || fail "agy conversation after /clear: $(get "$pa" @agent-instance) $(shown "$pa") $(get "$pa" @agent-auto-description)"
+# A conversation without a prompt of the user's names nothing.
+a idle '"executionNum":1,"terminationReason":"USER_CANCELED"' "$c3"
+a working '"invocationNum":1' "$c2"
+[ "$(get "$pa" @agent-instance):$(shown "$pa"):$(get "$pa" @agent-auto-description)" = "antigravity:$apid:$c2:working:0:" ] \
+  || fail "agy conversation without a user prompt: $(get "$pa" @agent-instance) $(shown "$pa") $(get "$pa" @agent-auto-description)"
+# agy runs no hook as it quits: a new agy in the pane takes it over, even
+# from a turn the old one never ended, or from another agent.
+tmux set-option -p -t "$pa" @agent-instance "antigravity:999999:$c3"
+a working '"invocationNum":1' "$c3"
+[ "$(get "$pa" @agent-instance):$(shown "$pa"):$(get "$pa" @agent-auto-description)" = "antigravity:$apid:$c3:working:0:second task" ] \
+  || fail "a new agy did not take the pane over: $(get "$pa" @agent-instance) $(shown "$pa")"
+tmux set-option -p -t "$pa" @agent-kind claude \; set-option -p -t "$pa" @agent-instance claude:s1
+a working '"invocationNum":1'
+[ "$(get "$pa" @agent-kind):$(get "$pa" @agent-instance)" = "antigravity:antigravity:$apid:$c1" ] || fail "agy did not take the pane over from another agent"
+# -p, --print, --prompt and the subcommands (remote-control's background
+# service among them) are headless; -i keeps a prompt interactive.
+n_a=0
+for args in "-c" "--conversation $c1" "-i 'fix it'" "--prompt-interactive=x" "--model 'Gemini 3.1 Pro' --effort low" "--add-dir /w --dangerously-skip-permissions" "--mode plan -c"; do
+  n_a=$((n_a + 1))
+  p=$(astart "$args" "$TMP/ai-$n_a" in_pane)
+  aev "$TMP/ai-$n_a" working "$c1" '"invocationNum":1'
+  [ "$(get "$p" @agent-kind)" = antigravity ] || fail "interactive agy $args did not report"
+done
+for args in "-p 'fix it'" "--print x" "--prompt=x" "-print x" "--model m -p x" "--output-format json --prompt x" "remote-control start" "models" "mcp list"; do
+  n_a=$((n_a + 1))
+  p=$(astart "$args" "$TMP/ah-$n_a" in_pane)
+  aev "$TMP/ah-$n_a" working "$c1" '"invocationNum":1'
+  aev "$TMP/ah-$n_a" idle "$c1" '"executionNum":1,"terminationReason":"NO_TOOL_CALL","fullyIdle":true'
+  [ -z "$(get "$p" @agent-state)" ] || fail "headless agy $args reported"
+done
+# So is one in the background of a pane, or with no terminal.
+p=$(astart "" "$TMP/a-bg" in_background)
+aev "$TMP/a-bg" working "$c1" '"invocationNum":1'
+[ -z "$(get "$p" @agent-state)" ] || fail "an agy in the background of a pane reported"
+to=$pa; astart "" "$TMP/a-tool" detached
+aev "$TMP/a-tool" working "$c2" '"invocationNum":1'
+[ "$(get "$pa" @agent-instance)" = "antigravity:$apid:$c1" ] || fail "an agy with no terminal reported"
+# agy reads a hook's output as a JSON object, whose fields decide: the hook
+# prints {} and nothing else, and succeeds even when a state script fails,
+# or outside tmux.
+cp "$HOOK" "$TMP/broken/"
+for action in working blocked idle; do
+  rc=0; out=$(printf '{"conversationId":"%s","terminationReason":"NO_TOOL_CALL"}' "$c1" | TMUX_PANE=$pa "$TMP/broken/hook-event.sh" antigravity $action 2>&1) || rc=$?
+  [ "$rc:$out" = "0:{}" ] || fail "agy $action hook printed or failed: $rc $out"
+  rc=0; out=$(printf '{"conversationId":"%s"}' "$c1" | env -u TMUX_PANE "$HOOK" antigravity $action 2>&1) || rc=$?
+  [ "$rc:$out" = "0:{}" ] || fail "agy $action hook outside tmux printed or failed: $rc $out"
+done
 echo "PASS: hook-event"

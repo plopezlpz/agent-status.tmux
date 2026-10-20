@@ -281,6 +281,75 @@ for bad in '{\n  // mine\n  "ui": {}\n}\n' '[]\n' '{"hooks": {"Stop": {}}}\n' '{
 done
 unset QWEN_HOME
 
+# ----- Antigravity CLI: ~/.gemini/config/hooks.json, edited in place --------
+# agy reads only $HOME/.gemini.
+agy_home="$TMP/agy"; ah="$agy_home/.gemini/config/hooks.json"
+ag(){ HOME="$agy_home" bash "$ROOT/manage-provider.sh" "$@"; }
+mkdir -p "$agy_home"
+if ag found antigravity; then fail "found antigravity without ~/.gemini"; fi
+# Gemini CLI's files alone aren't Antigravity's.
+mkdir -p "$agy_home/.gemini"; echo '{}' > "$agy_home/.gemini/settings.json"
+if ag found antigravity; then fail "found antigravity with only Gemini CLI's files"; fi
+ag install antigravity >/dev/null 2>&1 || fail "antigravity install without agy failed"
+[ ! -e "$agy_home/.gemini/config" ] || fail "antigravity install created ~/.gemini/config without agy"
+# agy creates antigravity-cli when it first runs, and config with it.
+mkdir -p "$agy_home/.gemini/antigravity-cli"
+ag found antigravity || fail "antigravity-cli not found"
+# A file agy's /hooks saved: names sorted, null for the events it left
+# empty, SessionStart dropped, ours turned off. Ours is from a moved
+# checkout and another tool's hook holds a handler of ours (copied from an
+# older install).
+hook="'$ROOT/scripts/agent/hook-event.sh' antigravity"
+backups(){ set -- "$ah".bak-*; [ -e "$1" ] && echo $# || echo 0; }
+mkdir -p "${ah%/*}"
+jq -n --arg old "'/moved/agent-status.tmux/scripts/agent/hook-event.sh' antigravity" '{
+  "agent-status": {enabled: false, SessionStart: null, PreInvocation: [{type: "command", command: "\($old) working", timeout: 10}],
+    PostInvocation: null, Stop: [{type: "command", command: "\($old) idle", timeout: 10}],
+    PreToolUse: [{matcher: "ask_question", hooks: [{type: "command", command: "\($old) blocked", timeout: 10}]}], PostToolUse: null},
+  "lint-checker": {SessionStart: null, PreInvocation: null, PostInvocation: null,
+    Stop: [{type: "command", command: "\($old) idle"}, {type: "command", command: "notify.sh"}],
+    PreToolUse: [{matcher: "ask_question", hooks: [{type: "command", command: "\($old) blocked"}]}],
+    PostToolUse: [{matcher: "run_command", hooks: [{type: "command", command: "./lint.sh", timeout: 10}]}]},
+  "safety-gate": {enabled: false, PreToolUse: [{matcher: "run_command", hooks: [{command: "./safety-check.sh"}]}]}}' > "$ah"
+cp "$ah" "$TMP/agy.orig"
+out=$(ag install antigravity 2>&1)
+case "$out" in *'"enabled": false'*) ;; *) fail "antigravity install did not point out that its hooks are off: $out" ;; esac
+cp "$ah" "$TMP/agy.once"
+out=$(ag install antigravity 2>&1)
+case "$out" in *"already has the current hooks"*) ;; *) fail "antigravity reinstall rewrote hooks.json: $out" ;; esac
+cmp -s "$ah" "$TMP/agy.once" || fail "antigravity reinstall is not byte-stable"
+[ "$(backups)" -eq 1 ] || fail "antigravity install did not back up hooks.json once"
+cmp -s "$ah".bak-* "$TMP/agy.orig" || fail "antigravity backup is not the old hooks.json"
+# Ours, in its place, still off: a model call works, the model's question
+# asks until answered, Stop ends the turn.
+[ "$(jq -c 'keys_unsorted' "$ah")" = '["agent-status","lint-checker","safety-gate"]' ] || fail "antigravity reordered the named hooks"
+[ "$(jq -c --arg hook "$hook " '.["agent-status"] | [.enabled, (to_entries[] | select(.value | type == "array") | [.key, (.value[] | (.matcher // "") + ":" + ((.hooks // [.])[] | select(.command | startswith($hook)) | select(.type == "command" and .timeout == 10) | .command | split(" ") | last))])]' "$ah")" = \
+  '[false,["PreInvocation",":working"],["PreToolUse","ask_question:blocked"],["PostToolUse","ask_question:working"],["Stop",":idle"]]' ] \
+  || fail "antigravity hook map is not exact: $(jq -c '.["agent-status"]' "$ah")"
+# Other tools' hooks keep everything but our handlers.
+jq '.["lint-checker"].Stop |= .[1:] | del(.["lint-checker"].PreToolUse)' "$TMP/agy.orig" > "$TMP/agy.want"
+[ "$(jq -c 'del(.["agent-status"])' "$ah")" = "$(jq -c 'del(.["agent-status"])' "$TMP/agy.want")" ] || fail "antigravity changed other tools' hooks: $(jq -c . "$ah")"
+ag uninstall antigravity >/dev/null
+jq 'del(.["agent-status"])' "$TMP/agy.want" > "$TMP/agy.want2"
+cmp -s "$ah" "$TMP/agy.want2" || fail "antigravity uninstall: $(diff "$TMP/agy.want2" "$ah")"
+out=$(ag uninstall antigravity)
+case "$out" in *"has no agent-status hooks"*) ;; *) fail "antigravity uninstall rewrote a file without our hooks: $out" ;; esac
+# Turned on, it stays on; a new name goes last.
+ag install antigravity >/dev/null
+[ "$(jq -c '[keys_unsorted, (.["agent-status"] | has("enabled"))]' "$ah")" = '[["lint-checker","safety-gate","agent-status"],false]' ] || fail "antigravity new entry: $(jq -c . "$ah")"
+# Without config/ (or its hooks.json), install creates it; uninstall leaves {}.
+rm -r "${ah%/*}"
+ag install antigravity >/dev/null
+ag uninstall antigravity >/dev/null
+[ "$(jq -c . "$ah")" = '{}' ] || fail "antigravity uninstall left $(jq -c . "$ah")"
+# jq can't keep comments: such a file (or one that isn't an object of
+# named hooks) is refused and left alone.
+for bad in '{\n  // mine\n  "x": {}\n}\n' '[]\n' '{}\n{}\n' 'nope\n'; do
+  printf '%b' "$bad" > "$ah"; cp "$ah" "$TMP/agy.bad"
+  if ag install antigravity >/dev/null 2>&1; then fail "antigravity accepted $bad"; fi
+  cmp -s "$ah" "$TMP/agy.bad" || fail "antigravity changed a refused hooks.json"
+done
+
 echo user > "$PI_EXTENSIONS_DIR/agent-status.ts"
 if bash "$ROOT/manage-provider.sh" install pi >/dev/null 2>&1; then fail "installer overwrote user file"; fi
 [ "$(cat "$PI_EXTENSIONS_DIR/agent-status.ts")" = user ] || fail "user file changed"

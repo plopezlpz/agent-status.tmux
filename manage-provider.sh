@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Install/uninstall lifecycle adapters without touching unrelated provider config.
-# Usage: manage-provider.sh <install|uninstall> [-y|--yes | pi|omp|opencode|kilo|kimi|mastracode|claude|codex|gemini|qwen]
+# Usage: manage-provider.sh <install|uninstall> [-y|--yes | pi|omp|opencode|kilo|kimi|mastracode|claude|codex|gemini|qwen|antigravity]
 # Without a provider it finds the supported agents on this machine and, in a
 # terminal, asks before hooking them up (--yes doesn't ask). The rest are skipped.
 #   manage-provider.sh found <provider>   exit 0 if that agent is installed (its config home exists)
 set -eu
 ACTION="${1:-}" PROVIDER="${2:-}"
-PROVIDERS="pi omp opencode kilo kimi mastracode claude codex gemini qwen"
+PROVIDERS="pi omp opencode kilo kimi mastracode claude codex gemini qwen antigravity"
 USAGE="usage: $0 <install|uninstall> [-y|--yes | ${PROVIDERS// /|}]
        $0 found <${PROVIDERS// /|}>"
 case "$ACTION" in install|uninstall|found) ;; *) echo "$USAGE" >&2; exit 2 ;; esac
@@ -38,7 +38,7 @@ if [ "$ACTION" != found ] && { [ -z "$PROVIDER" ] || [ "$PROVIDER" = --yes ] || 
 fi
 
 case "$PROVIDER" in
-  pi|omp|opencode|kilo|kimi|mastracode|claude|codex|gemini|qwen) ;;
+  pi|omp|opencode|kilo|kimi|mastracode|claude|codex|gemini|qwen|antigravity) ;;
   *) echo "$USAGE" >&2; exit 2 ;;
 esac
 
@@ -224,6 +224,12 @@ case "$PROVIDER" in
     # shellcheck disable=SC2088 # a literal ~
     case "$base" in "~") base="$HOME" ;; "~/"*) base="$HOME/${base#"~/"}" ;; /*) ;; *) base="$PWD/$base" ;; esac
     config="$base/settings.json"
+    ;;
+  antigravity)
+    # Antigravity CLI (agy) always reads ~/.gemini: its own files are in
+    # antigravity-cli, its global hooks in config.
+    base="$HOME/.gemini/antigravity-cli"
+    config="$HOME/.gemini/config/hooks.json"
     ;;
 esac
 # Antigravity (agy) keeps its files in ~/.gemini too: Gemini CLI is there
@@ -418,21 +424,48 @@ settings_filter='
         | if [$a[] | select(owned)] == [$g.value] then . else .hooks[$g.key] = ($a | strip) + [$g.value] end)
     elif .hooks == {} and $orig.hooks != {} then del(.hooks)
     else . end'
-# settings_update install|uninstall: edit $PROVIDER's settings.json, backing
-# up the old one.
+# Antigravity CLI: hooks.json is an object of named hooks, each holding
+# handlers per event (a tool event's in groups, by tool name). Ours is
+# named agent-status, kept where it is, or added last; handlers of ours that
+# other named hooks hold are dropped. agy's /hooks rewrites the file when it
+# turns a hook off ("enabled": false, which a reinstall keeps): it sorts the
+# names, writes null for each event left empty, and drops SessionStart,
+# which ours doesn't use. PreInvocation runs before each model call; among
+# tools only the model's ask_question is hooked. Timeouts are in seconds.
+antigravity_groups() {
+  local hook
+  hook="$(sh_word "$ROOT/scripts/agent/hook-event.sh") antigravity"
+  jq -n --arg hook "$hook" 'def run($action): {type: "command", command: "\($hook) \($action)", timeout: 10};
+    {PreInvocation: [run("working")], PreToolUse: [{matcher: "ask_question", hooks: [run("blocked")]}],
+      PostToolUse: [{matcher: "ask_question", hooks: [run("working")]}], Stop: [run("idle")]}'
+}
+# shellcheck disable=SC2016 # jq variables, not shell variables
+antigravity_filter='
+  def ours: type == "object" and ((.command // "") | type == "string" and test("/scripts/agent/hook-event\\.sh'"'"' antigravity [a-z]+$"));
+  def strip: map(if type == "object" and (.hooks | type) == "array" and any(.hooks[]; ours)
+      then .hooks |= map(select(ours | not)) | select(.hooks != []) elif ours then empty else . end);
+  if type != "object" then error("root must be an object") else . end
+  | with_entries(if .key == "agent-status" or (.value | type) != "object" then . else .value |= with_entries(
+      if (.value | type) == "array" and (.value | strip) != .value then .value |= strip | select(.value != []) else . end) end)
+  | if $install then .["agent-status"] as $o | .["agent-status"] = (if ($o | type) == "object" and $o.enabled == false then {enabled: false} else {} end) + $groups
+    else del(.["agent-status"]) end'
+# settings_update install|uninstall: edit $PROVIDER's settings.json (or
+# Antigravity's hooks.json), backing up the old one.
 settings_update() {
-  local new
+  local new filter
   require_jq "$config"
   require_regular_config "$config"
   new=$(mktemp "$config.agent-status.XXXXXX") || exit 1
   EDIT_NEW="$new"
   trap 'rm -f "$EDIT_NEW"' EXIT
-  # Gemini and Qwen also read comments, which jq can't keep: such a file is
+  filter="$(hook_ours "$PROVIDER")$settings_filter"
+  [ "$PROVIDER" != antigravity ] || filter=$antigravity_filter
+  # Comments, which Gemini and Qwen read, jq can't keep: such a file is
   # refused.
   { if [ -f "$config" ]; then cat "$config"; else printf '{}\n'; fi; } \
     | jq -s --argjson install "$([ "$1" = install ] && echo true || echo false)" --argjson groups "$("${PROVIDER}_groups")" \
       --arg s "$ROOT/scripts/agent" --arg r "$(cd "$ROOT/scripts/agent" && pwd -P)" \
-      'if length == 0 then {} elif length == 1 then .[0] else error("several JSON documents") end | '"$(hook_ours "$PROVIDER")$settings_filter" > "$new" \
+      'if length == 0 then {} elif length == 1 then .[0] else error("several JSON documents") end | '"$filter" > "$new" \
     || { echo "agent-status: refusing to edit $config: it must be plain JSON (no comments) with an object at the top level" >&2; exit 1; }
   if [ -f "$config" ] && [ "$(jq -s -cS 'if length == 0 then [{}] else . end' "$config")" = "$(jq -s -cS . "$new")" ]; then
     echo "agent-status: $config already $([ "$1" = install ] && echo has the current hooks || echo has no agent-status hooks)"
@@ -508,6 +541,7 @@ KIMI
       settings_update install
       ;;
     qwen) settings_update install ;;
+    antigravity) mkdir -p "${config%/*}"; settings_update install ;;
     *) link_install "$src" "$dest" ;;
   esac
   echo "agent-status: installed $PROVIDER adapter"
@@ -543,6 +577,11 @@ agent-status: restart running Gemini sessions. A Gemini that was already
   are gone, run this again.
 EOF
   fi
+  if [ "$PROVIDER" = antigravity ]; then
+    ! jq -e '.["agent-status"].enabled == false' "$config" >/dev/null 2>&1 \
+      || echo "agent-status: $config turns these hooks off (\"enabled\": false): turn agent-status on in agy's /hooks" >&2
+    echo "agent-status: restart running agy sessions."
+  fi
 else
   case "$PROVIDER" in
     opencode)
@@ -566,7 +605,7 @@ else
       link_remove "$src" "$dest"
       ;;
     codex) if [ -e "$config" ] || [ -L "$config" ]; then codex_update uninstall; fi ;;
-    gemini|qwen) if [ -e "$config" ] || [ -L "$config" ]; then settings_update uninstall; fi ;;
+    gemini|qwen|antigravity) if [ -e "$config" ] || [ -L "$config" ]; then settings_update uninstall; fi ;;
     *) link_remove "$src" "$dest" ;;
   esac
   echo "agent-status: uninstalled $PROVIDER adapter"

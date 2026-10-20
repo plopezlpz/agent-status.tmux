@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
-# The Kimi, MastraCode, Codex, Gemini CLI and Qwen Code hook command: map one
-# hook ACTION, with the provider's JSON payload on stdin, to the state scripts.
-# Usage: hook-event.sh <kimi|mastracode|codex|gemini|qwen> <session|working|tool|blocked|idle|interrupt|end>
+# The Kimi, MastraCode, Codex, Gemini CLI, Qwen Code and Antigravity CLI hook
+# command: map one hook ACTION, with the provider's JSON payload on stdin, to
+# the state scripts.
+# Usage: hook-event.sh <kimi|mastracode|codex|gemini|qwen|antigravity> <session|working|tool|blocked|idle|interrupt|end>
 set -eu
-[ -n "${TMUX_PANE:-}" ] || exit 0
 kind="${1:-}" action="${2:-}"
+# Antigravity reads a hook's output as a JSON object, whose fields decide
+# (allow a tool, keep a turn going): an empty one decides nothing. Print it
+# first, even outside tmux, then nothing else, and always succeed.
+if [ "$kind" = antigravity ]; then printf '{}\n'; exec >/dev/null 2>&1; trap 'exit 0' EXIT; fi
+[ -n "${TMUX_PANE:-}" ] || exit 0
 case "$action" in session|working|tool|blocked|idle|interrupt|end) ;; *) exit 0 ;; esac
 # How each provider's command line reads: its binary names, the options that
 # take a value (and those whose value is optional, or a list of them),
@@ -61,6 +66,16 @@ case "$kind" in
     optional="-s --sandbox -r --resume --worktree"
     arrays="--fallback-model --allowed-mcp-server-names --disable-mcp-server --allowed-tools -e --extensions --include-directories --add-dir --core-tools --exclude-tools --disabled-slash-commands"
     ;;
+  # Antigravity CLI (agy) is one Go process that runs its hooks itself. Go
+  # options take one dash or two; -p, --print and --prompt run one prompt
+  # headless, and so do its subcommands (remote-control's background service
+  # among them). A run by another agent's tool isn't its terminal's
+  # foreground job.
+  antigravity)
+    names="agy" first=1 prompts="" foreground=1 optional="" commands="agent agents changelog help install mcp mic-serve models plugin plugins remote-control update"
+    flags="-p --p -print --print -prompt --prompt"
+    values="--add-dir --agent --conversation --effort --input-format --json-schema --log-file --mode --model --output-format --print-timeout --project -i --prompt-interactive"
+    ;;
   *) exit 0 ;;
 esac
 # Gemini and Qwen show what a hook prints (Qwen gives a SessionStart or
@@ -69,11 +84,11 @@ esac
 case "$kind" in gemini|qwen) exec >/dev/null 2>&1; trap 'exit 0' EXIT ;; esac
 
 # Headless runs (`kimi -p`, `kimi acp|web|rc`, `mastracode --prompt`,
-# `codex exec`, Codex's background server, `gemini -p`, `qwen "fix it"`) can
-# inherit TMUX_PANE from an agent pane and must not report or steal its
-# identity. The payload has no mode field, so read the nearest provider
-# ancestor's argv (and for Kimi, Gemini and Qwen, whether it is its
-# terminal's foreground job).
+# `codex exec`, Codex's background server, `gemini -p`, `qwen "fix it"`,
+# `agy -p`) can inherit TMUX_PANE from an agent pane and must not report or
+# steal its identity. The payload has no mode field, so read the nearest
+# provider ancestor's argv (and for Kimi, Gemini, Qwen and Antigravity,
+# whether it is its terminal's foreground job).
 # Only words before the first non-option word count (a prompt like "fix the
 # -p flag" is never parsed). Where /proc has the argv, a quoted prompt stays one word, and one
 # with a blank in it is a prompt. Elsewhere `ps` loses quoting, so a prompt
@@ -149,6 +164,56 @@ agent_pid=""
 ! headless || exit 0
 
 SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
+
+# Antigravity: PreInvocation (before each model call) works, the model's
+# ask_question asks until answered, Stop ends the turn. agy runs no hook as
+# it starts or quits, and its conversation (conversationId) changes without
+# one (/clear, /resume), so the agy process and its conversation are the
+# identity, bound by a model call: a new process takes the pane over, and
+# another conversation of the same process does so while the pane isn't
+# working (while it is, that conversation is a subagent's). The first prompt
+# is in the conversation's transcript.
+if [ "$kind" = antigravity ]; then
+  command -v jq >/dev/null 2>&1 || exit 0
+  IFS=$'\037' read -r id reason transcript <<< "$(jq -r '[.conversationId, .terminationReason, .transcriptPath]
+    | map(. // "" | tostring | gsub("[\u0000-\u001f]"; "")) | join("\u001f")' 2>/dev/null || true)"
+  case "$id" in ""|*[!A-Za-z0-9._-]*) exit 0 ;; esac
+  instance="${agent_pid:+$agent_pid:}$id"
+  case "$action" in
+    blocked) "$SCRIPT_DIR/set-state.sh" asking "" "$instance" "" antigravity </dev/null; exit 0 ;;
+    working|idle) ;;
+    *) exit 0 ;;
+  esac
+  IFS=$'\037' read -r pane kind_was instance_was state_was described <<< "$(tmux display -p -t "$TMUX_PANE" \
+    $'#{pane_id}\037#{@agent-kind}\037#{@agent-instance}\037#{@agent-state}\037#{?@agent-auto-description,1,}' 2>/dev/null || true)"
+  [ "$pane" = "$TMUX_PANE" ] || exit 0
+  if [ "$action" = idle ]; then
+    case "$reason" in
+      # An Esc, or the first Ctrl+C.
+      USER_CANCELED) state=idle ;;
+      # The turn stops to wait on the model's question.
+      TERMINAL_STEP_TYPE) [ "$state_was:$instance_was" != "asking:antigravity:$instance" ] || exit 0; state=finished ;;
+      *) state=finished ;;
+    esac
+    "$SCRIPT_DIR/set-state.sh" "$state" "" "$instance" "" antigravity </dev/null
+    exit 0
+  fi
+  bind=""
+  case "$kind_was:$instance_was" in
+    "antigravity:antigravity:$instance") [ "$state_was:$described" != working:1 ] || exit 0 ;;
+    "antigravity:antigravity:${agent_pid:+$agent_pid:}"*) [ "$state_was" != working ] || exit 0; bind=bind described="" ;;
+    *) bind=bind described="" ;;
+  esac
+  "$SCRIPT_DIR/set-state.sh" working "" "$instance" "" antigravity "$bind" </dev/null
+  # A transcript line per step; the user's first prompt is near the top,
+  # with what agy adds to it (the time, changed settings) after it.
+  if [ -z "$described" ] && [ -f "$transcript" ]; then
+    prompt=$(head -n 50 < "$transcript" | jq -rn 'first(inputs | objects | select(.type == "USER_INPUT" and .source == "USER_EXPLICIT")
+      | .content // "" | tostring | (capture("<USER_REQUEST>\\s*(?<r>[\\s\\S]*?)\\s*</USER_REQUEST>").r // .) | .[:500])' 2>/dev/null || true)
+    [ -z "$prompt" ] || "$SCRIPT_DIR/auto-desc.sh" set "$prompt" </dev/null
+  fi
+  exit 0
+fi
 
 # Gemini's AfterTool, after every tool call, is the hot path. Its session id
 # is in the environment, so the payload (with the tool's whole output) is
