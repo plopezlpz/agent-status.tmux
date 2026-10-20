@@ -220,6 +220,67 @@ for bad in '{\n  // mine\n  "ui": {}\n}\n' '[]\n' '{"hooks": {"AfterTool": {}}}\
 done
 unset GEMINI_CLI_HOME
 
+# ----- Qwen Code: settings.json, edited in place ---------------------------
+export QWEN_HOME="$TMP/qwen"; qs="$QWEN_HOME/settings.json"
+if bash "$ROOT/manage-provider.sh" found qwen; then fail "found qwen without its home"; fi
+bash "$ROOT/manage-provider.sh" install qwen >/dev/null 2>&1 || fail "qwen install without Qwen failed"
+[ ! -e "$QWEN_HOME" ] || fail "qwen install created QWEN_HOME"
+mkdir -p "$QWEN_HOME"
+bash "$ROOT/manage-provider.sh" found qwen || fail "qwen home not found"
+# What Qwen writes itself ($version, ui), the non-event keys Qwen keeps in
+# "hooks", other tools' hooks (one beside a Claude hook copied from Claude's
+# settings) and a hook of ours from a moved checkout.
+hook="'$ROOT/scripts/agent/hook-event.sh' qwen"
+backups(){ set -- "$qs".bak-*; [ -e "$1" ] && echo $# || echo 0; }
+jq -n --arg claude "'$ROOT/scripts/agent/set-state.sh' working" '{"$version": 4, ui: {autoModeAcknowledged: true},
+  hooks: {enabled: true, disabled: ["slow"], notifications: false,
+    PreToolUse: [{matcher: "run_shell_command", hooks: [{type: "command", command: "guard.sh", name: "slow"}]}],
+    Stop: [{hooks: [{type: "command", command: "notify.sh"}]},
+      {hooks: [{type: "command", command: "'"'/moved/agent-status.tmux/scripts/agent/hook-event.sh' qwen idle"'", timeout: 10}]}],
+    PostToolUse: [{matcher: ".*", hooks: [{type: "command", command: $claude}, {type: "command", command: "log.sh"}]}]},
+  disableAllHooks: false}' > "$qs"
+cp "$qs" "$TMP/qwen.orig"
+bash "$ROOT/manage-provider.sh" install qwen >/dev/null
+cp "$qs" "$TMP/qwen.once"
+out=$(bash "$ROOT/manage-provider.sh" install qwen)
+case "$out" in *"already has the current hooks"*) ;; *) fail "qwen reinstall rewrote settings.json: $out" ;; esac
+cmp -s "$qs" "$TMP/qwen.once" || fail "qwen reinstall is not byte-stable"
+[ "$(backups)" -eq 1 ] || fail "qwen install did not back up settings.json once"
+cmp -s "$QWEN_HOME"/settings.json.bak-* "$TMP/qwen.orig" || fail "qwen backup is not the old settings.json"
+# One definition of ours per event, after the others; Notification only for
+# the idle prompt.
+[ "$(jq -c '[.hooks | to_entries[] | select(.key | IN("enabled", "disabled", "notifications") | not) | [.key, [.value[] | (.matcher // "") + ":" + (.hooks[].command | split(" ") | last)]]]' "$qs")" = \
+  '[["PreToolUse",["run_shell_command:guard.sh",":working"]],["Stop",[":notify.sh",":idle"]],["PostToolUse",[".*:log.sh",":working"]],["SessionStart",[":session"]],["SessionEnd",[":end"]],["UserPromptSubmit",[":working"]],["PostToolUseFailure",[":working"]],["PermissionRequest",[":blocked"]],["SubagentStop",[":working"]],["StopFailure",[":idle"]],["Notification",["idle_prompt:interrupt"]]]' ] \
+  || fail "qwen hook map is not exact: $(jq -c .hooks "$qs")"
+[ "$(jq --arg hook "$hook " '[.hooks | del(.disabled) | .[] | arrays | .[].hooks[] | select(.command | startswith($hook)) | select(.name == "agent-status" and .timeout == 10)] | length' "$qs")" -eq 11 ] || fail "qwen hooks do not run hook-event.sh, named, once per event"
+[ "$(jq -c '[.["$version"], .ui, .hooks.enabled, .hooks.disabled, .hooks.notifications, .disableAllHooks]' "$qs")" = '[4,{"autoModeAcknowledged":true},true,["slow"],false,false]' ] || fail "qwen changed unrelated settings"
+[ "$(jq -c 'keys_unsorted' "$qs")" = '["$version","ui","hooks","disableAllHooks"]' ] || fail "qwen reordered settings"
+bash "$ROOT/manage-provider.sh" uninstall qwen >/dev/null
+jq 'del(.hooks.Stop[1]) | .hooks.PostToolUse[0].hooks |= .[1:]' "$TMP/qwen.orig" > "$TMP/qwen.want"
+cmp -s "$qs" "$TMP/qwen.want" || fail "qwen uninstall: $(diff "$TMP/qwen.want" "$qs")"
+out=$(bash "$ROOT/manage-provider.sh" uninstall qwen)
+case "$out" in *"has no agent-status hooks"*) ;; *) fail "qwen uninstall rewrote a file without our hooks: $out" ;; esac
+# QWEN_HOME as Qwen reads it: ~/... is under the home directory.
+mkdir -p "$HOME/qhome"
+# shellcheck disable=SC2088 # a literal ~
+QWEN_HOME='~/qhome' bash "$ROOT/manage-provider.sh" install qwen >/dev/null
+grep -qF "$hook session" "$HOME/qhome/settings.json" || fail "qwen QWEN_HOME=~/... not followed"
+# shellcheck disable=SC2088
+QWEN_HOME='~/qhome' bash "$ROOT/manage-provider.sh" uninstall qwen >/dev/null
+[ "$(jq -c . "$HOME/qhome/settings.json")" = '{}' ] || fail "qwen uninstall left $(jq -c . "$HOME/qhome/settings.json")"
+# A setting that turns every hook off is pointed out.
+echo '{"disableAllHooks": true}' > "$qs"
+out=$(bash "$ROOT/manage-provider.sh" install qwen 2>&1)
+case "$out" in *"disableAllHooks"*) ;; *) fail "qwen install did not point out disableAllHooks: $out" ;; esac
+# Qwen reads comments, jq doesn't: such a file (or one that isn't a
+# settings object) is refused and left alone.
+for bad in '{\n  // mine\n  "ui": {}\n}\n' '[]\n' '{"hooks": {"Stop": {}}}\n' '{"hooks": []}\n' '{}\n{}\n'; do
+  printf '%b' "$bad" > "$qs"; cp "$qs" "$TMP/qwen.bad"
+  if bash "$ROOT/manage-provider.sh" install qwen >/dev/null 2>&1; then fail "qwen accepted $bad"; fi
+  cmp -s "$qs" "$TMP/qwen.bad" || fail "qwen changed a refused settings.json"
+done
+unset QWEN_HOME
+
 echo user > "$PI_EXTENSIONS_DIR/agent-status.ts"
 if bash "$ROOT/manage-provider.sh" install pi >/dev/null 2>&1; then fail "installer overwrote user file"; fi
 [ "$(cat "$PI_EXTENSIONS_DIR/agent-status.ts")" = user ] || fail "user file changed"

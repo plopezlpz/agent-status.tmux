@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Install/uninstall lifecycle adapters without touching unrelated provider config.
-# Usage: manage-provider.sh <install|uninstall> [-y|--yes | pi|omp|opencode|kilo|kimi|mastracode|claude|codex|gemini]
+# Usage: manage-provider.sh <install|uninstall> [-y|--yes | pi|omp|opencode|kilo|kimi|mastracode|claude|codex|gemini|qwen]
 # Without a provider it finds the supported agents on this machine and, in a
 # terminal, asks before hooking them up (--yes doesn't ask). The rest are skipped.
 #   manage-provider.sh found <provider>   exit 0 if that agent is installed (its config home exists)
 set -eu
 ACTION="${1:-}" PROVIDER="${2:-}"
-PROVIDERS="pi omp opencode kilo kimi mastracode claude codex gemini"
+PROVIDERS="pi omp opencode kilo kimi mastracode claude codex gemini qwen"
 USAGE="usage: $0 <install|uninstall> [-y|--yes | ${PROVIDERS// /|}]
        $0 found <${PROVIDERS// /|}>"
 case "$ACTION" in install|uninstall|found) ;; *) echo "$USAGE" >&2; exit 2 ;; esac
@@ -38,7 +38,7 @@ if [ "$ACTION" != found ] && { [ -z "$PROVIDER" ] || [ "$PROVIDER" = --yes ] || 
 fi
 
 case "$PROVIDER" in
-  pi|omp|opencode|kilo|kimi|mastracode|claude|codex|gemini) ;;
+  pi|omp|opencode|kilo|kimi|mastracode|claude|codex|gemini|qwen) ;;
   *) echo "$USAGE" >&2; exit 2 ;;
 esac
 
@@ -217,6 +217,14 @@ case "$PROVIDER" in
     base="${GEMINI_CLI_HOME:-$HOME}/.gemini"
     config="$base/settings.json"
     ;;
+  qwen)
+    # QWEN_HOME as Qwen reads it: ~ and ~/... are the home directory, and a
+    # relative path is taken from here.
+    base="${QWEN_HOME:-$HOME/.qwen}"
+    # shellcheck disable=SC2088 # a literal ~
+    case "$base" in "~") base="$HOME" ;; "~/"*) base="$HOME/${base#"~/"}" ;; /*) ;; *) base="$PWD/$base" ;; esac
+    config="$base/settings.json"
+    ;;
 esac
 # Antigravity (agy) keeps its files in ~/.gemini too: Gemini CLI is there
 # once it has its settings, or the id it writes when it first runs.
@@ -257,7 +265,8 @@ codex_groups() {
 }
 # hook_ours KIND: jq's `ours`, our hooks: hook-event.sh for KIND from any
 # checkout, and the Claude hooks Codex and Gemini copy from Claude's settings
-# when they migrate them (they would report the session as Claude). `owned`:
+# when they migrate them (they would report the session as Claude; Qwen's
+# hooks take the same commands). `owned`:
 # a group holding one ($s, $r: this checkout's scripts/agent).
 hook_ours() {
   # shellcheck disable=SC2016 # jq variables, not shell variables
@@ -362,10 +371,10 @@ codex_update() {
   case "$moved" in 0) ;; *) echo "agent-status: $moved hook(s) of other tools moved in $config; Codex asks you to review them again" ;; esac
 }
 
-# Gemini CLI: one definition per event in settings.json's "hooks", after
-# other tools' ones, each running hook-event.sh with the event's action. All
-# are named agent-status: Gemini shows that name while one runs, and
-# `/hooks disable agent-status` turns them all off.
+# Gemini CLI and Qwen Code: one definition per event in settings.json's
+# "hooks", after other tools' ones, each running hook-event.sh with the
+# event's action. All are named agent-status: Gemini shows that name while
+# one runs, and `/hooks disable agent-status` turns them all off there.
 gemini_groups() {
   local hook
   hook="$(sh_word "$ROOT/scripts/agent/hook-event.sh") gemini"
@@ -374,12 +383,27 @@ gemini_groups() {
     | map({key: .[0], value: {hooks: [{type: "command", name: "agent-status", command: "\($hook) \(.[1])", timeout: 10000}]}})
     | from_entries'
 }
+# Qwen's events and payloads are Claude Code's; its timeouts are in seconds.
+# A Notification hook runs only for the idle prompt Qwen shows after a turn,
+# an Esc or a denial: a permission prompt also has its PermissionRequest.
+qwen_groups() {
+  local hook
+  hook="$(sh_word "$ROOT/scripts/agent/hook-event.sh") qwen"
+  jq -n --arg hook "$hook" '[["SessionStart", "session"], ["SessionEnd", "end"], ["UserPromptSubmit", "working"],
+      ["PreToolUse", "working"], ["PostToolUse", "working"], ["PostToolUseFailure", "working"],
+      ["PermissionRequest", "blocked"], ["SubagentStop", "working"], ["Stop", "idle"], ["StopFailure", "idle"],
+      ["Notification", "interrupt", "idle_prompt"]]
+    | map({key: .[0], value: ((if .[2] then {matcher: .[2]} else {} end)
+        + {hooks: [{type: "command", name: "agent-status", command: "\($hook) \(.[1])", timeout: 10}]})})
+    | from_entries'
+}
 # Our handlers are dropped, with the definitions and events they leave
 # empty; an event that already holds just our current definition keeps it
 # where it is. Other keys (hooksConfig, and the enabled, disabled and
-# notifications that older Gemini releases kept in "hooks") are left alone.
+# notifications that older Gemini releases and Qwen keep in "hooks") are left
+# alone.
 # shellcheck disable=SC2016 # jq variables, not shell variables
-gemini_filter="$(hook_ours gemini)"'
+settings_filter='
   def strip: map(if owned then .hooks |= map(select(ours | not)) | select(.hooks != []) else . end);
   if type != "object" then error("root must be an object") else . end
   | if (.hooks // {} | type) != "object" then error("hooks must be an object") else . end
@@ -394,19 +418,21 @@ gemini_filter="$(hook_ours gemini)"'
         | if [$a[] | select(owned)] == [$g.value] then . else .hooks[$g.key] = ($a | strip) + [$g.value] end)
     elif .hooks == {} and $orig.hooks != {} then del(.hooks)
     else . end'
-# gemini_update install|uninstall: edit settings.json, backing up the old one.
-gemini_update() {
+# settings_update install|uninstall: edit $PROVIDER's settings.json, backing
+# up the old one.
+settings_update() {
   local new
   require_jq "$config"
   require_regular_config "$config"
   new=$(mktemp "$config.agent-status.XXXXXX") || exit 1
   EDIT_NEW="$new"
   trap 'rm -f "$EDIT_NEW"' EXIT
-  # Gemini also reads comments, which jq can't keep: such a file is refused.
+  # Gemini and Qwen also read comments, which jq can't keep: such a file is
+  # refused.
   { if [ -f "$config" ]; then cat "$config"; else printf '{}\n'; fi; } \
-    | jq -s --argjson install "$([ "$1" = install ] && echo true || echo false)" --argjson groups "$(gemini_groups)" \
+    | jq -s --argjson install "$([ "$1" = install ] && echo true || echo false)" --argjson groups "$("${PROVIDER}_groups")" \
       --arg s "$ROOT/scripts/agent" --arg r "$(cd "$ROOT/scripts/agent" && pwd -P)" \
-      'if length == 0 then {} elif length == 1 then .[0] else error("several JSON documents") end | '"$gemini_filter" > "$new" \
+      'if length == 0 then {} elif length == 1 then .[0] else error("several JSON documents") end | '"$(hook_ours "$PROVIDER")$settings_filter" > "$new" \
     || { echo "agent-status: refusing to edit $config: it must be plain JSON (no comments) with an object at the top level" >&2; exit 1; }
   if [ -f "$config" ] && [ "$(jq -s -cS 'if length == 0 then [{}] else . end' "$config")" = "$(jq -s -cS . "$new")" ]; then
     echo "agent-status: $config already $([ "$1" = install ] && echo has the current hooks || echo has no agent-status hooks)"
@@ -479,8 +505,9 @@ KIMI
     codex) codex_update install ;;
     gemini)
       gemini_found || { echo "agent-status: gemini config not found at $base; install gemini first (skipped)" >&2; exit 0; }
-      gemini_update install
+      settings_update install
       ;;
+    qwen) settings_update install ;;
     *) link_install "$src" "$dest" ;;
   esac
   echo "agent-status: installed $PROVIDER adapter"
@@ -496,6 +523,14 @@ agent-status: in tmux, run Codex as `codex --no-daemon`. Its shared
   and report nothing. With an alias that adds --no-daemon, run
   `codex agents` and `codex --remote` (which need that server) as
   `command codex ...`.
+EOF
+  fi
+  if [ "$PROVIDER" = qwen ]; then
+    ! jq -e '.disableAllHooks == true' "$config" >/dev/null 2>&1 \
+      || echo "agent-status: $config turns all hooks off (disableAllHooks): set it to false" >&2
+    cat <<'EOF'
+agent-status: restart running Qwen Code sessions. Qwen runs no hooks with
+  --safe-mode or --bare.
 EOF
   fi
   if [ "$PROVIDER" = gemini ]; then
@@ -531,7 +566,7 @@ else
       link_remove "$src" "$dest"
       ;;
     codex) if [ -e "$config" ] || [ -L "$config" ]; then codex_update uninstall; fi ;;
-    gemini) if [ -e "$config" ] || [ -L "$config" ]; then gemini_update uninstall; fi ;;
+    gemini|qwen) if [ -e "$config" ] || [ -L "$config" ]; then settings_update uninstall; fi ;;
     *) link_remove "$src" "$dest" ;;
   esac
   echo "agent-status: uninstalled $PROVIDER adapter"

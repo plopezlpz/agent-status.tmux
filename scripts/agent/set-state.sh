@@ -4,10 +4,11 @@
 # `bind` is a reset unless the pane already reports that instance; `only`
 # reports only into a pane that already does.
 # `finished` is stored as idle + unseen: an idle completion not yet seen.
-# Claude hooks (and Codex hooks, through hook-event.sh) pass the state alone,
-# with their payload on stdin (kind $AGENT_STATUS_KIND, else claude); for them
-# it also keeps the first prompt as @agent-auto-description and tracks open
-# permission prompts in @agent-asks (and, for Codex, @agent-settled).
+# Claude hooks (and Codex and Qwen hooks, through hook-event.sh) pass the
+# state alone, with their payload on stdin (kind $AGENT_STATUS_KIND, else
+# claude); for them it also keeps the first prompt as @agent-auto-description
+# and tracks open permission prompts in @agent-asks (and, for Codex,
+# @agent-settled).
 set -eu
 
 SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
@@ -66,6 +67,7 @@ if [ "$#" -eq 1 ] && [ ! -t 0 ] && command -v jq >/dev/null 2>&1; then
   # team: live agent-team teammates. They stay "running" while idle, so they
   # cannot hold a Stop, but each message from one resumes the lead turn.
   # Entry types are friendly labels, or the raw discriminant when unknown.
+  # Qwen lists only its background agents, without a type.
   # agent, tool: who asks or proceeds (agent_id: empty on the main thread),
   # as option-safe words. prompt: its start, on one line, without the text
   # pasted into it (Claude marks it) unless that is all there is.
@@ -79,7 +81,7 @@ if [ "$#" -eq 1 ] && [ ! -t 0 ] && command -v jq >/dev/null 2>&1; then
   # own title (--name, /rename), if it has one.
   metadata=$(jq -r --arg kind "$kind" 'def live(types): (.background_tasks // [])
       | if type == "array" then . else [] end
-      | map(select(type == "object" and ((.type // "") | IN(types))
+      | map(select(type == "object" and ((.type // if $kind == "qwen" then "subagent" else "" end) | IN(types))
           and ((.status // "running") | IN("running", "pending"))))
       | length | tostring;
     def word: . // "" | tostring | .[:128] | gsub("[^A-Za-z0-9._:-]"; "_");
@@ -229,6 +231,9 @@ if [ -n "$hook_name" ] && [ -z "$compact" ]; then
           PostToolUse*:"$agent/@"*|ElicitationResult:"$agent/@"*) continue ;;
           PostToolUse*:"$agent/write_stdin"[#@]*) [ "$tool" != Bash ] || continue ;;
           PreToolUse:"$agent/"*)
+            # Qwen starts none of an agent's tools while one waits on an
+            # answer: its next tool call comes after all of them.
+            [ "$kind" != qwen ] || continue
             opened="${ask##*@}"
             case "$opened:$now" in *[!0-9:]*|:*|*:) continue ;; esac
             [ $((now - opened)) -lt 3 ] || continue

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Kimi, MastraCode and Gemini CLI hooks (hook-event.sh) on an isolated tmux
-# server, with their real payload shapes. A stand-in provider process runs
-# each hook as its child, as the agents do: kimi and gemini as the
-# foreground job of a pane (or a headless one), MastraCode as one
+# Kimi, MastraCode, Gemini CLI and Qwen Code hooks (hook-event.sh) on an
+# isolated tmux server, with their real payload shapes. A stand-in provider
+# process runs each hook as its child, as the agents do: kimi, gemini and
+# qwen as the foreground job of a pane (or a headless one), MastraCode as one
 # long-lived process.
 set -euo pipefail
 # Run from a headless agent (claude -p), the hooks would ignore every call.
@@ -14,7 +14,7 @@ TMP="$(mktemp -d)"
 fail(){ echo "FAIL: $1" >&2; exit 1; }
 ctl(){ TMUX='' tmux -L "$SOCK" "$@"; }
 # Stand-ins outside a pane's foreground outlive its server.
-cleanup(){ ctl kill-server 2>/dev/null || true; pkill -f "$TMP/agent.sh" 2>/dev/null || true; pkill -f "$TMP/bin/gemini" 2>/dev/null || true; rm -rf "$TMP"; }
+cleanup(){ ctl kill-server 2>/dev/null || true; pkill -f "$TMP/agent.sh" 2>/dev/null || true; pkill -f "$TMP/bin/gemini" 2>/dev/null || true; pkill -f "$TMP/bin/qwen" 2>/dev/null || true; rm -rf "$TMP"; }
 trap cleanup EXIT
 command -v tmux >/dev/null 2>&1 || { echo "SKIP: hook-event (tmux not installed)"; exit 0; }
 command -v jq >/dev/null 2>&1 || { echo "SKIP: hook-event (jq not installed)"; exit 0; }
@@ -276,6 +276,109 @@ printf '#!/bin/sh\necho out; echo err >&2; exit 2\n' > "$TMP/broken/set-state.sh
 for action in working idle tool; do
   rc=0; out=$(printf '{"session_id":"g1","hook_event_name":"AfterAgent"}' | TMUX_PANE=$pg GEMINI_SESSION_ID=g1 "$TMP/broken/hook-event.sh" gemini $action 2>&1) || rc=$?
   [ "$rc:$out" = "0:" ] || fail "gemini $action hook printed or failed: $rc $out"
+done
+
+# ----- Qwen Code ---------------------------------------------------------------
+# Qwen runs its CLI, and so its hooks, in the launcher's own process: `node
+# .../bin/qwen [args]`. Its payloads are Claude Code's; SessionStart,
+# SessionEnd and the idle prompt's Notification are as Qwen 0.25.3 sent them.
+# shellcheck disable=SC2016 # the stand-in's own variable
+sed 's/"\$1"/"$QWEN_FIFO"/' "$TMP/agent.sh" > "$TMP/bin/qwen"
+qstart(){ mkfifo "$2"; "$3" "QWEN_FIFO='$2' exec -a node bash '$TMP/bin/qwen' $1"; }
+KIND=qwen
+pq=$(qstart "" "$TMP/q" in_pane)
+# qev FIFO ACTION EVENT SESSION [FIELDS]: one hook, as Qwen sends it.
+qev(){ send "$1" "$2" "{\"session_id\":\"$4\",\"transcript_path\":\"/h/.qwen/projects/-w/chats/$4.jsonl\",\"cwd\":\"/w\",\"hook_event_name\":\"$3\",\"timestamp\":\"2026-10-20T14:03:12.766Z\",\"permission_mode\":\"auto\"${5:+,$5}}"; }
+q(){ qev "$TMP/q" "$1" "$2" "${4:-q1}" "${3:-}"; }
+q session SessionStart '"source":"startup","model":"coder-model"'
+[ "$(get "$pq" @agent-kind):$(get "$pq" @agent-instance):$(shown "$pq"):$(get "$pq" @agent-transcript)" = "qwen:qwen:q1:idle:0:/h/.qwen/projects/-w/chats/q1.jsonl" ] \
+  || fail "qwen SessionStart: $(get "$pq" @agent-instance) $(shown "$pq") $(get "$pq" @agent-transcript)"
+q working UserPromptSubmit '"prompt_id":"p1","prompt":"fix the login bug","submitted_prompt":"fix the login bug"'
+[ "$(shown "$pq"):$(get "$pq" @agent-auto-description)" = "working:0:fix the login bug" ] || fail "qwen prompt: $(shown "$pq") $(get "$pq" @agent-auto-description)"
+# A permission prompt asks; Qwen runs the tool only once it is answered, so
+# its PreToolUse, however soon, ends the ask.
+q blocked PermissionRequest '"tool_name":"run_shell_command","tool_input":{"command":"make test"},"permission_suggestions":null'
+[ "$(shown "$pq")" = "asking:0" ] || fail "qwen PermissionRequest: $(shown "$pq")"
+q working PreToolUse '"tool_name":"run_shell_command","tool_input":{"command":"make test"},"tool_use_id":"c1","tool_call_id":"c1"'
+[ "$(shown "$pq"):$(get "$pq" @agent-asks)" = "working:0:" ] || fail "qwen approved tool still asks: $(shown "$pq") $(get "$pq" @agent-asks)"
+q working PostToolUse '"tool_name":"run_shell_command","tool_input":{"command":"make test"},"tool_response":{"llmContent":"ok"},"tool_use_id":"c1","tool_call_id":"c1"'
+q idle Stop '"stop_hook_active":false,"last_assistant_message":"Done.","background_tasks":[],"crons":[]'
+[ "$(shown "$pq")" = "idle:1" ] || fail "qwen Stop: $(shown "$pq")"
+# The idle prompt that follows a turn keeps it finished.
+q interrupt Notification '"message":"Qwen Code is waiting for your input","notification_type":"idle_prompt","title":"Waiting for input"'
+[ "$(shown "$pq")" = "idle:1" ] || fail "qwen idle prompt after a turn: $(shown "$pq")"
+# A denial (or an Esc) ends the turn without Stop: the idle prompt settles it.
+q working UserPromptSubmit '"prompt":"edit it"'
+q blocked PermissionRequest '"tool_name":"edit","tool_input":{"file_path":"/w/a"}'
+q interrupt Notification '"message":"Qwen Code is waiting for your input","notification_type":"idle_prompt","title":"Waiting for input"'
+[ "$(shown "$pq"):$(get "$pq" @agent-asks)" = "idle:0:" ] || fail "qwen denial: $(shown "$pq") $(get "$pq" @agent-asks)"
+# The model's question asks until it is answered; a subagent's ask outlasts
+# the main thread's tools and ends with its own next tool.
+q working UserPromptSubmit '"prompt":"ask me"'
+q blocked PermissionRequest '"tool_name":"ask_user_question","tool_input":{"questions":[]}'
+q working PostToolUse '"tool_name":"ask_user_question","tool_use_id":"c2","tool_call_id":"c2"'
+[ "$(shown "$pq")" = "working:0" ] || fail "qwen answered question: $(shown "$pq")"
+q blocked PermissionRequest '"agent_id":"a1","tool_name":"run_shell_command","tool_input":{"command":"ls"}'
+q working PreToolUse '"tool_name":"read_file","tool_use_id":"c3","tool_call_id":"c3"'
+[ "$(shown "$pq")" = "asking:0" ] || fail "qwen main thread ended a subagent's ask: $(shown "$pq")"
+q working PreToolUse '"agent_id":"a1","tool_name":"run_shell_command","tool_use_id":"c4","tool_call_id":"c4"'
+[ "$(shown "$pq")" = "working:0" ] || fail "qwen subagent's approved tool: $(shown "$pq")"
+# A Stop while a background agent runs isn't the end: its result starts a
+# turn of Qwen's own, whose Stop is.
+q idle Stop '"background_tasks":[{"id":"b1","status":"running","agent_type":"general-purpose","started_at":"2026-10-20T14:03:12.766Z","description":"scan"}],"crons":[]'
+[ "$(shown "$pq")" = "working:0" ] || fail "qwen Stop with a background agent running: $(shown "$pq")"
+q idle Stop '"background_tasks":[{"id":"b1","status":"completed","agent_type":"general-purpose","started_at":"2026-10-20T14:03:12.766Z","description":"scan"}],"crons":[]'
+[ "$(shown "$pq")" = "idle:1" ] || fail "qwen Stop after the background agent: $(shown "$pq")"
+# An API error ends the turn; compaction keeps it.
+q working UserPromptSubmit '"prompt":"more"'
+q session SessionStart '"source":"compact","model":"coder-model"'
+[ "$(shown "$pq")" = "working:0" ] || fail "qwen compaction reset the turn: $(shown "$pq")"
+q idle StopFailure '"error":"rate_limit","error_details":"429","last_assistant_message":""'
+[ "$(shown "$pq")" = "idle:1" ] || fail "qwen StopFailure: $(shown "$pq")"
+# /clear: SessionEnd(clear) keeps the pane, SessionStart(clear) starts over
+# under the new id; then the idle prompt.
+q end SessionEnd '"prompt_id":"q1########0","reason":"clear"'
+[ "$(get "$pq" @agent-instance)" = qwen:q1 ] || fail "qwen SessionEnd(clear) cleared the pane"
+q session SessionStart '"prompt_id":"q1########0","source":"clear","model":"coder-model"' q2
+q interrupt Notification '"prompt_id":"q1########0","message":"Qwen Code is waiting for your input","notification_type":"idle_prompt","title":"Waiting for input"' q2
+[ "$(get "$pq" @agent-instance):$(shown "$pq"):$(get "$pq" @agent-auto-description)" = "qwen:q2:idle:0:" ] || fail "qwen /clear: $(get "$pq" @agent-instance) $(shown "$pq")"
+q end SessionEnd '"reason":"prompt_input_exit"' q1
+[ "$(get "$pq" @agent-instance)" = qwen:q2 ] || fail "another qwen session's end cleared the pane"
+q end SessionEnd '"reason":"prompt_input_exit"' q2
+[ -z "$(get "$pq" @agent-state)$(get "$pq" @agent-kind)$(get "$pq" @agent-instance)" ] || fail "qwen SessionEnd did not clear the pane"
+# A prompt argument, a subcommand, -p and --acp run headless; -i keeps a
+# prompt interactive. Option values (lists too) are not prompts.
+n_q=0
+for args in "-i 'fix it'" "--prompt-interactive=x" "-m x -y" "-r" "-r abc" "--resume -y" "-c" "--sandbox docker" "-o json" "--auth-type openai" "-e a b --yolo" "--add-dir a b -m x" "-y -i 'x y'"; do
+  n_q=$((n_q + 1))
+  p=$(qstart "$args" "$TMP/qi-$n_q" in_pane)
+  qev "$TMP/qi-$n_q" session SessionStart i$n_q '"source":"startup"'
+  [ "$(get "$p" @agent-instance)" = "qwen:i$n_q" ] || fail "interactive qwen $args did not report"
+done
+for args in "'fix the bug'" "fix" "-p hi" "--prompt=hi" "-m x 'do it'" "--approval-mode yolo 'do it'" "--acp" "--experimental-acp" "serve" "review run"; do
+  n_q=$((n_q + 1))
+  p=$(qstart "$args" "$TMP/qh-$n_q" in_pane)
+  qev "$TMP/qh-$n_q" session SessionStart h$n_q '"source":"startup"'
+  qev "$TMP/qh-$n_q" working UserPromptSubmit h$n_q '"prompt":"x"'
+  [ -z "$(get "$p" @agent-state)" ] || fail "headless qwen $args reported"
+done
+# So is one in the background of a pane, or with no terminal.
+p=$(qstart "" "$TMP/q-bg" in_background)
+qev "$TMP/q-bg" session SessionStart b1 '"source":"startup"'
+[ -z "$(get "$p" @agent-state)" ] || fail "a qwen in the background of a pane reported"
+to=$(qstart "" "$TMP/q2" in_pane)
+qev "$TMP/q2" session SessionStart t0 '"source":"startup"'
+qstart "" "$TMP/q-tool" detached
+qev "$TMP/q-tool" session SessionStart t1 '"source":"startup"'
+qev "$TMP/q-tool" working UserPromptSubmit t1 '"prompt":"x"'
+[ "$(get "$to" @agent-instance):$(shown "$to")" = "qwen:t0:idle:0" ] || fail "a qwen with no terminal reported: $(get "$to" @agent-instance) $(shown "$to")"
+# Qwen gives a SessionStart or prompt hook's output to the model and takes
+# exit status 2 as a block: the hook prints nothing and succeeds even when a
+# state script fails.
+cp "$TMP/broken/set-state.sh" "$TMP/broken/clear-state.sh"
+for action in session working blocked idle interrupt end; do
+  rc=0; out=$(printf '{"session_id":"q1","hook_event_name":"SessionStart","source":"startup"}' | TMUX_PANE=$pq "$TMP/broken/hook-event.sh" qwen $action 2>&1) || rc=$?
+  [ "$rc:$out" = "0:" ] || fail "qwen $action hook printed or failed: $rc $out"
 done
 
 echo "PASS: hook-event"

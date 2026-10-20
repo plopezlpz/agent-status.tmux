@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
-# The Kimi, MastraCode, Codex and Gemini CLI hook command: map one hook
-# ACTION, with the provider's JSON payload on stdin, to the state scripts.
-# Usage: hook-event.sh <kimi|mastracode|codex|gemini> <session|working|tool|blocked|idle|interrupt|end>
+# The Kimi, MastraCode, Codex, Gemini CLI and Qwen Code hook command: map one
+# hook ACTION, with the provider's JSON payload on stdin, to the state scripts.
+# Usage: hook-event.sh <kimi|mastracode|codex|gemini|qwen> <session|working|tool|blocked|idle|interrupt|end>
 set -eu
 [ -n "${TMUX_PANE:-}" ] || exit 0
 kind="${1:-}" action="${2:-}"
 case "$action" in session|working|tool|blocked|idle|interrupt|end) ;; *) exit 0 ;; esac
 # How each provider's command line reads: its binary names, the options that
-# take a value (and those whose value is optional), headless subcommands and
-# options, and whether -p/--prompt makes a run headless.
-first="" prompts=1 foreground="" flags=""
+# take a value (and those whose value is optional, or a list of them),
+# headless subcommands and options, options that keep a run interactive,
+# whether -p/--prompt makes a run headless, and whether any other word (a
+# prompt) does.
+first="" prompts=1 foreground="" flags="" interactive="" arrays="" positional=""
 case "$kind" in
   # Kimi retitles its process "kimi-code" as it starts, cut to the length of
   # its command line ("kimi -p" turns into "kimi-co"), so its argv is gone by
@@ -46,18 +48,32 @@ case "$kind" in
     values="-m --model -i --prompt-interactive --approval-mode --policy --admin-policy --allowed-mcp-server-names --allowed-tools -e --extensions --session-file --session-id --include-directories -o --output-format"
     optional="-r --resume -w --worktree --delete-session" commands=""
     ;;
+  # Qwen Code runs its CLI in the launcher's own process (node .../qwen). A
+  # prompt argument, a subcommand (serve, ...), -p and --acp run headless;
+  # -i keeps a prompt interactive. It also runs headless when its input isn't
+  # a terminal, which argv doesn't show: as for Kimi, a run reports only as
+  # the foreground job of its terminal, which one started by another agent's
+  # tool is not.
+  qwen)
+    names="qwen" first=1 foreground=1 positional=1 commands=""
+    flags="--acp --experimental-acp" interactive="-i --prompt-interactive"
+    values="-m --model --advisor --system-prompt --append-system-prompt --output-style --sandbox-image --approval-mode --channel --mcp-config --openai-logging-dir --openai-api-key --openai-base-url --input-format -o --output-format --json-fd --json-file --json-schema --input-file --session-id --max-session-turns --max-wall-time --max-tool-calls --max-subagent-depth --auth-type --proxy --telemetry-target --telemetry-otlp-endpoint --telemetry-otlp-protocol --telemetry-outfile"
+    optional="-s --sandbox -r --resume --worktree"
+    arrays="--fallback-model --allowed-mcp-server-names --disable-mcp-server --allowed-tools -e --extensions --include-directories --add-dir --core-tools --exclude-tools --disabled-slash-commands"
+    ;;
   *) exit 0 ;;
 esac
-# Gemini shows what a hook prints (stdout, else stderr) and takes exit status
-# 2 as a block (of the prompt, or a retry of the turn): print nothing and
-# always succeed.
-[ "$kind" != gemini ] || { exec >/dev/null 2>&1; trap 'exit 0' EXIT; }
+# Gemini and Qwen show what a hook prints (Qwen gives a SessionStart or
+# UserPromptSubmit hook's output to the model) and take exit status 2 as a
+# block: print nothing and always succeed.
+case "$kind" in gemini|qwen) exec >/dev/null 2>&1; trap 'exit 0' EXIT ;; esac
 
 # Headless runs (`kimi -p`, `kimi acp|web|rc`, `mastracode --prompt`,
-# `codex exec`, Codex's background server, `gemini -p`) can inherit
-# TMUX_PANE from an agent pane and must not report or steal its identity. The
-# payload has no mode field, so read the nearest provider ancestor's argv
-# (and for Kimi and Gemini, whether it is its terminal's foreground job).
+# `codex exec`, Codex's background server, `gemini -p`, `qwen "fix it"`) can
+# inherit TMUX_PANE from an agent pane and must not report or steal its
+# identity. The payload has no mode field, so read the nearest provider
+# ancestor's argv (and for Kimi, Gemini and Qwen, whether it is its
+# terminal's foreground job).
 # Only words before the first non-option word count (a prompt like "fix the
 # -p flag" is never parsed). Where /proc has the argv, a quoted prompt stays one word, and one
 # with a blank in it is a prompt. Elsewhere `ps` loses quoting, so a prompt
@@ -95,19 +111,23 @@ headless() {
         value:*) skip=""; continue ;;
         optional:-*) skip="" ;;
         optional:*) skip=""; continue ;;
+        array:-*) skip="" ;;
+        array:*) continue ;;
       esac
       if [ -n "$prompts" ]; then
         case "$word" in -p|--prompt|--prompt=*|-p?*) set +f; return 0 ;; esac
       fi
       case "$word" in
         -*)
-          [[ " $flags " != *" $word "* ]] || { set +f; return 0; }
+          [[ " $flags " != *" ${word%%=*} "* ]] || { set +f; return 0; }
+          [[ " $interactive " != *" ${word%%=*} "* ]] || break
           [[ " $values " != *" $word "* ]] || skip=value
           [[ " $optional " != *" $word "* ]] || skip=optional
+          [[ " $arrays " != *" $word "* ]] || skip=array
           ;;
-        *[[:space:]]*) break ;;
+        *[[:space:]]*) [ -z "$positional" ] || { set +f; return 0; }; break ;;
         *)
-          [[ " $commands " != *" $word "* ]] || { set +f; return 0; }
+          [[ " $commands " != *" $word "* ]] && [ -z "$positional" ] || { set +f; return 0; }
           break
           ;;
       esac
@@ -138,12 +158,13 @@ if [ "$kind" = gemini ] && [ "$action" = tool ]; then
   exit 0
 fi
 
-# Codex's payload is what set-state and clear-state read from a Claude hook
-# (session_id, hook_event_name, source, agent_id, tool_name, prompt, ...):
-# hand it over untouched. A hook must print nothing (SessionStart and
-# UserPromptSubmit output reaches the model) and exit 0 (2 blocks the event).
-if [ "$kind" = codex ]; then
-  export AGENT_STATUS_KIND=codex
+# Codex's and Qwen's payloads are what set-state and clear-state read from a
+# Claude hook (session_id, hook_event_name, source, agent_id, tool_name,
+# prompt, ...): hand them over untouched. A hook must print nothing
+# (SessionStart and UserPromptSubmit output reaches the model) and exit 0 (2
+# blocks the event).
+if [ "$kind" = codex ] || [ "$kind" = qwen ]; then
+  export AGENT_STATUS_KIND=$kind
   case "$action" in
     session) state=idle ;;
     working) state=working ;;

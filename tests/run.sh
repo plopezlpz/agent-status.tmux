@@ -12,8 +12,8 @@ TMUX_TMPDIR=$(mktemp -d /tmp/agent-status-tests.XXXXXX) || exit 1
 export TMUX_TMPDIR
 unset TMUX
 # The hooks ignore headless runs (claude -p): the suite may be run from one.
-# Nor may an installer test reach a real Claude, Codex or Gemini config.
-unset CLAUDE_CODE_ENTRYPOINT CLAUDE_CONFIG_DIR CODEX_HOME GEMINI_CLI_HOME
+# Nor may an installer test reach a real Claude, Codex, Gemini or Qwen config.
+unset CLAUDE_CODE_ENTRYPOINT CLAUDE_CONFIG_DIR CODEX_HOME GEMINI_CLI_HOME QWEN_HOME
 cleanup() {
   local s
   for s in "$TMUX_TMPDIR"/tmux-*/*; do

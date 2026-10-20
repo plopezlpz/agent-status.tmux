@@ -8,7 +8,7 @@ TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 fail(){ echo "FAIL: $1" >&2; exit 1; }
 command -v jq >/dev/null 2>&1 || { echo "SKIP: install all (jq missing)"; exit 0; }
 unset PI_EXTENSIONS_DIR PI_CODING_AGENT_DIR PI_CONFIG_DIR OMP_EXTENSIONS_DIR OPENCODE_CONFIG_DIR \
-  KILO_CONFIG_DIR KIMI_CODE_HOME MASTRACODE_HOME CLAUDE_SETTINGS CLAUDE_CONFIG_DIR CODEX_HOME GEMINI_CLI_HOME XDG_CONFIG_HOME
+  KILO_CONFIG_DIR KIMI_CODE_HOME MASTRACODE_HOME CLAUDE_SETTINGS CLAUDE_CONFIG_DIR CODEX_HOME GEMINI_CLI_HOME QWEN_HOME XDG_CONFIG_HOME
 
 # Only Kilo, Claude and Codex are installed.
 export HOME="$TMP/home"; mkdir -p "$HOME/.config/kilo" "$HOME/.claude" "$HOME/.codex"
@@ -16,7 +16,7 @@ bash "$ROOT/manage-provider.sh" install >/dev/null 2>&1 || fail "install all fai
 [ -L "$HOME/.config/kilo/plugin/agent-status.tmux.js" ] || fail "kilo adapter not installed"
 grep -qF "$ROOT/" "$HOME/.claude/settings.json" || fail "claude hooks not installed"
 grep -qF "$ROOT/" "$HOME/.codex/hooks.json" || fail "codex hooks not installed"
-for d in .pi .omp .config/opencode .kimi-code .mastracode .gemini; do
+for d in .pi .omp .config/opencode .kimi-code .mastracode .gemini .qwen; do
   [ ! -e "$HOME/$d" ] || fail "created $d for an agent that isn't installed"
 done
 hooks() { cat "$HOME/.claude/settings.json" "$HOME/.codex/hooks.json" | grep -oF "$ROOT/" | wc -l; }
