@@ -22,10 +22,12 @@ sshd or mosh-server), preferring the one captured at notify time; a remote
 client such as a phone is never switched. The click also marks the pane
 seen, which focus alone does not while another client already shows it.
 
-A state change is one tmux read and one chained write (pane options, the
-window icon), so attached clients redraw once. A report that repeats the
-pane's state (each Claude tool call makes two) is settled from a single read,
-before the payload is parsed or the pane lock taken.
+A state change is one chained tmux write (pane options, the window icon), so
+attached clients redraw once. It reads the pane once under the pane lock; a
+working report, or an adapter's asking report, also reads it once before
+taking the lock, and a report that repeats the pane's state (each Claude tool
+call makes two) is settled there, before the payload is parsed or the lock
+taken.
 
 The window icon `@agent-icon` is a plain window option, but tmux computes it:
 `set-option -wF @agent-icon '#{E:@agent-icon-format}'` evaluates the worst
