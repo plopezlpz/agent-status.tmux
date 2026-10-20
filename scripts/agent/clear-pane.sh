@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# tmux pane-exited / pane-died hook: clear retained dead-pane options, log,
-# and reaggregate.
+# tmux pane-died hook: clear retained dead-pane options, log, and
+# reaggregate. (Hooks set by an older plugin load also run it on pane-exited.)
 # Usage: clear-pane.sh <pane_id> [window_id]
 # By pane-exited the pane is already gone (hence #{hook_pane}/#{hook_window},
 # not #{pane_id}); with remain-on-exit, pane-died fires and the pane remains.
@@ -29,4 +29,4 @@ agent_unlock
 
 [ -z "$state" ] || agent_log "pane=$pane $state->cleared (exit)"
 
-[ -z "$window" ] || "$SCRIPT_DIR/update-window-icon.sh" "$window" || true
+[ -z "$window" ] || agent_update_window "$window"

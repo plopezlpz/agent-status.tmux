@@ -9,8 +9,7 @@ provider lifecycle event
   -> pane options (@agent-state, @agent-unseen, @agent-instance,
                    @agent-seq, @agent-kind, @agent-state-at,
                    @agent-auto-description)
-  -> push-only window aggregation / notification
-  -> @agent-revision bump, for UIs that poll one value instead of the options
+  -> window icon / notification
 ```
 
 `finished` is stored as `idle + unseen`; focusing the pane acknowledges it.
@@ -18,14 +17,23 @@ A completion or permission prompt in the pane a terminal-focused client is
 already showing is not notified; a completion keeps the finished marker until
 focus or the next prompt. A notification click switches a local client (one
 not running under sshd or mosh-server), preferring the one captured at notify
-time; a remote client such as a phone is never switched. Plugin tmux hooks (`run-shell -b`) clear panes on `pane-exited`/`pane-died` and reconcile window icons on
-`window-layout-changed`/`pane-moved` (kill, break, join, move and swap-pane).
+time; a remote client such as a phone is never switched.
+
+The window icon `@agent-icon` is a plain window option, but tmux computes it:
+`set-option -wF @agent-icon '#{E:@agent-icon-format}'` evaluates the worst
+pane state in the window, so updating it starts no process. State changes
+run it after their pane write; the plugin's `pane-exited`,
+`window-layout-changed` and `pane-moved` hooks run it directly (kill, break,
+join, move and swap-pane), and every window is recomputed on load. The
+`pane-focus-in` hook checks for an unseen completion in tmux and runs a script
+only to clear one; `pane-died` clears a remain-on-exit pane (`run-shell -b`).
+
 Authoritative session IDs are provider-qualified, and adapters with an
 in-process event stream submit monotonic sequences so stale reports are
-rejected. Pane and window lock files beside the tmux socket serialize shared
-updates; a lock whose holder died is broken at once and any lock held past
-~3s is treated as stale, so a killed hook cannot wedge a pane. Tmux pane
-options disappear with panes; only the transition audit log lives on disk.
+rejected. Pane lock files beside the tmux socket serialize shared updates; a
+lock whose holder died is broken at once and any lock held past ~3s is
+treated as stale, so a killed hook cannot wedge a pane. Tmux pane options
+disappear with panes; only the transition audit log lives on disk.
 
 Titles: `@agent-auto-description` is the first prompt; `@agent-description`
 is a title the user set, which UIs show instead. A UI may set it directly

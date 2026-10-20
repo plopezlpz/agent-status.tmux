@@ -17,14 +17,27 @@ agent_clear_pane() {
   done
 }
 
-# agent_update_window PANE: re-aggregate the pane's window icon, unless the
-# pane is gone (display -t on a vanished pane silently describes another
-# pane, so every pane query carries #{pane_id} and checks it).
+# AGENT_ICON: a window's icon as a tmux format: the worst agent state among
+# its panes (asking > working > finished > idle) in that state's
+# @agent-icon-* glyph and @agent-color-* colour. Each pane adds
+# "<state><unseen> " to the #{P:} list (a finished pane adds "idle1 "). tmux
+# evaluates it against the target's window, so recomputing the plain
+# @agent-icon value costs one command and no process, and a write can chain
+# it after its own with \;:
+#   set-option -wF -t PANE_OR_WINDOW @agent-icon "$AGENT_ICON"
+# The plugin publishes it as @agent-icon-format for its tmux hooks; scripts
+# use this copy, which works before a reload has published a new one.
+AGENT_ICON=""
+for _s in idle:idle finished:idle1 working:working asking:asking; do
+  _g="@agent-icon-${_s%%:*}" _c="@agent-color-${_s%%:*}"
+  AGENT_ICON="#{?#{m:*${_s#*:}*,#{P:#{@agent-state}#{@agent-unseen} }},#{?#{&&:#{$_g},#{$_c}},#[push-default]#[fg=#{$_c}]#{$_g}#[fg=default]#[pop-default],#{$_g}},$AGENT_ICON}"
+done
+unset _s _g _c
+
+# agent_update_window TARGET: recompute the icon of TARGET's window (a pane or
+# window id).
 agent_update_window() {
-  local ids
-  ids=$(tmux display -t "$1" -p '#{pane_id} #{window_id}' 2>/dev/null || true)
-  [ "${ids%% *}" = "$1" ] || return 0
-  "${BASH_SOURCE[0]%/*}/update-window-icon.sh" "${ids#* }" || true
+  tmux set-option -wF -t "$1" @agent-icon "$AGENT_ICON" 2>/dev/null || true
 }
 
 # agent_bump_revision: change the global token UIs watch for any update.
@@ -62,9 +75,8 @@ agent_log() {
 # milliseconds) as stale, so a lost unlock can never wedge a pane's hooks.
 # (A wedged owner that wakes in the instant of a break could still remove
 # the breaker's lock; dead owners, the real case, are broken safely.)
-# Signals unlock via the EXIT trap. A process holds at most one lock, and
-# pane locks are released before update-window-icon.sh takes its window lock,
-# so ordering cannot deadlock.
+# Signals unlock via the EXIT trap. A process holds at most one lock, so
+# ordering cannot deadlock.
 #
 # Locks live beside the server socket in tmux's per-user 0700 tmux-UID
 # directory, which every client of the server agrees on whatever its TMPDIR.

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Exercise the plugin's tmux hooks (pane exit/death, layout reconciliation),
+# Exercise the plugin's tmux hooks (focus, pane exit/death, window icons),
 # stdin handling, compaction, locks, locale, focused completion, notification
 # clicks and log failures on isolated tmux servers.
 set -euo pipefail
@@ -60,18 +60,31 @@ finishes_within(){
   kill "$2" 2>/dev/null || true; return 1
 }
 
-# ----- plugin load: hooks are -b, use hook_* formats, idempotent -----------
+# ----- plugin load: one entry per hook, whatever the checkout is called -----
 tmux set-hook -g pane-exited 'display-message user-hook'
+# A checkout in another directory (a clone not named agent-status.tmux, or a
+# moved one): reloading from it, then from here, replaces its entries too.
+mkdir "$TMP/elsewhere"
+cp -R "$PLUGIN_DIR/agent-status.tmux" "$PLUGIN_DIR/scripts" "$TMP/elsewhere/"
+bash "$TMP/elsewhere/agent-status.tmux"
+bash "$TMP/elsewhere/agent-status.tmux"
 bash "$PLUGIN_DIR/agent-status.tmux"
 bash "$PLUGIN_DIR/agent-status.tmux"
 for h in pane-focus-in pane-exited pane-died window-layout-changed pane-moved; do
   hooks=$(tmux show-hooks -g "$h")
-  n=$(printf '%s\n' "$hooks" | grep -cF 'agent-status.tmux/scripts/agent' || true)
+  ! printf '%s\n' "$hooks" | grep -qF "$TMP/elsewhere" || fail "$h kept an entry from another checkout"
+  n=$(printf '%s\n' "$hooks" | grep -cE 'scripts/agent|@agent-icon-format' || true)
   [ "$n" -eq 1 ] || fail "$h has $n plugin entries after reload"
-  printf '%s\n' "$hooks" | grep -F 'agent-status.tmux/scripts/agent' | grep -F 'run-shell -b' >/dev/null || fail "$h hook is not run-shell -b"
+done
+# Scripts run in the background, and only when there is work: a routine
+# focus change, layout change or pane exit starts no process at all.
+tmux show-hooks -g pane-died | grep -F "run-shell -b \"$AGENT/clear-pane.sh" | grep -F '#{hook_pane}' >/dev/null || fail "pane-died hook is not run-shell -b with #{hook_pane}"
+tmux show-hooks -g pane-focus-in | grep -F 'if-shell -F "#{&&:#{==:#{@agent-state},idle},#{==:#{@agent-unseen},1}}"' | grep -F "run-shell -b '$AGENT/clear-finished.sh" >/dev/null || fail "pane-focus-in does not check for an unseen completion in tmux"
+for h in pane-exited window-layout-changed pane-moved; do
+  line=$(tmux show-hooks -g "$h" | grep -F '@agent-icon-format')
+  [ "${line#*] }" = 'set-option -Fw @agent-icon "#{E:@agent-icon-format}"' ] || fail "$h hook is not a plain icon update: $line"
 done
 tmux show-hooks -g pane-exited | grep -F 'user-hook' >/dev/null || fail "reload dropped a user pane-exited hook"
-tmux show-hooks -g pane-exited | grep -F '#{hook_pane}' >/dev/null || fail "pane-exited hook does not use #{hook_pane}"
 
 # ----- pane-exited clears the exited pane, not the session's current one ---
 # Record what tmux passes as #{hook_window}: the plugin relies on it.
@@ -111,14 +124,6 @@ TMUX_PANE="$p3" "$AGENT/clear-state.sh" quit a-3 test </dev/null || fail "clear-
 "$AGENT/clear-finished.sh" "$p3" || fail "clear-finished for a vanished pane failed"
 [ "$(wc -l < "$TMP/agent.log")" = "$lines" ] || fail "a vanished pane's report was logged"
 [ "$(get "$p1" @agent-state)" = working ] || fail "a vanished pane's report changed another pane"
-
-# ----- layout fast path: an unchanged window costs one tmux call -----------
-[ "$(tmux show-option -wqv -t "$w1" @agent-icon-key)" = "working:0 " ] || fail "window agent key not cached"
-mkdir "$TMP/cbin"
-printf '#!/bin/sh\necho call >> %s\nexec %s "$@"\n' "$TMP/tmux-calls" "$REAL_TMUX" > "$TMP/cbin/tmux"
-chmod +x "$TMP/cbin/tmux"
-PATH="$TMP/cbin:$PATH" "$AGENT/update-window-icon.sh" "$w1" layout
-[ "$(wc -l < "$TMP/tmux-calls" | tr -d ' ')" = 1 ] || fail "layout change in an unchanged agent window made $(wc -l < "$TMP/tmux-calls") tmux calls"
 
 # ----- layout changes reconcile icons -------------------------------------
 p4=$(tmux split-window -d -P -F '#{pane_id}' -t "$p1")
@@ -313,7 +318,7 @@ printf '#!/bin/sh\nwhile [ $# -gt 0 ]; do [ "$1" = --group ] && touch "%s/notifi
 chmod +x "$TMP/rbin/alerter"
 nstate(){ PATH="$TMP/rbin:$PATH" TMUX_PANE="$1" "$SET" "${@:2}" </dev/null; }
 notified(){ [ -e "$TMP/notified-agent-$1" ]; }
-p8=$(tmux split-window -d -P -F '#{pane_id}' -t "$p1")
+p8=$(tmux new-window -d -P -F '#{pane_id}' -t t:)
 nstate "$p1" working "" a-1 50 test
 nstate "$p1" finished "" a-1 51 test
 grep -F "pane=$p1 working->finished (focused, not notified)" "$TMP/agent.log" >/dev/null || fail "focused completion was not recognised"
@@ -327,6 +332,14 @@ nstate "$p8" working "" a-8 1 test reset
 nstate "$p8" finished "" a-8 2 test
 [ "$(get "$p8" @agent-unseen)" = 1 ] || fail "completion in a background pane was not unseen"
 eventually notified "$p8" || fail "completion in a background pane was not notified"
+# Focusing it marks it seen (the pane-focus-in hook) and recomputes the icon.
+icon_is "$p8" finished || fail "background completion did not show as finished"
+tmux select-window -t "$p8"
+seen(){ [ "$(get "$p8" @agent-unseen)" = 0 ]; }
+eventually seen || fail "focusing a finished pane did not mark it seen"
+eventually icon_is "$p8" idle || fail "focusing a finished pane did not recompute its icon"
+tmux select-window -t "$p1"
+tmux kill-window -t "$p8"
 outer send-keys -t o -H 1b 5b 4f   # terminal focus-out
 unfocused(){ ! focused; }
 eventually unfocused || fail "client did not lose focus"
