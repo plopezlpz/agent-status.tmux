@@ -208,11 +208,16 @@ process.env.TMUX_PANE = "%2";
   await event("permission.asked", { sessionID: "root-1" });
   await event("session.idle", { sessionID: "root-1" });
   let got = await drain();
-  check(got[0]?.startsWith("auto-desc.sh|set|fix the bug|"), "OpenCode records first prompt text");
-  check(got[1]?.startsWith("set-state.sh|working||root-1|") && got[1].includes("|opencode||"), "OpenCode chat.message -> working with root identity");
-  check(got.slice(1).map(l => l.split("|")[1]).join(",") === "working,working,asking,finished", "OpenCode root lifecycle mapping");
+  // A prompt binds its root (a session started from the home screen is shown
+  // by the TUI only after its first events), before its label replaces the
+  // old one, then reports working in a pane the bind left as it was.
+  check(got[0]?.startsWith("set-state.sh|working||root-1|") && got[0].includes("|opencode|bind|"), "OpenCode chat.message binds its root");
+  check(got[1]?.startsWith("auto-desc.sh|set|fix the bug|"), "OpenCode records first prompt text");
+  check(got[2]?.startsWith("set-state.sh|working||root-1|") && got[2].includes("|opencode||"), "OpenCode chat.message -> working with root identity");
+  const states = (lines: string[]) => lines.filter(l => l.startsWith("set-state.sh|")).map(l => l.split("|")[1] + (l.includes("|bind|") ? "/bind" : "")).join(",");
+  check(states(got) === "working/bind,working,working,asking,finished", "OpenCode root lifecycle mapping");
   check(got.every(l => l.endsWith("<stdin:closed>")), "OpenCode closes script stdin");
-  const seqs = got.slice(1).map(l => Number(l.split("|")[4]));
+  const seqs = got.filter(l => l.startsWith("set-state.sh|")).map(l => Number(l.split("|")[4]));
   check(seqs.every((n, i) => i === 0 || n > seqs[i - 1]), "OpenCode sends monotonic sequences");
 
   await event("session.created", { sessionID: "child-1", info: { id: "child-1", parentID: "root-1" } });
@@ -236,7 +241,11 @@ process.env.TMUX_PANE = "%2";
   await event("session.error", { sessionID: "root-1", error: { name: "APIError", data: { message: "boom" } } });
   await event("session.idle", { sessionID: "root-1" });
   got = await drain();
-  check(got.map(l => l.split("|")[1]).join(",") === "working,asking,finished", "OpenCode real errors still ask, and the next turn finishes");
+  check(states(got) === "working/bind,working,asking,finished", "OpenCode real errors still ask, and the next turn finishes");
+  // A new session from the home screen, while the pane shows root-1.
+  await plugin["chat.message"]({ sessionID: "root-2" }, { parts: [{ type: "text", text: "second session" }] });
+  got = await drain();
+  check(got.length === 3 && got[0].startsWith("set-state.sh|working||root-2|") && got[0].includes("|bind|") && got[1].startsWith("auto-desc.sh|set|second session|") && got[2].startsWith("set-state.sh|working||root-2|") && got[2].includes("|opencode||"), `OpenCode a prompt in another root rebinds the pane before its label (${JSON.stringify(got)})`);
   // A rejected permission or question, or an Esc on a `!` shell command, ends
   // the turn without completing it.
   for (const [name, stop] of [

@@ -159,9 +159,9 @@ case "$prev_seq" in ""|*[!0-9]*) prev_seq="" ;; esac
 # same agent. The write below upgrades it.
 same="$prev_instance"
 if [ -z "$prev_kind" ] && [ -n "$kind" ] && [ "$kind:$prev_instance" = "$instance" ]; then same="$instance"; fi
-# The OpenCode 1.x TUI binds the root session it shows, which its server
-# plugin may have bound first, with a first prompt's label and state: keep
-# those. A real rebind also drops the old session's label.
+# The OpenCode 1.x TUI binds the root session it shows, and its server
+# plugin the root session of each prompt: a pane already bound to it keeps
+# its label and state. A real rebind also drops the old session's label.
 rebind=""
 if [ "$reset" = bind ]; then
   [ -n "$instance" ] && [ "$instance" != "$same" ] || exit 0

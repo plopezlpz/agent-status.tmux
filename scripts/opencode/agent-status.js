@@ -11,6 +11,12 @@ export const AgentStatusPlugin = async () => {
     "chat.message": async ({ sessionID }, output) => {
       if (sessionID && childSessions.has(sessionID)) return;
       const prompt = output?.parts?.find(part => part?.type === "text" && part.text)?.text;
+      // A prompt claims the pane for its root. The TUI shows a session
+      // started from the home screen only after its first events, which a
+      // pane still holding the previous session would drop. `bind` leaves a
+      // pane already showing this root as it is (the plain report then sets
+      // working), and a rebind drops the old label before the new one is set.
+      void report("working", sessionID, "bind");
       if (prompt) void run("auto-desc.sh", ["set", prompt]);
       void report("working", sessionID);
     },

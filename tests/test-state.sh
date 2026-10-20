@@ -112,7 +112,20 @@ state "$p2" idle "" oc-2 "" opencode bind
 [ -z "$(get "$p2" @agent-auto-description)" ] || fail "bind to another root kept the old label"
 state "$p2" idle "" "" "" opencode bind
 [ "$(get "$p2" @agent-instance)" = opencode:oc-2 ] || fail "bind without an instance changed the pane"
-TMUX_PANE="$p2" "$CLEAR" quit oc-2 opencode </dev/null
+# The server plugin binds each prompt's root (bind, label, working): a new
+# session started from the home screen, which the TUI shows only after its
+# first events, works and keeps its title, and the TUI's bind then keeps it.
+prompt(){ state "$p2" working "" "$1" "$2" opencode bind; TMUX_PANE="$p2" "$PLUGIN_DIR/scripts/agent/auto-desc.sh" set "$3" </dev/null; state "$p2" working "" "$1" "$(($2 + 1))" opencode; }
+prompt oc-2 10 "first session"
+state "$p2" finished "" oc-2 12 opencode
+prompt oc-3 13 "second session"
+[ "$(get "$p2" @agent-state):$(get "$p2" @agent-instance):$(get "$p2" @agent-auto-description)" = "working:opencode:oc-3:second session" ] || fail "a prompt in a new root did not bind it working with its label"
+state "$p2" idle "" oc-3 "" opencode bind
+[ "$(get "$p2" @agent-state):$(get "$p2" @agent-auto-description)" = "working:second session" ] || fail "the TUI's bind after the prompt reset the pane"
+state "$p2" finished "" oc-3 15 opencode
+prompt oc-3 16 "a later prompt"
+[ "$(get "$p2" @agent-state):$(get "$p2" @agent-auto-description)" = "working:second session" ] || fail "a later prompt in the same root did not work, or changed the label"
+TMUX_PANE="$p2" "$CLEAR" quit oc-3 opencode </dev/null
 
 if [ -n "$JQ" ]; then
   printf '%s\n' '{"session_id":"claude-1","hook_event_name":"SessionStart"}' | \
