@@ -94,6 +94,14 @@ done
   OMP_PROFILE=work bash "$ROOT/manage-provider.sh" uninstall omp >/dev/null
   [ ! -e "$PI_CONFIG_DIR/profiles/work/agent/extensions/agent-status.ts" ] || fail "omp profile uninstall left its link"
   [ ! -e "$PI_CONFIG_DIR/agent/extensions/agent-status.ts" ] || fail "omp profile install wrote the default agent dir"
+  # OMP reads "default" (and a blank name) as no profile.
+  for var in OMP_PROFILE PI_PROFILE; do
+    env "$var=default" bash "$ROOT/manage-provider.sh" install omp >/dev/null
+    [ -L "$PI_CONFIG_DIR/agent/extensions/agent-status.ts" ] || fail "omp $var=default not installed into the default agent dir"
+    [ ! -e "$PI_CONFIG_DIR/profiles/default" ] || fail "omp $var=default installed into a profile named default"
+    env "$var= default " bash "$ROOT/manage-provider.sh" uninstall omp >/dev/null
+    [ ! -e "$PI_CONFIG_DIR/agent/extensions/agent-status.ts" ] || fail "omp $var=' default ' uninstall left the default link"
+  done
   if OMP_PROFILE=../x bash "$ROOT/manage-provider.sh" install omp >/dev/null 2>&1; then fail "omp accepted an invalid profile name"; fi
   [ ! -e "$PI_CONFIG_DIR/x" ] && [ ! -e "$PI_CONFIG_DIR/profiles/x" ] || fail "omp invalid profile wrote outside its profiles"
 )

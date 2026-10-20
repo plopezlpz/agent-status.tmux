@@ -165,6 +165,9 @@ case "$PROVIDER" in
     base="${PI_CONFIG_DIR:-.omp}"; case "$base" in /*) ;; *) base="$HOME/$base" ;; esac
     # A profile (OMP_PROFILE, else PI_PROFILE) has its own agent dir.
     profile="${OMP_PROFILE-${PI_PROFILE:-}}" agent="$base/agent"
+    # Like OMP: surrounding blanks are trimmed and "default" means no profile.
+    profile="${profile#"${profile%%[![:space:]]*}"}" profile="${profile%"${profile##*[![:space:]]}"}"
+    [ "$profile" != default ] || profile=""
     if [ -n "$profile" ]; then
       [[ "$profile" =~ ^[a-z0-9][a-z0-9._-]{0,63}$ ]] || { echo "agent-status: invalid OMP profile name '$profile'" >&2; exit 1; }
       agent="$base/profiles/$profile/agent"
