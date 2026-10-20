@@ -17,7 +17,8 @@ export const AgentStatusPlugin = async () => {
       // pane already showing this root as it is (the plain report then sets
       // working), and a rebind drops the old label before the new one is set.
       void report("working", sessionID, "bind");
-      if (prompt) void run("auto-desc.sh", ["set", prompt]);
+      // Its start only: a whole pasted file must not reach argv.
+      if (prompt) void run("auto-desc.sh", ["set", prompt.slice(0, 2000)]);
       void report("working", sessionID);
     },
     event: async ({ event }) => {

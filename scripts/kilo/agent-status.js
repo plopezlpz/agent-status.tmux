@@ -41,7 +41,8 @@ export const AgentStatusPlugin = async () => {
       if (sessionID && childSessions.has(sessionID)) return;
       const fresh = claim(sessionID, true);
       const prompt=output?.parts?.find(part => part?.type === "text" && part.text)?.text;
-      if (prompt) void run("auto-desc.sh", ["set", prompt]);
+      // Its start only: a whole pasted file must not reach argv.
+      if (prompt) void run("auto-desc.sh", ["set", prompt.slice(0, 2000)]);
       void report("working", sessionID, fresh);
     },
     event: async ({event}) => {

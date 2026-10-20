@@ -68,9 +68,10 @@ export default {
       "session.inbox.enqueued": ({ sessionID, item }) => {
         const text = item?.type === "user" ? item.payload?.text : undefined;
         if (!root(sessionID) || typeof text !== "string" || !text.trim() || prompts.has(sessionID)) return;
-        prompts.set(sessionID, text);
+        // Its start only: a whole pasted file must not reach argv.
+        prompts.set(sessionID, text.slice(0, 2000));
         sync();
-        if (sessionID === bound) void run("auto-desc.sh", ["set", text]);
+        if (sessionID === bound) void run("auto-desc.sh", ["set", prompts.get(sessionID)]);
       },
       "session.execution.started": ({ sessionID }) => {
         if (!root(sessionID)) return;

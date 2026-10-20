@@ -46,7 +46,7 @@ Notable changes to agent-status.tmux, newest first. The format follows [Keep a C
 - OMP: a turn left waiting on a background job that was cancelled now settles instead of staying working.
 - OMP: a turn that ends in a provider error always asks and shows the error, whatever its wording.
 - `manage-provider.sh install omp` installs into the profile named by `OMP_PROFILE` (else `PI_PROFILE`). Before, it reported success and omp never loaded the adapter. For `omp --profile <name>`, install with `OMP_PROFILE=<name>`. As in OMP, `default` names the default profile.
-- pi and OMP use only the start of a long prompt for the pane's title, so a huge pasted prompt no longer leaves the pane without a title.
+- pi, OMP, OpenCode and Kilo use only the start of a long prompt for the pane's title, so a huge pasted prompt no longer leaves the pane without a title.
 - Claude Code: a subagent's open permission prompt no longer ends when the main thread launches or gets back another Agent call. It ends when that subagent stops (new `SubagentStop` hook) or when the foreground Agent call that ran it returns.
 - Claude Code: a read-only tool that starts beside one waiting for permission no longer drops the pane from "asking".
 - Claude Code: an MCP server's form or browser-URL request shows as "asking" until you answer it (new `Elicitation` and `ElicitationResult` hooks). A request that comes between turns leaves the pane as it was once answered.

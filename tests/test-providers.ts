@@ -245,7 +245,11 @@ process.env.TMUX_PANE = "%2";
   // A new session from the home screen, while the pane shows root-1.
   await plugin["chat.message"]({ sessionID: "root-2" }, { parts: [{ type: "text", text: "second session" }] });
   got = await drain();
+  const pasted = (lines: string[]) => lines.find(l => l.startsWith("auto-desc.sh|set|"))?.split("|")[2].length;
   check(got.length === 3 && got[0].startsWith("set-state.sh|working||root-2|") && got[0].includes("|bind|") && got[1].startsWith("auto-desc.sh|set|second session|") && got[2].startsWith("set-state.sh|working||root-2|") && got[2].includes("|opencode||"), `OpenCode a prompt in another root rebinds the pane before its label (${JSON.stringify(got)})`);
+  // Only a long prompt's start reaches argv.
+  await plugin["chat.message"]({ sessionID: "root-2" }, { parts: [{ type: "text", text: "x".repeat(300000) }] });
+  check(pasted(await drain()) === 2000, "OpenCode passes only a long prompt's start");
   // A rejected permission or question, or an Esc on a `!` shell command, ends
   // the turn without completing it.
   for (const [name, stop] of [
@@ -289,6 +293,9 @@ process.env.TMUX_PANE = "%3";
   check(got[1]?.startsWith("set-state.sh|idle||k-root|") && got[1].includes("|kilo|reset|"), "Kilo root session.created resets from info.id");
   check(got[2]?.startsWith("auto-desc.sh|set|kilo prompt|") && got[3]?.startsWith("set-state.sh|working||k-root|") && got[3].includes("|kilo||"), "Kilo prompt in the bound root -> label + working, no reset");
   check(got.every(l => l.endsWith("<stdin:closed>")), "Kilo closes script stdin");
+  await plugin["chat.message"]({ sessionID: "k-root" }, { parts: [{ type: "text", text: "x".repeat(300000) }] });
+  got = await drain();
+  check(got.find(l => l.startsWith("auto-desc.sh|set|"))?.split("|")[2].length === 2000, "Kilo passes only a long prompt's start");
 
   await event("session.created", { info: { id: "k-child", parentID: "k-root" } });
   await plugin["chat.message"]({ sessionID: "k-child" }, { parts: [{ type: "text", text: "child" }] });
@@ -489,6 +496,12 @@ process.env.TMUX_PANE = "%7";
   await expect("a subagent view shows its root, a finished turn as seen", "set-state.sh|idle||R1|", "auto-desc.sh|clear|opencode|", "auto-desc.sh|set|fix the bug|");
   open("R1"); route = { type: "home" };
   await quiet("returning to the root or the home screen");
+  // Only a long prompt's start reaches argv, then and on each rebind.
+  emit("session.inbox.enqueued", { sessionID: "R4", inboxID: "m4", item: { type: "user", payload: { text: "y".repeat(300000) } } });
+  open("R4");
+  check(await waitFor("auto-desc.sh|set|y"), "OpenCode 2: a long prompt sets the label");
+  await sleep(50);
+  check(since().find(l => l.startsWith("auto-desc.sh|set|"))?.split("|")[2].length === 2000, "OpenCode 2: passes only a long prompt's start");
   running.add("R3"); open("R3");
   await expect("a session running before the TUI started shows working", "set-state.sh|working||R3|", "auto-desc.sh|clear|opencode|");
 
