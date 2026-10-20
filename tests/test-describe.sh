@@ -45,8 +45,9 @@ alive(){ [ -s "$TMP/pi-pid" ] && kill -0 "$(cat "$TMP/pi-pid")" 2>/dev/null; }
 rc=0; "$DESCRIBE" set '../../escape' x 2>/dev/null || rc=$?
 [ "$rc" = 2 ] || fail "a bad key was not rejected with status 2 ($rc)"
 long=x$(printf 'é%.0s' $(seq 1 300))  # odd byte offset: a byte cut splits an é
-for loc in C ''; do
-  env LC_ALL="$loc" LANG= LC_CTYPE= "$DESCRIBE" set "$p1" "$long"
+# A locale named UTF-8 but not installed counts bytes, like C.
+for loc in C '' xx_XX.UTF-8; do
+  env LC_ALL="$loc" LANG= LC_CTYPE= "$DESCRIBE" set "$p1" "$long" 2>/dev/null
   [ "$(title)" = "x$(printf 'é%.0s' $(seq 1 239))" ] || fail "not cut to 240 characters (LC_ALL=$loc)"
 done
 

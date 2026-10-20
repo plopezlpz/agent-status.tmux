@@ -18,13 +18,12 @@ agent_pane_guard() {
 }
 
 # utf8_cut N TEXT: CUT, the first N characters of TEXT (not bytes, so a
-# multibyte character is never split), even when the caller's locale is not
-# UTF-8.
+# multibyte character is never split) whenever a UTF-8 locale is available:
+# the caller's, or else C.UTF-8. The test is how the locale counts, not its
+# name, which may name a locale that is not installed. (Keep this file UTF-8.)
 utf8_cut() {
-  case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
-    *[Uu][Tt][Ff]-8*|*[Uu][Tt][Ff]8*) ;;
-    *) local LC_ALL=C.UTF-8 2>/dev/null ;;
-  esac
+  local probe='é'
+  [ "${#probe}" = 1 ] || local LC_ALL=C.UTF-8 2>/dev/null
   CUT=${2:0:$1}
 }
 
