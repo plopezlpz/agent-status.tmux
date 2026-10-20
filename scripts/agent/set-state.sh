@@ -260,7 +260,7 @@ case "$notify_state" in
       message="$hook_message"
     fi
     [ -n "$message" ] || message="$name"
-    message=$(printf '%s' "$message" | LC_ALL=C tr -d '\000-\010\013\014\016-\037\177' | tr '\n\r\t' '   ' | cut -c1-240)
+    clean_text "$message"; message=$CLEAN
     case "$socket" in /*) ;; *) socket="" ;; esac
     case "$client" in *[!A-Za-z0-9._:/-]*) client="" ;; esac
     # An agent-team lead's turn ends each time it waits on its teammates, and

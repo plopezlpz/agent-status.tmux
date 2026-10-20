@@ -370,9 +370,10 @@ eventually attached || fail "test client did not attach"
 tmux select-pane -t "$p1"
 focused(){ tmux list-clients -F '#{client_flags}' | grep -q focused; }
 eventually focused || fail "attached client is not focused"
-# A recording notifier: notifications land in $TMP/notified-<pane>.
+# A recording notifier: notifications land in $TMP/notified-<pane>, the last
+# message in $TMP/message.
 mkdir "$TMP/rbin"
-printf '#!/bin/sh\nwhile [ $# -gt 0 ]; do [ "$1" = --group ] && touch "%s/notified-$2"; shift; done\n' "$TMP" > "$TMP/rbin/alerter"
+printf '#!/bin/sh\nwhile [ $# -gt 0 ]; do case "$1" in --group) touch "%s/notified-$2" ;; --message) printf %%s "$2" > "%s/message" ;; esac; shift; done\n' "$TMP" "$TMP" > "$TMP/rbin/alerter"
 chmod +x "$TMP/rbin/alerter"
 nstate(){ PATH="$TMP/rbin:$PATH" TMUX_PANE="$1" "$SET" "${@:2}" </dev/null; }
 notified(){ [ -e "$TMP/notified-agent-$1" ]; }
@@ -423,6 +424,12 @@ seen(){ [ "$(get "$p8" @agent-unseen)" = 0 ]; }
 eventually seen || fail "focusing a finished pane did not mark it seen"
 eventually icon_is "$p8" idle || fail "focusing a finished pane did not recompute its icon"
 tmux select-window -t "$p1"
+# The message is one line without control characters, cut to 240 characters
+# (not bytes, whatever the locale).
+rm -f "$TMP/message"
+LC_ALL=C nstate "$p8" asking $'x\033\n'"$(printf 'é%.0s' $(seq 1 300))" a-8 3 test
+eventually test -s "$TMP/message" || fail "permission prompt in a background pane was not notified"
+[ "$(cat "$TMP/message")" = "x $(printf 'é%.0s' $(seq 1 238))" ] || fail "notification message not cleaned and cut: $(cat "$TMP/message")"
 tmux kill-window -t "$p8"
 outer send-keys -t o -H 1b 5b 4f   # terminal focus-out
 unfocused(){ ! focused; }
