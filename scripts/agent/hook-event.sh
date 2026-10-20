@@ -122,12 +122,13 @@ if [ "$kind" = codex ]; then
   case "$action" in
     session) state=idle ;;
     working) state=working ;;
-    # The model asking the user a question (request_user_input) waits on
-    # them like a permission prompt; its PostToolUse ends the ask.
+    # The model asking the user a question (request_user_input) or for more
+    # permissions (request_permissions) waits on them like a permission
+    # prompt, without a PermissionRequest; its PostToolUse ends the ask.
     tool)
       payload=$(cat 2>/dev/null || true)
       state=working
-      case "$payload" in *'"tool_name":"request_user_input"'*) state=asking ;; esac
+      case "$payload" in *'"tool_name":"request_user_input"'*|*'"tool_name":"request_permissions"'*) state=asking ;; esac
       "$SCRIPT_DIR/set-state.sh" "$state" <<< "$payload" >/dev/null 2>&1 || true
       exit 0
       ;;

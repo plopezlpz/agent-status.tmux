@@ -215,6 +215,11 @@ ev tool PreToolUse '"tool_name":"request_user_input","tool_input":{"questions":[
 [ "$(shown)" = "asking:0:/request_user_input" ] || fail "request_user_input did not ask: $(shown)"
 ev working PostToolUse '"tool_name":"request_user_input","tool_input":{},"tool_use_id":"c4","tool_response":"{}"'
 [ "$(shown)" = "working:0:" ] || fail "the answered question did not end the ask: $(shown)"
+# So is its asking for more permissions, which fires no PermissionRequest.
+ev tool PreToolUse '"tool_name":"request_permissions","tool_input":{"reason":"write the cache","permissions":{}},"tool_use_id":"c6"'
+[ "$(shown)" = "asking:0:/request_permissions" ] || fail "request_permissions did not ask: $(shown)"
+ev working PostToolUse '"tool_name":"request_permissions","tool_input":{},"tool_use_id":"c6","tool_response":"{}"'
+[ "$(shown)" = "working:0:" ] || fail "the granted permissions did not end the ask: $(shown)"
 # A tool whose input only mentions it is not a question.
 ev tool PreToolUse '"tool_name":"Bash","tool_input":{"command":"echo \"tool_name\":\"request_user_input\""},"tool_use_id":"c5"'
 [ "$(shown)" = "working:0:" ] || fail "a mention of request_user_input asked: $(shown)"
