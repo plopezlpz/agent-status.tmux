@@ -70,7 +70,7 @@ carry the tmux server's local time with its UTC offset
 | Kimi Code | shows from the first message (or `/title`, `/new`, a resumed session); a question the model asks in the background shows as working, or finished once the turn ends; a kimi killed by a signal stays listed until the pane's next agent starts | 2.2.0 (no turn run) |
 | MastraCode | runs only the first `SessionEnd` hook, so the installer puts its own first | 0.47.1 (no turn run) |
 | Kilo Code | a TUI attached to a `kilo daemon`, or `kilo attach`, doesn't report: run it with `KILO_NO_DAEMON=1` while a daemon runs; suggestion and network prompts don't show as asking | 7.8.15 (no turn run) |
-| Claude Code | an Esc or a denied prompt shows idle only after Claude's `idle_prompt` (about 60s) | 2.1.296 |
+| Claude Code | an Esc or a denied prompt shows idle only after Claude's `idle_prompt` (about 60s); an approved tool shows asking until it returns; a turn that ends while a cloud session runs for it shows finished | 2.1.296, 2.1.304 (2.1.304 turns not run live) |
 | Codex | run it as `codex --no-daemon` and trust its hooks once (see below); shows from the first prompt; a turn that ends in an error stays working until the next prompt | 0.163.0 (hooks load; not run live) |
 
 Agents without lifecycle hooks (Gemini, Cursor and others) are not
@@ -82,7 +82,10 @@ Headless runs (`claude -p` and the Agent SDK, `opencode run` and `serve`,
 ignored. Kimi hides its arguments, so a kimi reports only as the foreground
 job of its terminal: a `kimi -p` or `kimi acp` you start yourself in a shell
 or an editor reports into that pane. Run any other nested headless agent
-with `TMUX_PANE` cleared, or it takes over the pane it runs in.
+with `TMUX_PANE` cleared, or it takes over the pane it runs in. Claude keeps
+the `CLAUDE_CODE_ENTRYPOINT` it inherits, so a `claude` started where that is
+`sdk-*` (say, from a shell or tmux server that a headless run started)
+doesn't report either.
 
 ### Codex
 
