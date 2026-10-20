@@ -7,7 +7,7 @@
 tmux() { command tmux -u "$@"; }
 
 # Pane options owned by a registration; cleared together on exit.
-AGENT_PANE_OPTIONS="@agent-state @agent-unseen @agent-instance @agent-seq @agent-kind @agent-state-at @agent-auto-description @agent-description @agent-generating @agent-transcript @agent-notify-token @agent-asks"
+AGENT_PANE_OPTIONS="@agent-state @agent-unseen @agent-instance @agent-seq @agent-kind @agent-state-at @agent-auto-description @agent-description @agent-transcript @agent-notify-token @agent-asks"
 
 # agent_pane_guard: exit unless run in a tmux pane ($TMUX_PANE). A headless
 # run (claude -p, the Agent SDK: entrypoint sdk-*) inherits the pane from

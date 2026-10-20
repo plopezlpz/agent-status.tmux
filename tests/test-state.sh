@@ -99,19 +99,6 @@ window=$(tmux display -pt "$p2" '#{window_id}')
 [ -z "$(get "$p2" @agent-state)" ] || fail "pane-exited cleanup left retained state"
 icon_is green I || fail "pane-exited cleanup did not reaggregate window"
 
-# AI title, with a stub pi: success sets a cleaned title, failure keeps the
-# old one.
-mkdir -p "$TMP/fakepi"
-printf '#!/bin/sh\ncat >/dev/null\nprintf "\\n\\"Refactor the VAT rounding\\"\\nextra line\\n"\n' > "$TMP/fakepi/pi"
-chmod +x "$TMP/fakepi/pi"
-PATH="$TMP/fakepi:$PATH" "$DESCRIBE" run "$p1"
-[ "$(get "$p1" @agent-description)" = 'Refactor the VAT rounding' ] || fail "generated title not set cleanly"
-[ -z "$(get "$p1" @agent-generating)" ] || fail "generation left its marker behind"
-printf '#!/bin/sh\ncat >/dev/null\nexit 1\n' > "$TMP/fakepi/pi"
-PATH="$TMP/fakepi:$PATH" "$DESCRIBE" run "$p1"
-[ "$(get "$p1" @agent-description)" = 'Refactor the VAT rounding' ] || fail "failed generation changed the title"
-tmux set-option -p -u -t "$p1" @agent-description
-
 if [ -n "$JQ" ]; then
   printf '%s\n' '{"session_id":"claude-1","hook_event_name":"SessionStart"}' | \
     TMUX_PANE="$p1" AGENT_STATUS_KIND=claude "$SET" idle
@@ -156,8 +143,8 @@ if [ -n "$JQ" ]; then
   printf '%s\n' '{"session_id":"claude-1","hook_event_name":"PostToolUse"}' | TMUX_PANE="$p1" "$SET" working
   [ "$(get "$p1" @agent-instance):$(get "$p1" @agent-kind)" = claude:claude-1:claude ] || fail "a repeated report did not record the pane's first identity"
 
-  # Claude's transcript_path is recorded for generated descriptions; non-.jsonl or relative
-  # paths are ignored.
+  # Claude's transcript_path is recorded for suggested titles; non-.jsonl or
+  # relative paths are ignored.
   printf '%s\n' '{"session_id":"claude-1","hook_event_name":"UserPromptSubmit","transcript_path":"relative.jsonl"}' | \
     TMUX_PANE="$p1" AGENT_STATUS_KIND=claude "$SET" working
   [ -z "$(get "$p1" @agent-transcript)" ] || fail "relative transcript path accepted"
@@ -165,7 +152,7 @@ if [ -n "$JQ" ]; then
     TMUX_PANE="$p1" AGENT_STATUS_KIND=claude "$SET" finished
   [ "$(get "$p1" @agent-transcript)" = "$TMP/claude.jsonl" ] || fail "Claude transcript path not recorded"
 
-  # Generation sends the latest real prompts (not tool results, meta, sidechain or
+  # A suggestion sends the latest real prompts (not tool results, meta, sidechain or
   # synthetic messages) and the latest assistant text to pi.
   {
     echo 'partial line cut by tail'
@@ -182,11 +169,11 @@ if [ -n "$JQ" ]; then
   } > "$TMP/claude.jsonl"
   mkdir -p "$TMP/fakepi"
   printf '#!/bin/sh\ncat > "%s"\necho "Fix VAT rounding"\n' "$TMP/pi-input" > "$TMP/fakepi/pi"; chmod +x "$TMP/fakepi/pi"
-  PATH="$TMP/fakepi:$PATH" "$DESCRIBE" run "$p1"
-  grep -F 'now fix the VAT rounding' "$TMP/pi-input" >/dev/null || fail "generation did not send the latest prompt"
-  grep -F 'Rounding fixed in computeVat.' "$TMP/pi-input" >/dev/null || fail "generation did not send the latest assistant reply"
-  if grep -E 'TOOL OUTPUT|META PROMPT|SIDECHAIN|SYNTHETIC' "$TMP/pi-input" >/dev/null; then fail "generation sent non-conversation entries"; fi
-  [ "$(get "$p1" @agent-description)" = 'Fix VAT rounding' ] || fail "transcript-based title not set"
+  [ "$(PATH="$TMP/fakepi:$PATH" "$DESCRIBE" suggest "$p1")" = 'Fix VAT rounding' ] || fail "transcript-based title not suggested"
+  grep -F 'now fix the VAT rounding' "$TMP/pi-input" >/dev/null || fail "suggestion did not send the latest prompt"
+  grep -F 'Rounding fixed in computeVat.' "$TMP/pi-input" >/dev/null || fail "suggestion did not send the latest assistant reply"
+  if grep -E 'TOOL OUTPUT|META PROMPT|SIDECHAIN|SYNTHETIC' "$TMP/pi-input" >/dev/null; then fail "suggestion sent non-conversation entries"; fi
+  "$DESCRIBE" set "$p1" 'Fix VAT rounding'
   # pi session files use {"type":"message","message":{"role":...}} entries.
   printf '%s\n' '{"type":"session","version":3,"id":"x"}' \
     '{"type":"message","message":{"role":"user","content":[{"type":"text","text":"pi: tidy the billing tests"}]}}' \

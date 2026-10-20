@@ -5,11 +5,7 @@
 # it exits (lib.sh).
 #   describe.sh set PANE [TEXT]   set the title (no TEXT: back to automatic)
 #   describe.sh suggest PANE      print pi's title for PANE without setting it
-#   describe.sh generate PANE     have pi set the title, in the background
-#   describe.sh run PANE [TOKEN]  the generation itself (generate starts it)
 #   describe.sh context FILE      what pi reads from a transcript
-# While a generation runs, the pane's @agent-generating holds its token,
-# "<start epoch>.<pid>.<random>".
 set -eu
 
 # shellcheck source=lib.sh
@@ -22,11 +18,6 @@ SEP=$'\037'
 # pane_alive PANE: display -p succeeds even for a vanished pane, so compare ids.
 pane_alive() {
   [ "$(tmux display -p -t "$1" '#{pane_id}' 2>/dev/null)" = "$1" ]
-}
-
-# pane_option PANE NAME: the pane's option value ("" when unset or gone).
-pane_option() {
-  tmux show-option -pqv -t "$1" "$2" 2>/dev/null || true
 }
 
 valid_pane() {
@@ -87,8 +78,8 @@ transcript_context() {
 # ----- asking pi -----------------------------------------------------------
 # ask_title PANE: TITLE, pi's title for PANE from its conversation (else its
 # screen). Returns 1 when PANE is gone, 3 with the reason in ASK_ERR when
-# there is none (tmux unreachable, pi failed). pi runs as a background job (ASK_PID) so that a signal reaching
-# this script can stop it: ask_abort.
+# there is none (tmux unreachable, pi failed). pi runs as a background job
+# (ASK_PID) so that a signal reaching this script can stop it: ask_abort.
 ASK_PID="" ASK_TMP=""
 ask_title() {
   local target="$1" info id auto kind path transcript current conversation="" context screen_lines=80 model rc=0 err
@@ -177,81 +168,9 @@ suggest_title() {
   printf '%s\n' "$CUT"
 }
 
-# ----- background generation -------------------------------------------------
-# generate PANE: run pi under the tmux server (it survives the UI closing),
-# one run per pane: @agent-generating names the run's token, and only its
-# owner clears it. A token older than 3 minutes outlived its run (pi is
-# capped at 2), so it is reclaimed.
-generate_start() {
-  local target="$1" token current path_q self_arg cmd now
-  valid_pane "$target" || return
-  pane_alive "$target" || return 0
-  find_pi || { tmux display-message "agent-status: pi is not installed"; return 0; }
-  now=$(date +%s)
-  token="$now.$$.$RANDOM"
-  agent_lock "pane-${target#%}"
-  current=$(pane_option "$target" @agent-generating)
-  case "${current%%.*}" in ''|*[!0-9]*) current=0 ;; *) current=${current%%.*} ;; esac
-  if [ $((now - current)) -lt 180 ]; then
-    agent_unlock
-    tmux display-message "agent-status: already generating a title for $target" 2>/dev/null || true
-    return 0
-  fi
-  tmux set-option -p -t "$target" @agent-generating "$token"
-  agent_unlock
-  # The server's environment may lack this shell's PATH (pi lives under fnm).
-  printf -v path_q '%q' "$PATH"; printf -v self_arg '%q' "$0"
-  # run-shell format-expands its command; %q leaves '#' alone, so double it.
-  cmd="PATH=$path_q $self_arg run $target $token"
-  tmux run-shell -b "${cmd//#/##}" 2>/dev/null || tmux set-option -p -u -t "$target" @agent-generating 2>/dev/null || true
-}
-
-# generate_cleanup: EXIT trap of `run`. Clears the marker only while this
-# run still owns it.
-generate_cleanup() {
-  ask_cleanup
-  [ "$(pane_option "$GEN_PANE" @agent-generating)" != "$GEN_TOKEN" ] \
-    || tmux set-option -p -u -t "$GEN_PANE" @agent-generating 2>/dev/null || true
-}
-
-generate_run() {
-  local target="$1" current rc=0
-  valid_pane "$target" || return
-  GEN_PANE="$target" GEN_TOKEN="${2:-}"
-  if [ -n "$GEN_TOKEN" ]; then
-    # Superseded or cleared (the agent exited) meanwhile.
-    [ "$(pane_option "$target" @agent-generating)" = "$GEN_TOKEN" ] || return 0
-  else
-    pane_alive "$target" || return 0
-    GEN_TOKEN="$(date +%s).$$.$RANDOM"
-    tmux set-option -p -t "$target" @agent-generating "$GEN_TOKEN"
-  fi
-  trap generate_cleanup EXIT
-  trap 'ask_abort 129' HUP; trap 'ask_abort 130' INT; trap 'ask_abort 143' TERM
-  current=$(pane_option "$target" @agent-description)
-  ask_title "$target" || rc=$?
-  case "$rc" in
-    0) ;;
-    1) return 0 ;;
-    *) tmux display-message "agent-status: could not generate a title: $ASK_ERR" 2>/dev/null || true; return 0 ;;
-  esac
-  # Keep a title set while pi ran, and drop the result if the marker was
-  # cleared (the agent exited) or reclaimed by a newer run; under the pane's
-  # lock, so the agent's exit can't clear its options in between.
-  agent_lock "pane-${target#%}"
-  if [ "$(pane_option "$target" @agent-description)" = "$current" ] && [ "$(pane_option "$target" @agent-generating)" = "$GEN_TOKEN" ]; then
-    utf8_cut 80 "$TITLE"
-    set_title "$target" "$CUT" 2>/dev/null || true  # the pane may have gone
-  fi
-  agent_unlock
-  trap generate_cleanup EXIT
-}
-
 case "${1:-}" in
   set) set_title "${2:-}" "${3:-}" ;;
   suggest) suggest_title "${2:-}" ;;
-  generate) generate_start "${2:-}" ;;
-  run) generate_run "${2:-}" "${3:-}" ;;
   context) transcript_context "${2:-}" ;;
-  *) echo "usage: describe.sh set PANE [TEXT] | suggest PANE | generate PANE | run PANE [TOKEN] | context FILE" >&2; exit 2 ;;
+  *) echo "usage: describe.sh set PANE [TEXT] | suggest PANE | context FILE" >&2; exit 2 ;;
 esac

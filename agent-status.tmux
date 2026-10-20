@@ -8,7 +8,7 @@
 #     window-scoped option (add `#{?@agent-icon,...}` to your
 #     window-status-format)
 #   - clickable notifications (alerter / terminal-notifier / notify-send)
-#   - agent descriptions (first prompt, overrides, AI-generated) for a UI:
+#   - agent descriptions (first prompt, overrides, AI-suggested) for a UI:
 #     a UI such as paddock reads all of the above from tmux options
 
 set -eu
@@ -42,8 +42,7 @@ _options=(
   set-option -gqo @agent-color-asking   'red' \;
   set-option -gqo @agent-color-finished 'cyan' \;
   set-option -gqo @agent-color-idle     'green' \;
-  # Model for generated titles (describe.sh suggest and generate; pi --model
-  # pattern).
+  # Model for suggested titles (describe.sh suggest; pi --model pattern).
   set-option -gqo @agent-describe-model 'openai-codex/gpt-6-luna' \;
   # Pane options hold transient state; the audit log lives under
   # XDG_DATA_HOME, like tmux-resurrect.
@@ -59,7 +58,7 @@ _options=(
   set-option -gqo @agent-notify-team-delay '10' \;
   # Set on every load, since they name this checkout and this version: how a
   # UI asks for a title suggestion (the command, run with a pane id as its
-  # last argument, prints one); where provider extensions find the shared
+  # last argument, prints one); where other tools can find the shared
   # scripts; and the window icon format the hooks below evaluate (lib.sh).
   set-option -g @agent-suggest-command "$_suggest" \;
   set-option -g @agent-scripts-dir "$SCRIPTS/agent" \;
@@ -70,14 +69,6 @@ _options=(
   set-option -g focus-events on
 )
 tmux "${_options[@]}"
-
-# Timestamp panes registered by older releases, which had no @agent-state-at.
-# A pane closing mid-way must not abort the plugin load.
-_stamp=()
-while read -r _pane; do
-  _stamp+=(set-option -p -t "$_pane" @agent-state-at "${_now:=$(date +%s)}" \;)
-done < <(tmux list-panes -a -f '#{&&:#{@agent-state},#{==:#{@agent-state-at},}}' -F '#{pane_id}' 2>/dev/null)
-[ "${#_stamp[@]}" -eq 0 ] || tmux "${_stamp[@]}" 2>/dev/null || true
 
 # Recompute every window's icon, since the glyphs, colours or format may have
 # changed: one tmux call per 150 windows (tmux caps a command at 16 KB).

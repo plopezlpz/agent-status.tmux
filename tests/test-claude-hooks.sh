@@ -72,7 +72,7 @@ bash "$PLUGIN_DIR/install-claude-hooks.sh" >/dev/null
 n=$(jq '[.hooks.Stop[].hooks[].command | select(test("set-state.sh.? finished"))] | length' "$CLAUDE_SETTINGS")
 [ "$n" -eq 1 ] || fail "install from real path kept hooks under other spellings (n=$n)"
 jq -e --arg sib "$PLUGIN_DIR/scripts/agent-sessions.sh" '[.. | .command? // empty | select(. == $sib)] | length == 1' "$CLAUDE_SETTINGS" >/dev/null || fail "install stripped a sibling user hook"
-bash "$TMP/tpm/agent-status.tmux/uninstall-claude-hooks.sh" >/dev/null
+bash "$TMP/tpm/agent-status.tmux/install-claude-hooks.sh" uninstall >/dev/null
 m=$(jq '[.. | .command? // empty | select(test("scripts/agent/"))] | length' "$CLAUDE_SETTINGS")
 [ "$m" -eq 0 ] || fail "symlinked uninstall left $m plugin hooks"
 
@@ -80,7 +80,7 @@ m=$(jq '[.. | .command? // empty | select(test("scripts/agent/"))] | length' "$C
 : > "$CLAUDE_SETTINGS.bak-keep"
 : > "$CLAUDE_SETTINGS.bak-1.notours"
 for _ in 1 2 3 4 5; do bash "$PLUGIN_DIR/install-claude-hooks.sh" >/dev/null; done
-bash "$PLUGIN_DIR/uninstall-claude-hooks.sh" >/dev/null
+bash "$PLUGIN_DIR/install-claude-hooks.sh" uninstall >/dev/null
 n=$(find "$TMP" -maxdepth 1 -name 'settings.json.bak-[0-9]*.??????' | wc -l | tr -d ' ')
 [ "$n" -eq 3 ] || fail "installer kept $n backups, expected 3"
 [ -e "$CLAUDE_SETTINGS.bak-keep" ] && [ -e "$CLAUDE_SETTINGS.bak-1.notours" ] || fail "backup pruning removed a foreign file"
@@ -88,7 +88,7 @@ n=$(find "$TMP" -maxdepth 1 -name 'settings.json.bak-[0-9]*.??????' | wc -l | tr
 mkdir "$TMP/failbin"; printf '#!/bin/sh\nexit 1\n' > "$TMP/failbin/mv"; chmod +x "$TMP/failbin/mv"
 cp "$CLAUDE_SETTINGS" "$TMP/before.json"
 if PATH="$TMP/failbin:$PATH" bash "$PLUGIN_DIR/install-claude-hooks.sh" >/dev/null 2>&1; then fail "install ignored a failed write"; fi
-if PATH="$TMP/failbin:$PATH" bash "$PLUGIN_DIR/uninstall-claude-hooks.sh" >/dev/null 2>&1; then fail "uninstall ignored a failed write"; fi
+if PATH="$TMP/failbin:$PATH" bash "$PLUGIN_DIR/install-claude-hooks.sh" uninstall >/dev/null 2>&1; then fail "uninstall ignored a failed write"; fi
 [ -z "$(find "$TMP" -maxdepth 1 -name 'settings.json.agent-status.*')" ] || fail "failed write left a temp file"
 cmp -s "$CLAUDE_SETTINGS" "$TMP/before.json" || fail "failed write changed settings"
 
@@ -114,7 +114,7 @@ jq -e '.hooks.Stop' "$TMP/config/settings.json" >/dev/null || fail "install igno
 victim="$TMP/victim.json"; printf '{"safe":true}\n' > "$victim"
 export CLAUDE_SETTINGS="$TMP/settings-link.json"; ln -s "$victim" "$CLAUDE_SETTINGS"
 if bash "$PLUGIN_DIR/install-claude-hooks.sh" >/dev/null 2>&1; then fail "install followed settings symlink"; fi
-if bash "$PLUGIN_DIR/uninstall-claude-hooks.sh" >/dev/null 2>&1; then fail "uninstall followed settings symlink"; fi
+if bash "$PLUGIN_DIR/install-claude-hooks.sh" uninstall >/dev/null 2>&1; then fail "uninstall followed settings symlink"; fi
 jq -e '.safe == true' "$victim" >/dev/null || fail "settings symlink target changed"
 
 echo "PASS: claude hooks"

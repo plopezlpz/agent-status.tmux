@@ -77,8 +77,8 @@ const waitFor = async (pattern: string, timeout = 5000) => {
 
 // ---------------------------------------------------------------- OMP
 process.env.TMUX_PANE = "%1";
-process.env.HERDR_OMP_IDLE_DEBOUNCE_MS = "0";
-process.env.HERDR_OMP_RETRY_GRACE_MS = "5";
+process.env.AGENT_STATUS_OMP_IDLE_DEBOUNCE_MS = "0";
+process.env.AGENT_STATUS_OMP_RETRY_GRACE_MS = "5";
 {
   const calls: {cmd:string,args:string[],options?:any}[] = [];
   const handlers: Record<string, Function> = {};

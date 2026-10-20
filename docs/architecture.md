@@ -49,8 +49,7 @@ is a title the user set, which UIs show instead. A UI may set it directly
 to automatic). Both are cleared with the other options when the agent exits.
 The plugin sets `@agent-suggest-command` to `describe.sh suggest`: run with a
 pane id appended, it waits for pi and prints a title without setting it, or
-fails with the reason on stderr; a signal stops pi. `describe.sh generate
-PANE` sets one in the background instead (`@agent-generating` marks the run).
+fails with the reason on stderr; a signal stops pi.
 
 A future provider adapter must:
 
@@ -70,7 +69,7 @@ A future provider adapter must:
 | Provider | Integration |
 |---|---|
 | pi | extension; only the TUI (`ctx.mode`) owns the pane |
-| OMP | extension; nested blockers, approvals/ask, settle debounce, retry grace (`AGENT_STATUS_OMP_IDLE_DEBOUNCE_MS`, `AGENT_STATUS_OMP_RETRY_GRACE_MS`; the older `HERDR_OMP_*` names still work) |
+| OMP | extension; nested blockers, approvals/ask, settle debounce, retry grace (`AGENT_STATUS_OMP_IDLE_DEBOUNCE_MS`, `AGENT_STATUS_OMP_RETRY_GRACE_MS`) |
 | OpenCode | server + TUI plugins; the TUI selects the pane's root session and clears it on exit; child sessions cannot take root identity; ESC aborts settle idle |
 | Kilo Code | plugin; no exit event, so the pane is cleared from a process exit/signal handler; a prompt in another root session (`kilo -c`, picking a session) rebinds the pane; headless commands are detected from argv |
 | Kimi Code | native hooks incl. `SessionEnd`; headless runs (`-p`, `acp`, `web`, `rc`) are detected from the kimi process argv |
@@ -85,7 +84,6 @@ inspects the provider process's argv once per hook, honoring only options
 before the first non-option word (`ps` drops quoting); a headless run it
 cannot recognize may still report into the pane it inherited.
 
-
 Installer path overrides follow each provider's conventions: pi
 `PI_CODING_AGENT_DIR`, `PI_EXTENSIONS_DIR`; OMP `PI_CONFIG_DIR`,
 `OMP_EXTENSIONS_DIR`; `OPENCODE_CONFIG_DIR`, `KILO_CONFIG_DIR`,
@@ -93,5 +91,4 @@ Installer path overrides follow each provider's conventions: pi
 `CLAUDE_SETTINGS`, the settings file itself). Providers whose
 config directory is missing are skipped (Claude's `settings.json` is created).
 `install-claude-hooks.sh [install|uninstall]` is what `manage-provider.sh`
-runs for Claude; the older `install-pi-extension.sh` and
-`uninstall-claude-hooks.sh` still work.
+runs for Claude.

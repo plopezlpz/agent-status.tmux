@@ -65,23 +65,20 @@ strip='
   # Ensure .hooks is an object even if the file has it as null/array/other.
   .hooks |= (if type == "object" then . else {} end) |
 '
+# Uninstall strips every event's entries, dropping events left empty.
 # shellcheck disable=SC2016
 uninstall_filter="$strip"'
   .hooks |= with_entries(.value |= strip)
   | .hooks |= with_entries(select(.value | length > 0))
 '
-# Install strips each event's entries, then appends fresh ones.
+# Install does the same, so events older releases hooked (PermissionDenied)
+# go too, then appends fresh entries.
 # shellcheck disable=SC2016
-install_filter="$strip"'
-  def put($event; entry): .hooks[$event] = ((.hooks[$event] // []) | strip) + [entry];
+install_filter="$uninstall_filter"' |
+  def put($event; entry): .hooks[$event] = (.hooks[$event] // []) + [entry];
   # Claude runs a hook command with sh -c: quote the path.
   def script($name): {type:"command", command:("\($r)/\($name)" | @sh)};
   def state($s): script("set-state.sh") | .command += " \($s)";
-  # Older plugin releases registered PermissionDenied, which fires on auto-mode
-  # classifier denials mid-turn and is not a state change. Remove only our old
-  # entry and preserve any unrelated user configuration.
-  .hooks.PermissionDenied = ((.hooks.PermissionDenied // []) | strip) |
-  if (.hooks.PermissionDenied | length) == 0 then del(.hooks.PermissionDenied) else . end |
   # set-state also sets (UserPromptSubmit) and clears (SessionStart) the
   # first-prompt description; older releases ran auto-desc.sh beside it.
   put("SessionStart"; {hooks:[state("idle")]}) |
