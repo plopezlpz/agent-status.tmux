@@ -180,7 +180,8 @@ fi
 if [ "$PROVIDER" = kimi ] || [ "$PROVIDER" = mastracode ]; then
   # Their hooks run hook-event.sh from this checkout. Older releases ran a
   # symlink to scripts/<provider>/agent-status.sh (now a shim for hooks not
-  # yet reinstalled); install and uninstall remove it.
+  # yet reinstalled). Install leaves an existing one for agents still running
+  # with the old hooks; uninstall removes it.
   hook="$(sh_word "$ROOT/scripts/agent/hook-event.sh") $PROVIDER"
   src="$ROOT/scripts/$PROVIDER/agent-status.sh" dest="$base/hooks/agent-status.tmux.sh"
 fi
@@ -234,12 +235,10 @@ KIMI
         printf '%s\n' "$end"
       } >> "$tmp"
       replace_from_file "$config" "$tmp"; rm -f "$tmp"
-      link_remove "$src" "$dest"
       ;;
     mastracode)
       # shellcheck disable=SC2016 # jq variables, not shell variables
       json_update "$config" "$strip"' | reduce $events[] as $e (.; .[$e.event] = (.[$e.event] // []) + [{type:"command",command:"\($hook) \($e.action)",timeout:10000}])' --arg hook "$hook" --arg legacy "$(sh_word "$dest")" --argjson events "$events"
-      link_remove "$src" "$dest"
       ;;
     *) link_install "$src" "$dest" ;;
   esac

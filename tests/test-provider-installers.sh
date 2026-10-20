@@ -37,8 +37,10 @@ mode=$(stat -c %a "$OPENCODE_CONFIG_DIR/tui.jsonc" 2>/dev/null || stat -f %Lp "$
 grep -A1 '^event = "StopFailure"$' "$KIMI_CODE_HOME/config.toml" | grep -q "' kimi idle\"$" || fail "kimi StopFailure does not end the turn"
 grep -F 'model = "keep"' "$KIMI_CODE_HOME/config.toml" >/dev/null || fail "kimi changed unrelated config"
 [ "$(grep -cF "command = \"'$ROOT/scripts/agent/hook-event.sh' kimi " "$KIMI_CODE_HOME/config.toml")" -eq 14 ] || fail "kimi hooks do not run hook-event.sh"
-[ ! -e "$KIMI_CODE_HOME/hooks/agent-status.tmux.sh" ] || fail "kimi kept the old adapter link"
-[ ! -e "$MASTRACODE_HOME/hooks/agent-status.tmux.sh" ] || fail "mastra kept the old adapter link"
+# A reinstall keeps the old adapter link for agents still running the old hooks.
+for home in "$KIMI_CODE_HOME" "$MASTRACODE_HOME"; do
+  [ "$(readlink "$home/hooks/agent-status.tmux.sh")" = "$ROOT/scripts/${home##*/}/agent-status.sh" ] || fail "${home##*/} reinstall removed the old adapter link"
+done
 grep -A1 '^event = "Interrupt"$' "$KIMI_CODE_HOME/config.toml" | grep -q "' kimi interrupt\"$" || fail "kimi Interrupt claims a completion"
 [ "$(jq -c '[.Interrupt[].command | split(" ") | last]' "$MASTRACODE_HOME/hooks.json")" = '["interrupt"]' ] || fail "mastra Interrupt not replaced by interrupt"
 [ "$(jq '[.UserPromptSubmit[] | select(.command == "keep")] | length' "$MASTRACODE_HOME/hooks.json")" -eq 1 ] || fail "mastra removed unrelated hook"
@@ -53,6 +55,9 @@ for provider in pi omp opencode kilo kimi mastracode; do bash "$ROOT/manage-prov
 [ "$(jq -c 'keys' "$MASTRACODE_HOME/hooks.json")" = '["UserPromptSubmit"]' ] || fail "mastra uninstall left hooks behind"
 [ "$(jq --arg wrapped "wrapper $MASTRACODE_HOME/hooks/agent-status.tmux.sh extra" '[.UserPromptSubmit[] | select(.command == $wrapped)] | length' "$MASTRACODE_HOME/hooks.json")" -eq 1 ] || fail "mastra uninstall removed non-owned command"
 ! grep -q 'agent-status.tmux kimi integration' "$KIMI_CODE_HOME/config.toml" || fail "kimi block remained"
+for home in "$KIMI_CODE_HOME" "$MASTRACODE_HOME"; do
+  [ ! -e "$home/hooks/agent-status.tmux.sh" ] || fail "${home##*/} uninstall kept the old adapter link"
+done
 
 # Invalid or ambiguously marked configs fail before any adapter link is made.
 tuple_oc="$TMP/tuple-opencode"; mkdir -p "$tuple_oc"; printf '{"plugin":[["./agent-status-tui.js",{"enabled":true}],"keep"]}\n' > "$tuple_oc/tui.jsonc"
