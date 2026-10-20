@@ -14,7 +14,7 @@ TMP="$(mktemp -d)"
 fail(){ echo "FAIL: $1" >&2; exit 1; }
 ctl(){ TMUX='' tmux -L "$SOCK" "$@"; }
 # Stand-ins outside a pane's foreground outlive its server.
-cleanup(){ ctl kill-server 2>/dev/null || true; pkill -f "$TMP/agent.sh" 2>/dev/null || true; pkill -f "$TMP/bin/gemini" 2>/dev/null || true; pkill -f "$TMP/bin/qwen" 2>/dev/null || true; pkill -f "$TMP/bin/agy" 2>/dev/null || true; rm -rf "$TMP"; }
+cleanup(){ ctl kill-server 2>/dev/null || true; pkill -f "$TMP/agent.sh" 2>/dev/null || true; pkill -f "$TMP/bin/gemini" 2>/dev/null || true; pkill -f "$TMP/bin/qwen" 2>/dev/null || true; pkill -f "$TMP/qwen/" 2>/dev/null || true; pkill -f "$TMP/bin/agy" 2>/dev/null || true; rm -rf "$TMP"; }
 trap cleanup EXIT
 command -v tmux >/dev/null 2>&1 || { echo "SKIP: hook-event (tmux not installed)"; exit 0; }
 command -v jq >/dev/null 2>&1 || { echo "SKIP: hook-event (jq not installed)"; exit 0; }
@@ -47,6 +47,15 @@ start(){ mkfifo "$2"; "$3" "exec -a '$1' bash '$TMP/agent.sh' '$2'"; }
 in_pane(){ ctl new-window -d -P -F '#{pane_id}' "$1"; }
 # In the background of a pane's job-control shell.
 in_background(){ ctl new-window -d -P -F '#{pane_id}' "bash -c \"set -m; $1 & wait\""; }
+# In a terminal of its own inside a pane, as another agent's shell tool runs
+# a command (Gemini's and Qwen's run it in a pty).
+in_pty(){
+  if script -q /dev/null true </dev/null >/dev/null 2>&1; then
+    in_pane "script -q /dev/null bash -c \"$1\""
+  else
+    in_pane "script -qec \"$1\" /dev/null"
+  fi
+}
 # With no terminal (run by another agent's tool), inheriting TMUX_PANE=$to.
 detached(){ TMUX_PANE="$to" perl -MPOSIX -e 'setsid(); exec @ARGV' bash -c "$1" </dev/null >/dev/null 2>&1 & disown; }
 # send FIFO ACTION JSON [COMMAND]: one hook through that stand-in (by default
@@ -269,6 +278,13 @@ to=$pg; gstart "" "$TMP/g-tool" detached
 gev "$TMP/g-tool" session SessionStart t1 '"source":"startup"'
 gev "$TMP/g-tool" working BeforeAgent t1 '"prompt":"x"'
 [ -z "$(get "$pg" @agent-state)" ] || fail "a gemini with no terminal reported"
+# Nor one in a terminal inside the pane (`... | gemini` run by Gemini's or
+# Qwen's shell tool), although it is that terminal's foreground job.
+if command -v script >/dev/null 2>&1; then
+  p=$(gstart "" "$TMP/g-pty" in_pty)
+  gev "$TMP/g-pty" session SessionStart y1 '"source":"startup"'
+  [ -z "$(get "$p" @agent-state)" ] || fail "a gemini in a terminal inside a pane reported"
+fi
 # Gemini shows a hook's output and takes exit status 2 as a block: the hook
 # prints nothing and succeeds even when a state script fails.
 mkdir "$TMP/broken"; cp "$HOOK" "$TMP/broken/"
@@ -284,7 +300,7 @@ done
 # SessionEnd and the idle prompt's Notification are as Qwen 0.25.3 sent them.
 # shellcheck disable=SC2016 # the stand-in's own variable
 sed 's/"\$1"/"$QWEN_FIFO"/' "$TMP/agent.sh" > "$TMP/bin/qwen"
-qstart(){ mkfifo "$2"; "$3" "QWEN_FIFO='$2' exec -a node bash '$TMP/bin/qwen' $1"; }
+qstart(){ mkfifo "$2"; "$3" "QWEN_FIFO='$2' exec -a ${QRUN:-node} bash '${QCLI:-$TMP/bin/qwen}' $1"; }
 KIND=qwen
 pq=$(qstart "" "$TMP/q" in_pane)
 # qev FIFO ACTION EVENT SESSION [FIELDS]: one hook, as Qwen sends it.
@@ -327,6 +343,10 @@ q working PreToolUse '"agent_id":"a1","tool_name":"run_shell_command","tool_use_
 # turn of Qwen's own, whose Stop is.
 q idle Stop '"background_tasks":[{"id":"b1","status":"running","agent_type":"general-purpose","started_at":"2026-10-20T14:03:12.766Z","description":"scan"}],"crons":[]'
 [ "$(shown "$pq")" = "working:0" ] || fail "qwen Stop with a background agent running: $(shown "$pq")"
+# Qwen waits for input meanwhile: the idle prompt settles the pane idle,
+# without claiming a completion.
+q interrupt Notification '"message":"Qwen Code is waiting for your input","notification_type":"idle_prompt","title":"Waiting for input"'
+[ "$(shown "$pq")" = "idle:0" ] || fail "qwen idle prompt while a background agent runs: $(shown "$pq")"
 q idle Stop '"background_tasks":[{"id":"b1","status":"completed","agent_type":"general-purpose","started_at":"2026-10-20T14:03:12.766Z","description":"scan"}],"crons":[]'
 [ "$(shown "$pq")" = "idle:1" ] || fail "qwen Stop after the background agent: $(shown "$pq")"
 # An API error ends the turn; compaction keeps it.
@@ -372,6 +392,40 @@ qstart "" "$TMP/q-tool" detached
 qev "$TMP/q-tool" session SessionStart t1 '"source":"startup"'
 qev "$TMP/q-tool" working UserPromptSubmit t1 '"prompt":"x"'
 [ "$(get "$to" @agent-instance):$(shown "$to")" = "qwen:t0:idle:0" ] || fail "a qwen with no terminal reported: $(get "$to" @agent-instance) $(shown "$to")"
+if command -v script >/dev/null 2>&1; then
+  p=$(qstart "" "$TMP/q-pty" in_pty)
+  qev "$TMP/q-pty" session SessionStart y1 '"source":"startup"'
+  [ -z "$(get "$p" @agent-state)" ] || fail "a qwen in a terminal inside a pane reported"
+fi
+# The standalone install's bin/qwen runs `node .../lib/cli-entry.js [args]`.
+# Under Bun, that process runs the CLI as a child: `bun --expose-gc
+# .../cli.js [args]` (here --norc).
+mkdir -p "$TMP/qwen/lib"
+cp "$TMP/bin/qwen" "$TMP/qwen/lib/cli-entry.js"
+for args in "" "-p hi" "'fix it'"; do
+  n_q=$((n_q + 1))
+  p=$(QCLI="$TMP/qwen/lib/cli-entry.js" qstart "$args" "$TMP/qs-$n_q" in_pane)
+  qev "$TMP/qs-$n_q" session SessionStart s$n_q '"source":"startup"'
+  if [ -z "$args" ]; then
+    [ "$(get "$p" @agent-instance)" = "qwen:s$n_q" ] || fail "interactive standalone qwen did not report"
+  else
+    [ -z "$(get "$p" @agent-state)" ] || fail "headless standalone qwen $args reported"
+  fi
+done
+mkdir -p "$TMP/qwen/bun"
+cp "$TMP/bin/qwen" "$TMP/qwen/bun/cli.js"
+# shellcheck disable=SC2016 # the stand-in's own words
+printf '(exec -a bun bash --norc "${0%%/*}/cli.js" "$@")\nexit $?\n' > "$TMP/qwen/bun/cli-entry.js"
+for args in "" "-p hi"; do
+  n_q=$((n_q + 1))
+  p=$(QRUN=bun QCLI="$TMP/qwen/bun/cli-entry.js" qstart "$args" "$TMP/qb-$n_q" in_pane)
+  qev "$TMP/qb-$n_q" session SessionStart b$n_q '"source":"startup"'
+  if [ -z "$args" ]; then
+    [ "$(get "$p" @agent-instance)" = "qwen:b$n_q" ] || fail "interactive qwen under Bun did not report"
+  else
+    [ -z "$(get "$p" @agent-state)" ] || fail "headless qwen under Bun $args reported"
+  fi
+done
 # Qwen gives a SessionStart or prompt hook's output to the model and takes
 # exit status 2 as a block: the hook prints nothing and succeeds even when a
 # state script fails.

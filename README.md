@@ -158,7 +158,11 @@ agy's subcommands (`remote-control`, ...) and an `agy` run by another agent)
 are ignored.
 Kimi hides its arguments, so a kimi reports only as the foreground job of
 its terminal: a `kimi -p` or `kimi acp` you start yourself in a shell or an
-editor reports into that pane. Run any other nested headless agent
+editor reports into that pane. A `gemini`, `qwen` or `agy` reports only as
+the foreground job of its pane's own terminal, so one run by an agent's
+shell tool doesn't report even when that tool gives it a terminal (Gemini's
+and Qwen's do), and neither does one in a terminal inside the pane, such as
+an editor's. Run any other nested headless agent
 with `TMUX_PANE` cleared, or it takes over the pane it runs in. Claude keeps
 the `CLAUDE_CODE_ENTRYPOINT` it inherits, so a `claude` started where that is
 `sdk-*` (say, from a shell or tmux server that a headless run started)
@@ -258,7 +262,10 @@ Qwen reads comments in that file but jq can't keep them, so a file with
 comments is refused. It is written in jq's layout (2-space indent), and the
 old file is kept as `settings.json.bak-*`. Qwen runs the hooks without
 asking; restart running Qwen sessions after installing.
-`"disableAllHooks": true`, `--safe-mode` and `--bare` turn them off.
+`"disableAllHooks": true`, `--safe-mode` and `--bare` turn them off. Hooks
+in Qwen's settings that run this plugin's Claude scripts (`set-state.sh`,
+`clear-state.sh`, `auto-desc.sh`), which would report Qwen as Claude, are
+removed by installing (or uninstalling).
 
 A session shows idle from its start, working from a prompt, asking at a
 permission prompt, a question from the model or a plan to approve, and
@@ -266,7 +273,9 @@ finished when the model answers or an API error ends the turn. An Esc or a
 denied prompt settles idle as soon as Qwen waits for input again. `/clear`
 starts the new session idle, and quitting clears the pane. A prompt given on
 the command line runs once, headless, unless you add `-i`: `qwen "fix it"`
-doesn't report, `qwen -i "fix it"` does.
+doesn't report, `qwen -i "fix it"` does. This holds for the npm package and
+for the standalone install (`install-qwen-standalone.sh`), under Node or
+Bun.
 
 Checked with Qwen Code 0.25.3 without running a turn: starting, `/clear`,
 `!` commands, `/quit` and closing the pane were run, and headless runs
@@ -278,6 +287,9 @@ Qwen's hooks can't tell everything apart:
   headless, but in the foreground of a pane it still reports there, and it
   quits without a hook: the pane shows Qwen idle until its next agent
   starts. So does a script there that drives Qwen through its SDK.
+- Qwen waits for input while a background agent runs, so once your turn
+  ends the pane shows idle, not working, until the turn Qwen starts with
+  the agent's result finishes.
 - Turns Qwen starts itself (the result of a background agent or shell, a
   scheduled prompt) fire no prompt hook: their tool calls show working and
   their end finished, while one without a tool call shows only its end.

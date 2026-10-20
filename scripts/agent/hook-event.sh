@@ -15,7 +15,9 @@ case "$action" in session|working|tool|blocked|idle|interrupt|end) ;; *) exit 0 
 # take a value (and those whose value is optional, or a list of them),
 # headless subcommands and options, options that keep a run interactive,
 # whether -p/--prompt makes a run headless, and whether any other word (a
-# prompt) does.
+# prompt) does. foreground: a run reports only as the foreground job of its
+# terminal (pane: of its pane's own terminal, not of a terminal inside it,
+# such as the one another agent's shell tool runs a command in).
 first="" prompts=1 foreground="" flags="" interactive="" arrays="" positional=""
 case "$kind" in
   # Kimi retitles its process "kimi-code" as it starts, cut to the length of
@@ -45,22 +47,25 @@ case "$kind" in
   # Gemini CLI relaunches itself as a child (node, a heap flag, the script),
   # which runs the hooks. A prompt argument stays interactive in a terminal;
   # -p and --acp (an editor's server) don't. Gemini also runs headless when
-  # its input or output isn't a terminal, which argv doesn't show: as for
-  # Kimi, a run reports only as the foreground job of its terminal, which one
-  # started by another agent's tool is not.
+  # its input or output isn't a terminal, which argv doesn't show: a run
+  # reports only as the foreground job of its pane's terminal, which one
+  # started by another agent's tool is not (Gemini's and Qwen's shell tools
+  # run a command in a terminal of their own).
   gemini)
-    names="gemini gemini.js" foreground=1 flags="--acp --experimental-acp"
+    names="gemini gemini.js" foreground=pane flags="--acp --experimental-acp"
     values="-m --model -i --prompt-interactive --approval-mode --policy --admin-policy --allowed-mcp-server-names --allowed-tools -e --extensions --session-file --session-id --include-directories -o --output-format"
     optional="-r --resume -w --worktree --delete-session" commands=""
     ;;
-  # Qwen Code runs its CLI in the launcher's own process (node .../qwen). A
-  # prompt argument, a subcommand (serve, ...), -p and --acp run headless;
-  # -i keeps a prompt interactive. It also runs headless when its input isn't
-  # a terminal, which argv doesn't show: as for Kimi, a run reports only as
-  # the foreground job of its terminal, which one started by another agent's
-  # tool is not.
+  # Qwen Code runs its CLI in the launcher's own process: node .../bin/qwen,
+  # or node .../lib/cli-entry.js from the standalone install's bin/qwen.
+  # Under Bun that process runs it as a child (bun --expose-gc .../cli.js),
+  # whose parent is the launcher. A prompt argument, a subcommand (serve,
+  # ...), -p and --acp run headless; -i keeps a prompt interactive. It also
+  # runs headless when its input isn't a terminal, which argv doesn't show:
+  # as for Gemini, a run reports only as the foreground job of its pane's
+  # terminal.
   qwen)
-    names="qwen" first=1 foreground=1 positional=1 commands=""
+    names="qwen cli-entry.js" first=1 foreground=pane positional=1 commands=""
     flags="--acp --experimental-acp" interactive="-i --prompt-interactive"
     values="-m --model --advisor --system-prompt --append-system-prompt --output-style --sandbox-image --approval-mode --channel --mcp-config --openai-logging-dir --openai-api-key --openai-base-url --input-format -o --output-format --json-fd --json-file --json-schema --input-file --session-id --max-session-turns --max-wall-time --max-tool-calls --max-subagent-depth --auth-type --proxy --telemetry-target --telemetry-otlp-endpoint --telemetry-otlp-protocol --telemetry-outfile"
     optional="-s --sandbox -r --resume --worktree"
@@ -69,10 +74,10 @@ case "$kind" in
   # Antigravity CLI (agy) is one Go process that runs its hooks itself. Go
   # options take one dash or two; -p, --print and --prompt run one prompt
   # headless, and so do its subcommands (remote-control's background service
-  # among them). A run by another agent's tool isn't its terminal's
-  # foreground job.
+  # among them). A run by another agent's tool isn't the foreground job of
+  # its pane's terminal.
   antigravity)
-    names="agy" first=1 prompts="" foreground=1 optional="" commands="agent agents changelog help install mcp mic-serve models plugin plugins remote-control update"
+    names="agy" first=1 prompts="" foreground=pane optional="" commands="agent agents changelog help install mcp mic-serve models plugin plugins remote-control update"
     flags="-p --p -print --print -prompt --prompt"
     values="--add-dir --agent --conversation --effort --input-format --json-schema --log-file --mode --model --output-format --print-timeout --project -i --prompt-interactive"
     ;;
@@ -88,19 +93,21 @@ case "$kind" in gemini|qwen) exec >/dev/null 2>&1; trap 'exit 0' EXIT ;; esac
 # `agy -p`) can inherit TMUX_PANE from an agent pane and must not report or
 # steal its identity. The payload has no mode field, so read the nearest
 # provider ancestor's argv (and for Kimi, Gemini, Qwen and Antigravity,
-# whether it is its terminal's foreground job).
+# whether it is its terminal's foreground job, and for all but Kimi whether
+# that terminal is its pane's).
 # Only words before the first non-option word count (a prompt like "fix the
 # -p flag" is never parsed). Where /proc has the argv, a quoted prompt stays one word, and one
 # with a blank in it is a prompt. Elsewhere `ps` loses quoting, so a prompt
 # given on the command line that starts with a subcommand's name ("review my
 # change") reads as that subcommand.
 headless() {
-  local pid=$PPID depth=0 args word seen skip n ppid words pgid tpgid
+  local pid=$PPID depth=0 args word seen skip n ppid words pgid tpgid tty
   set -f
   while [ "$depth" -lt 4 ] && [ "${pid:-0}" -gt 1 ]; do
     # One ps per ancestor; its process group and its terminal's foreground
-    # one are numbers (0 or -1 without a terminal), so the fields split.
-    read -r ppid pgid tpgid args <<< "$(ps -o ppid=,pgid=,tpgid=,args= -p "$pid" 2>/dev/null)" || break
+    # one are numbers (0 or -1 without a terminal), and its terminal a word
+    # (?, ?? without one), so the fields split.
+    read -r ppid pgid tpgid tty args <<< "$(ps -o ppid=,pgid=,tpgid=,tty=,args= -p "$pid" 2>/dev/null)" || break
     [ -n "$args" ] || break
     # shellcheck disable=SC2206 # split on blanks, globbing is off
     words=($args)
@@ -119,7 +126,7 @@ headless() {
       if [ "$seen" = 0 ]; then
         if [[ " $names " == *" ${word##*/} "* ]]; then seen=1; continue; fi
         # Codex: argv[0], or the script an interpreter runs.
-        [ -z "$first" ] || { [ "$n" = 1 ] && [[ " node bash sh " == *" ${word##*/} "* ]]; } || break
+        [ -z "$first" ] || { [ "$n" = 1 ] && [[ " node bun bash sh " == *" ${word##*/} "* ]]; } || break
         continue
       fi
       case "$skip:$word" in
@@ -151,6 +158,7 @@ headless() {
       agent_pid=$pid
       if [ -n "$foreground" ]; then
         [ -n "$pgid" ] && [ "$pgid" = "$tpgid" ] || { set +f; return 0; }
+        [ "$foreground" != pane ] || [ "/dev/$tty" = "$(tmux display -p -t "$TMUX_PANE" '#{pane_tty}' 2>/dev/null)" ] || { set +f; return 0; }
       fi
       break
     fi
