@@ -24,7 +24,7 @@ Notable changes to agent-status.tmux, newest first. The format follows [Keep a C
 - OpenCode 2.x: the adapter loads and reports again. OpenCode 2 runs every session in a shared background service, so a new TUI plugin reports from the pane's own OpenCode, for the session of the active tab. The "1 plugin failed" notice is gone. Re-run the installer to add the plugin. OpenCode 1.x keeps working from the same install.
 - OpenCode 1.x: a session started from the home screen, the pane's first or a later one, shows working from its first prompt and keeps its title, instead of reading idle until the turn ends.
 - OpenCode 1.x: headless runs (`opencode run`, `serve`, `acp`, ...) no longer take over the pane they start in and leave it marked finished.
-- OpenCode and Kilo: rejecting a permission, dismissing a question, or pressing Esc on a `!` shell command settles the pane idle instead of finished.
+- OpenCode and Kilo: rejecting a permission, dismissing a question, or pressing Esc on a `!` shell command settles the pane idle instead of finished. A subagent's rejected permission, which tells it what to do instead, lets the turn go on to finish.
 - OpenCode and Kilo: a subagent's permission prompt only shows while the pane shows its session.
 - Kilo: the pane is cleared when Kilo quits. Kilo's `offline` state (a lost connection waiting for you) shows as asking.
 - Kilo: `kilo remote`, `kilo attach` and `kilo --log-level <level> run` are recognised as headless, and `kilo run --interactive` as interactive.

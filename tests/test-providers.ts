@@ -478,6 +478,12 @@ process.env.TMUX_PANE = "%7";
     await sleep(50);
     check(!since().some(l => l.startsWith("set-state.sh|finished")), `OpenCode 2: ${name} does not finish`);
   }
+  // A subagent's rejected permission carries feedback: the turn goes on.
+  emit("session.execution.started", { sessionID: "R1" });
+  emit("permission.asked", { sessionID: "C1", id: "per_3" });
+  emit("permission.replied", { sessionID: "C1", requestID: "per_3", reply: "reject" });
+  emit("session.execution.succeeded", { sessionID: "R1" });
+  await expect("a turn that goes on after a subagent's rejected permission finishes", "set-state.sh|working||R1|", "set-state.sh|asking||R1|", "set-state.sh|working||R1|", "set-state.sh|finished||R1|");
   emit("session.execution.started", { sessionID: "R1" });
   emit("session.execution.failed", { sessionID: "R1", error: { type: "unknown", message: "boom" } });
   await expect("a failed turn finishes", "set-state.sh|working||R1|", "set-state.sh|finished||R1|");
