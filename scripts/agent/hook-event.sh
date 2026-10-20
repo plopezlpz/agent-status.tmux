@@ -49,10 +49,12 @@ esac
 # given on the command line that starts with a subcommand's name ("review my
 # change") reads as that subcommand.
 headless() {
-  local pid=$PPID depth=0 args word seen skip n ppid words pgid="" tpgid=""
+  local pid=$PPID depth=0 args word seen skip n ppid words pgid tpgid
   set -f
   while [ "$depth" -lt 4 ] && [ "${pid:-0}" -gt 1 ]; do
-    read -r ppid args <<< "$(ps -o ppid=,args= -p "$pid" 2>/dev/null)" || break
+    # One ps per ancestor; its process group and its terminal's foreground
+    # one are numbers (0 or -1 without a terminal), so the fields split.
+    read -r ppid pgid tpgid args <<< "$(ps -o ppid=,pgid=,tpgid=,args= -p "$pid" 2>/dev/null)" || break
     [ -n "$args" ] || break
     # shellcheck disable=SC2206 # split on blanks, globbing is off
     words=($args)
@@ -97,7 +99,6 @@ headless() {
     if [ "$seen" = 1 ]; then
       agent_pid=$pid
       if [ -n "$foreground" ]; then
-        read -r pgid tpgid <<< "$(ps -o pgid=,tpgid= -p "$pid" 2>/dev/null)" || true
         [ -n "$pgid" ] && [ "$pgid" = "$tpgid" ] || { set +f; return 0; }
       fi
       break
