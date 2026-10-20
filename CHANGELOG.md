@@ -14,7 +14,7 @@ Notable changes to agent-status.tmux, newest first. The format follows [Keep a C
 
 ### Changed
 
-- A Kilo TUI attached to a `kilo daemon`, or `kilo attach`, doesn't report. Run Kilo with `KILO_NO_DAEMON=1` while a daemon runs.
+- The README says that a Kilo TUI attached to a `kilo daemon`, or `kilo attach`, doesn't report, as in 0.4.0. Run Kilo with `KILO_NO_DAEMON=1` while a daemon runs.
 - Claude Code: a session title (`--name`, `/rename`) names the pane instead of the first prompt.
 - Verified with Claude Code 2.1.304, pi 1.3.0, OMP 18.12.3, OpenCode 2.0.32, Kimi Code 2.2.0, MastraCode 0.47.1, Kilo Code 7.8.15 and Codex 0.163.0. The README says which of them were checked without running a turn.
 - The README no longer says that Gemini CLI and Cursor's agent lack lifecycle hooks. They have hooks, but no adapter yet.
@@ -27,7 +27,7 @@ Notable changes to agent-status.tmux, newest first. The format follows [Keep a C
 - OpenCode and Kilo: rejecting a permission, dismissing a question, or pressing Esc on a `!` shell command settles the pane idle instead of finished. A subagent's rejected permission, which tells it what to do instead, lets the turn go on to finish.
 - OpenCode and Kilo: a subagent's permission prompt only shows while the pane shows its session.
 - Kilo: the pane is cleared when Kilo quits. Kilo's `offline` state (a lost connection waiting for you) shows as asking.
-- Kilo: `kilo remote`, `kilo attach` and `kilo --log-level <level> run` are recognised as headless, and `kilo run --interactive` as interactive.
+- Kilo: `kilo remote` and `kilo --log-level <level> run` are recognised as headless, and `kilo run --interactive` as interactive.
 - The installer finds OpenCode and Kilo under `$XDG_CONFIG_HOME` when `OPENCODE_CONFIG_DIR` or `KILO_CONFIG_DIR` is unset.
 - Kimi Code: a `kimi -p` or `kimi acp` started by another agent's tool no longer takes over that agent's pane. Kimi hides its arguments, so a kimi now reports only as the foreground job of its terminal.
 - Kimi Code: the pane's title is the first prompt's text, not raw JSON.

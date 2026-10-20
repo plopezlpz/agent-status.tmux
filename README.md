@@ -80,9 +80,8 @@ plugin, and the new Kimi Code and MastraCode hooks; restart running
 MastraCode sessions afterwards. If you run `omp --profile <name>`, install
 OMP with `OMP_PROFILE=<name>`. `AGENT_STATUS_OMP_RETRY_GRACE_MS`
 (`HERDR_OMP_RETRY_GRACE_MS` before) is gone: OMP retries before it ends a
-turn, so a turn that ends in an error asks at once. A Kilo TUI attached to a
-`kilo daemon` doesn't report: run Kilo with `KILO_NO_DAEMON=1` while a daemon
-runs. Codex is new: see [Codex](#codex).
+turn, so a turn that ends in an error asks at once. Codex is new: see
+[Codex](#codex).
 
 From 0.3.0: tmux 3.8 or later is required, and fzf no longer is. The
 `prefix A` navigator popup is gone ([paddock](https://github.com/plopezlpz/paddock)
