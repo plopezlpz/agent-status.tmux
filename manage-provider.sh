@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Install/uninstall lifecycle adapters without touching unrelated provider config.
-# Usage: manage-provider.sh <install|uninstall> [-y|--yes | pi|omp|opencode|kilo|kimi|mastracode|claude|codex]
+# Usage: manage-provider.sh <install|uninstall> [-y|--yes | pi|omp|opencode|kilo|kimi|mastracode|claude|codex|gemini]
 # Without a provider it finds the supported agents on this machine and, in a
 # terminal, asks before hooking them up (--yes doesn't ask). The rest are skipped.
 #   manage-provider.sh found <provider>   exit 0 if that agent is installed (its config home exists)
 set -eu
 ACTION="${1:-}" PROVIDER="${2:-}"
-PROVIDERS="pi omp opencode kilo kimi mastracode claude codex"
+PROVIDERS="pi omp opencode kilo kimi mastracode claude codex gemini"
 USAGE="usage: $0 <install|uninstall> [-y|--yes | ${PROVIDERS// /|}]
        $0 found <${PROVIDERS// /|}>"
 case "$ACTION" in install|uninstall|found) ;; *) echo "$USAGE" >&2; exit 2 ;; esac
@@ -38,7 +38,7 @@ if [ "$ACTION" != found ] && { [ -z "$PROVIDER" ] || [ "$PROVIDER" = --yes ] || 
 fi
 
 case "$PROVIDER" in
-  pi|omp|opencode|kilo|kimi|mastracode|claude|codex) ;;
+  pi|omp|opencode|kilo|kimi|mastracode|claude|codex|gemini) ;;
   *) echo "$USAGE" >&2; exit 2 ;;
 esac
 
@@ -212,8 +212,17 @@ case "$PROVIDER" in
     base="${CODEX_HOME:-$HOME/.codex}"
     config="$base/hooks.json"
     ;;
+  gemini)
+    # GEMINI_CLI_HOME stands in for the home directory, as in Gemini CLI.
+    base="${GEMINI_CLI_HOME:-$HOME}/.gemini"
+    config="$base/settings.json"
+    ;;
 esac
+# Antigravity (agy) keeps its files in ~/.gemini too: Gemini CLI is there
+# once it has its settings, or the id it writes when it first runs.
+gemini_found() { [ -f "$config" ] || [ -f "$base/installation_id" ]; }
 if [ "$ACTION" = found ]; then
+  if [ "$PROVIDER" = gemini ]; then gemini_found; exit; fi
   # An explicit Pi extensions dir counts as installed, as it does for install.
   if [ "$PROVIDER" = pi ] && [ -n "${PI_EXTENSIONS_DIR:-}" ]; then exit 0; fi
   [ -d "$base" ]; exit
@@ -246,14 +255,18 @@ codex_groups() {
     | map({key: .[0], value: {hooks: [{type: "command", command: "\($hook) \(.[1])", timeout: .[2]}]}})
     | from_entries'
 }
-# Our hooks: hook-event.sh for codex from any checkout, and the Claude hooks
-# Codex copies from Claude's settings when it migrates them (they would
-# report a Codex session as Claude).
-# shellcheck disable=SC2016 # jq variables, not shell variables
-CODEX_OURS='def ours: type == "object" and ((.command // "") | type == "string" and (test("/scripts/agent/hook-event\\.sh'"'"' codex [a-z]+$")
+# hook_ours KIND: jq's `ours`, our hooks: hook-event.sh for KIND from any
+# checkout, and the Claude hooks Codex and Gemini copy from Claude's settings
+# when they migrate them (they would report the session as Claude). `owned`:
+# a group holding one ($s, $r: this checkout's scripts/agent).
+hook_ours() {
+  # shellcheck disable=SC2016 # jq variables, not shell variables
+  printf '%s' 'def ours: type == "object" and ((.command // "") | type == "string" and (test("/scripts/agent/hook-event\\.sh'"'"' '"$1"' [a-z]+$")
     or test("/(claude-)?agent-status\\.tmux/scripts/agent/(set-state|clear-state|auto-desc)\\.sh(['"'"' ]|$)")
     or ((contains($s + "/") or contains($r + "/")) and test("/(set-state|clear-state|auto-desc)\\.sh(['"'"' ]|$)"))));
   def owned: type == "object" and ((.hooks // null) | type == "array") and any(.hooks[]; ours);'
+}
+CODEX_OURS=$(hook_ours codex)
 # shellcheck disable=SC2016
 codex_filter="$CODEX_OURS"'
   def pure: owned and all(.hooks[]; ours);
@@ -296,15 +309,36 @@ codex_hooks_off() {
     (features && line ~ /^(codex_)?hooks=false/) || line ~ /^features\.(codex_)?hooks=false/ { off = 1 }
     END { exit !off }' "$base/config.toml"
 }
+# config_backup FILE: copy FILE to a new FILE.bak-<time>.XXXXXX ($BACKUP)
+# before jq rewrites it, which it does in its own layout.
+BACKUP=""
+config_backup() {
+  BACKUP=$(mktemp "$1.bak-$(date +%s).XXXXXX") || exit 1
+  cp -p "$1" "$BACKUP"
+  if [ -s "$1" ] && ! jq . "$1" | cmp -s - "$1"; then
+    echo "agent-status: $1 is rewritten in jq's layout (2-space indent); its old text is in the backup"
+  fi
+}
+# prune_backups FILE: keep only our newest 3 backups of FILE (the exact
+# mktemp name pattern above).
+prune_backups() {
+  local f stamp
+  for f in "$1".bak-*; do
+    stamp="${f#"$1".bak-}"
+    [[ "$stamp" =~ ^[0-9]+\.[A-Za-z0-9]{6}$ ]] && [ -f "$f" ] && [ ! -L "$f" ] || continue
+    printf '%s\t%s\n' "${stamp%%.*}" "$f"
+  done | sort -t $'\t' -k1,1nr | tail -n +4 | cut -f2- | while IFS= read -r f; do rm -f -- "$f"; done
+}
+# The new file an update is writing, removed on exit unless moved in place.
+EDIT_NEW=""
 # codex_update install|uninstall: edit hooks.json, backing up the old one.
-CODEX_NEW=""
 codex_update() {
-  local new backup="" moved=0 f stamp
+  local new backup="" moved=0
   require_jq "$config"
   require_regular_config "$config"
   new=$(mktemp "$config.agent-status.XXXXXX") || exit 1
-  CODEX_NEW="$new"
-  trap 'rm -f "$CODEX_NEW"' EXIT
+  EDIT_NEW="$new"
+  trap 'rm -f "$EDIT_NEW"' EXIT
   # Exactly one JSON document, as Codex reads it; an empty file is {}.
   { if [ -f "$config" ]; then cat "$config"; else printf '{}\n'; fi; } \
     | jq -s --argjson install "$([ "$1" = install ] && echo true || echo false)" --argjson groups "$(codex_groups)" \
@@ -319,23 +353,71 @@ codex_update() {
       return 0
     fi
     moved=$(codex_moved "$config" "$new")
-    backup=$(mktemp "$config.bak-$(date +%s).XXXXXX") || exit 1
-    cp -p "$config" "$backup"
-    # jq writes the whole file in its own layout.
-    if [ -s "$config" ] && ! jq . "$config" | cmp -s - "$config"; then
-      echo "agent-status: $config is rewritten in jq's layout (2-space indent); its old text is in the backup"
-    fi
+    config_backup "$config"; backup=$BACKUP
   fi
   replace_from_file "$config" "$new"
-  # Keep only our newest 3 backups (the exact mktemp name pattern above).
-  for f in "$config".bak-*; do
-    stamp="${f#"$config".bak-}"
-    [[ "$stamp" =~ ^[0-9]+\.[A-Za-z0-9]{6}$ ]] && [ -f "$f" ] && [ ! -L "$f" ] || continue
-    printf '%s\t%s\n' "${stamp%%.*}" "$f"
-  done | sort -t $'\t' -k1,1nr | tail -n +4 | cut -f2- | while IFS= read -r f; do rm -f -- "$f"; done
+  prune_backups "$config"
   echo "agent-status: hooks $([ "$1" = install ] && echo written to || echo removed from) $config"
   [ -z "$backup" ] || echo "agent-status: backup saved to $backup"
   case "$moved" in 0) ;; *) echo "agent-status: $moved hook(s) of other tools moved in $config; Codex asks you to review them again" ;; esac
+}
+
+# Gemini CLI: one definition per event in settings.json's "hooks", after
+# other tools' ones, each running hook-event.sh with the event's action. All
+# are named agent-status: Gemini shows that name while one runs, and
+# `/hooks disable agent-status` turns them all off.
+gemini_groups() {
+  local hook
+  hook="$(sh_word "$ROOT/scripts/agent/hook-event.sh") gemini"
+  jq -n --arg hook "$hook" '[["SessionStart", "session"], ["SessionEnd", "end"], ["BeforeAgent", "working"],
+      ["AfterAgent", "idle"], ["Notification", "blocked"], ["AfterTool", "tool"]]
+    | map({key: .[0], value: {hooks: [{type: "command", name: "agent-status", command: "\($hook) \(.[1])", timeout: 10000}]}})
+    | from_entries'
+}
+# Our handlers are dropped, with the definitions and events they leave
+# empty; an event that already holds just our current definition keeps it
+# where it is. Other keys (hooksConfig, and the enabled, disabled and
+# notifications that older Gemini releases kept in "hooks") are left alone.
+# shellcheck disable=SC2016 # jq variables, not shell variables
+gemini_filter="$(hook_ours gemini)"'
+  def strip: map(if owned then .hooks |= map(select(ours | not)) | select(.hooks != []) else . end);
+  if type != "object" then error("root must be an object") else . end
+  | if (.hooks // {} | type) != "object" then error("hooks must be an object") else . end
+  | if any(.hooks // {} | to_entries[]; $groups[.key] != null and (.value | type) != "array") then error("each event must be a list") else . end
+  | . as $orig
+  | reduce (.hooks // {} | keys_unsorted[]) as $e (.;
+      if (.hooks[$e] | type) != "array" or ($install and $groups[$e] != null) or (any(.hooks[$e][]; owned) | not) then .
+      else .hooks[$e] |= strip | if .hooks[$e] == [] then del(.hooks[$e]) else . end end)
+  | if $install then
+      reduce ($groups | to_entries[]) as $g (.hooks //= {};
+        (.hooks[$g.key] // []) as $a
+        | if [$a[] | select(owned)] == [$g.value] then . else .hooks[$g.key] = ($a | strip) + [$g.value] end)
+    elif .hooks == {} and $orig.hooks != {} then del(.hooks)
+    else . end'
+# gemini_update install|uninstall: edit settings.json, backing up the old one.
+gemini_update() {
+  local new
+  require_jq "$config"
+  require_regular_config "$config"
+  new=$(mktemp "$config.agent-status.XXXXXX") || exit 1
+  EDIT_NEW="$new"
+  trap 'rm -f "$EDIT_NEW"' EXIT
+  # Gemini also reads comments, which jq can't keep: such a file is refused.
+  { if [ -f "$config" ]; then cat "$config"; else printf '{}\n'; fi; } \
+    | jq -s --argjson install "$([ "$1" = install ] && echo true || echo false)" --argjson groups "$(gemini_groups)" \
+      --arg s "$ROOT/scripts/agent" --arg r "$(cd "$ROOT/scripts/agent" && pwd -P)" \
+      'if length == 0 then {} elif length == 1 then .[0] else error("several JSON documents") end | '"$gemini_filter" > "$new" \
+    || { echo "agent-status: refusing to edit $config: it must be plain JSON (no comments) with an object at the top level" >&2; exit 1; }
+  if [ -f "$config" ] && [ "$(jq -s -cS 'if length == 0 then [{}] else . end' "$config")" = "$(jq -s -cS . "$new")" ]; then
+    echo "agent-status: $config already $([ "$1" = install ] && echo has the current hooks || echo has no agent-status hooks)"
+    return 0
+  fi
+  BACKUP=""
+  [ ! -f "$config" ] || config_backup "$config"
+  replace_from_file "$config" "$new"
+  prune_backups "$config"
+  echo "agent-status: hooks $([ "$1" = install ] && echo written to || echo removed from) $config"
+  [ -z "$BACKUP" ] || echo "agent-status: backup saved to $BACKUP"
 }
 
 if [ "$ACTION" = install ]; then
@@ -395,6 +477,10 @@ KIMI
         | .[$e.event] = if $e.first then [$h] + (.[$e.event] // []) else (.[$e.event] // []) + [$h] end)' --arg hook "$hook" --arg legacy "$(sh_word "$dest")" --argjson events "$events"
       ;;
     codex) codex_update install ;;
+    gemini)
+      gemini_found || { echo "agent-status: gemini config not found at $base; install gemini first (skipped)" >&2; exit 0; }
+      gemini_update install
+      ;;
     *) link_install "$src" "$dest" ;;
   esac
   echo "agent-status: installed $PROVIDER adapter"
@@ -410,6 +496,16 @@ agent-status: in tmux, run Codex as `codex --no-daemon`. Its shared
   and report nothing. With an alias that adds --no-daemon, run
   `codex agents` and `codex --remote` (which need that server) as
   `command codex ...`.
+EOF
+  fi
+  if [ "$PROVIDER" = gemini ]; then
+    ! jq -e '.hooksConfig.enabled == false or any(.hooksConfig.disabled[]?; . == "agent-status")' "$config" >/dev/null 2>&1 \
+      || echo "agent-status: $config turns these hooks off (hooksConfig): enable them, or run /hooks enable agent-status in Gemini" >&2
+    cat <<'EOF'
+agent-status: Gemini CLI runs hooks only in folders you trust.
+agent-status: restart running Gemini sessions. A Gemini that was already
+  running can drop these hooks the next time it saves a setting: if they
+  are gone, run this again.
 EOF
   fi
 else
@@ -435,6 +531,7 @@ else
       link_remove "$src" "$dest"
       ;;
     codex) if [ -e "$config" ] || [ -L "$config" ]; then codex_update uninstall; fi ;;
+    gemini) if [ -e "$config" ] || [ -L "$config" ]; then gemini_update uninstall; fi ;;
     *) link_remove "$src" "$dest" ;;
   esac
   echo "agent-status: uninstalled $PROVIDER adapter"

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Kimi and MastraCode hooks (hook-event.sh) on an isolated tmux server, with
-# their real payload shapes. A stand-in provider process runs each hook as
-# its child, as the agents do: kimi as the foreground job of a pane (or a
-# headless one), MastraCode as one long-lived process.
+# Kimi, MastraCode and Gemini CLI hooks (hook-event.sh) on an isolated tmux
+# server, with their real payload shapes. A stand-in provider process runs
+# each hook as its child, as the agents do: kimi and gemini as the
+# foreground job of a pane (or a headless one), MastraCode as one
+# long-lived process.
 set -euo pipefail
 # Run from a headless agent (claude -p), the hooks would ignore every call.
 unset CLAUDE_CODE_ENTRYPOINT
@@ -13,7 +14,7 @@ TMP="$(mktemp -d)"
 fail(){ echo "FAIL: $1" >&2; exit 1; }
 ctl(){ TMUX='' tmux -L "$SOCK" "$@"; }
 # Stand-ins outside a pane's foreground outlive its server.
-cleanup(){ ctl kill-server 2>/dev/null || true; pkill -f "$TMP/agent.sh" 2>/dev/null || true; rm -rf "$TMP"; }
+cleanup(){ ctl kill-server 2>/dev/null || true; pkill -f "$TMP/agent.sh" 2>/dev/null || true; pkill -f "$TMP/bin/gemini" 2>/dev/null || true; rm -rf "$TMP"; }
 trap cleanup EXIT
 command -v tmux >/dev/null 2>&1 || { echo "SKIP: hook-event (tmux not installed)"; exit 0; }
 command -v jq >/dev/null 2>&1 || { echo "SKIP: hook-event (jq not installed)"; exit 0; }
@@ -200,5 +201,81 @@ mev session SessionStart '' session-init
 tmux set-option -p -t "$pm" @agent-instance "mastracode:$$"
 mev end SessionEnd '' T3
 [ "$(get "$pm" @agent-instance)" = "mastracode:$$" ] || fail "an end cleared a pane another live MastraCode registered"
+
+# ----- Gemini CLI -------------------------------------------------------------
+# Gemini's child process runs the hooks: `node --max-old-space-size=N
+# .../bin/gemini [args]`. The stand-in has that shape (a script named gemini
+# after an option, its FIFO in the environment), and Gemini's hook
+# environment: GEMINI_SESSION_ID is the payload's session_id.
+mkdir "$TMP/bin"
+# shellcheck disable=SC2016 # the stand-in's own variable
+sed 's/"\$1"/"$GEMINI_FIFO"/' "$TMP/agent.sh" > "$TMP/bin/gemini"
+gstart(){ mkfifo "$2"; "$3" "GEMINI_FIFO='$2' exec -a node bash --norc '$TMP/bin/gemini' $1"; }
+KIND=gemini
+pg=$(gstart "" "$TMP/g" in_pane)
+# gev FIFO ACTION EVENT SESSION [FIELDS]: one hook, as Gemini sends it.
+gev(){ send "$1" "$2" "{\"session_id\":\"$4\",\"transcript_path\":\"/h/.gemini/tmp/w/chats/session-$4.jsonl\",\"cwd\":\"/w\",\"hook_event_name\":\"$3\",\"timestamp\":\"2026-10-20T13:46:00.000Z\"${5:+,$5}}" "env GEMINI_SESSION_ID=$4 $HOOK gemini"; }
+gev "$TMP/g" session SessionStart g1 '"source":"startup"'
+[ "$(get "$pg" @agent-kind):$(get "$pg" @agent-instance):$(shown "$pg")" = "gemini:gemini:g1:idle:0" ] || fail "gemini SessionStart: $(get "$pg" @agent-instance) $(shown "$pg")"
+gev "$TMP/g" working BeforeAgent g1 '"prompt":"fix the login bug"'
+[ "$(shown "$pg"):$(get "$pg" @agent-auto-description)" = "working:0:fix the login bug" ] || fail "gemini BeforeAgent: $(shown "$pg") $(get "$pg" @agent-auto-description)"
+gev "$TMP/g" blocked Notification g1 '"notification_type":"ToolPermission","message":"Tool Confirm Shell Command requires execution","details":{"type":"exec","title":"Confirm Shell Command","command":"make test","rootCommand":"make"}'
+[ "$(shown "$pg")" = "asking:0" ] || fail "gemini Notification: $(shown "$pg")"
+# The approved tool returns.
+gev "$TMP/g" tool AfterTool g1 '"tool_name":"run_shell_command","tool_input":{"command":"make test"},"tool_response":{"llmContent":"ok","returnDisplay":"ok"}'
+[ "$(shown "$pg")" = "working:0" ] || fail "gemini AfterTool: $(shown "$pg")"
+# AfterAgent carries the turn's prompt too: it doesn't rename the pane.
+gev "$TMP/g" idle AfterAgent g1 '"prompt":"something else","prompt_response":"Done.","stop_hook_active":false'
+[ "$(shown "$pg"):$(get "$pg" @agent-auto-description)" = "idle:1:fix the login bug" ] || fail "gemini AfterAgent: $(shown "$pg") $(get "$pg" @agent-auto-description)"
+# /clear: SessionEnd(clear) keeps the pane, SessionStart(clear) starts over
+# under the new id.
+gev "$TMP/g" end SessionEnd g1 '"reason":"clear"'
+[ "$(get "$pg" @agent-instance)" = gemini:g1 ] || fail "gemini SessionEnd(clear) cleared the pane"
+gev "$TMP/g" session SessionStart g2 '"source":"clear"'
+[ "$(get "$pg" @agent-instance):$(shown "$pg"):$(get "$pg" @agent-auto-description)" = "gemini:g2:idle:0:" ] || fail "gemini SessionStart(clear): $(get "$pg" @agent-instance) $(shown "$pg")"
+# An in-app /resume switches the session without an event: a tool hook of
+# the old one is ignored, and the next prompt rebinds the pane.
+gev "$TMP/g" working BeforeAgent g2 '"prompt":"first"'
+gev "$TMP/g" tool AfterTool g1 '"tool_name":"read_file"'
+gev "$TMP/g" idle AfterAgent g1 '"prompt":"x","prompt_response":"y","stop_hook_active":false'
+[ "$(get "$pg" @agent-instance):$(shown "$pg")" = "gemini:g2:working:0" ] || fail "another gemini session's hooks reached the pane: $(get "$pg" @agent-instance) $(shown "$pg")"
+gev "$TMP/g" working BeforeAgent g3 '"prompt":"resumed work"'
+[ "$(get "$pg" @agent-instance):$(shown "$pg"):$(get "$pg" @agent-auto-description)" = "gemini:g3:working:0:resumed work" ] || fail "gemini prompt after /resume: $(get "$pg" @agent-instance) $(shown "$pg") $(get "$pg" @agent-auto-description)"
+# Gemini fires SessionEnd(exit) up to three times as it quits.
+gev "$TMP/g" end SessionEnd g3 '"reason":"exit"'
+gev "$TMP/g" end SessionEnd g3 '"reason":"exit"'
+[ -z "$(get "$pg" @agent-state)$(get "$pg" @agent-kind)$(get "$pg" @agent-instance)$(get "$pg" @agent-auto-description)" ] || fail "gemini SessionEnd did not clear the pane"
+# A prompt argument stays interactive in a terminal, as -i does; -p and an
+# editor's ACP server are headless, and so is a gemini in the background of
+# a pane or with no terminal.
+n_g=0
+for args in "'fix it'" "-m pro 'fix it'" "-i 'fix it'" "--prompt-interactive=x" "-r latest" "-r"; do
+  n_g=$((n_g + 1))
+  p=$(gstart "$args" "$TMP/gi-$n_g" in_pane)
+  gev "$TMP/gi-$n_g" session SessionStart i$n_g '"source":"startup"'
+  [ "$(get "$p" @agent-instance)" = "gemini:i$n_g" ] || fail "interactive gemini $args did not report"
+done
+for args in "-p 'fix it'" "--prompt='fix it'" "-m pro -p x" "-y --prompt x" "--acp" "--experimental-acp"; do
+  n_g=$((n_g + 1))
+  p=$(gstart "$args" "$TMP/gh-$n_g" in_pane)
+  gev "$TMP/gh-$n_g" session SessionStart h$n_g '"source":"startup"'
+  gev "$TMP/gh-$n_g" working BeforeAgent h$n_g '"prompt":"x"'
+  [ -z "$(get "$p" @agent-state)" ] || fail "headless gemini $args reported"
+done
+p=$(gstart "" "$TMP/g-bg" in_background)
+gev "$TMP/g-bg" session SessionStart b1 '"source":"startup"'
+[ -z "$(get "$p" @agent-state)" ] || fail "a gemini in the background of a pane reported"
+to=$pg; gstart "" "$TMP/g-tool" detached
+gev "$TMP/g-tool" session SessionStart t1 '"source":"startup"'
+gev "$TMP/g-tool" working BeforeAgent t1 '"prompt":"x"'
+[ -z "$(get "$pg" @agent-state)" ] || fail "a gemini with no terminal reported"
+# Gemini shows a hook's output and takes exit status 2 as a block: the hook
+# prints nothing and succeeds even when a state script fails.
+mkdir "$TMP/broken"; cp "$HOOK" "$TMP/broken/"
+printf '#!/bin/sh\necho out; echo err >&2; exit 2\n' > "$TMP/broken/set-state.sh"; chmod +x "$TMP/broken/set-state.sh"
+for action in working idle tool; do
+  rc=0; out=$(printf '{"session_id":"g1","hook_event_name":"AfterAgent"}' | TMUX_PANE=$pg GEMINI_SESSION_ID=g1 "$TMP/broken/hook-event.sh" gemini $action 2>&1) || rc=$?
+  [ "$rc:$out" = "0:" ] || fail "gemini $action hook printed or failed: $rc $out"
+done
 
 echo "PASS: hook-event"

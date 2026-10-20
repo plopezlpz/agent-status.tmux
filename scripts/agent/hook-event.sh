@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# The Kimi, MastraCode and Codex hook command: map one hook ACTION, with the
-# provider's JSON payload on stdin, to the state scripts.
-# Usage: hook-event.sh <kimi|mastracode|codex> <session|working|tool|blocked|idle|interrupt|end>
+# The Kimi, MastraCode, Codex and Gemini CLI hook command: map one hook
+# ACTION, with the provider's JSON payload on stdin, to the state scripts.
+# Usage: hook-event.sh <kimi|mastracode|codex|gemini> <session|working|tool|blocked|idle|interrupt|end>
 set -eu
 [ -n "${TMUX_PANE:-}" ] || exit 0
 kind="${1:-}" action="${2:-}"
 case "$action" in session|working|tool|blocked|idle|interrupt|end) ;; *) exit 0 ;; esac
 # How each provider's command line reads: its binary names, the options that
-# take a value (and those whose value is optional), headless subcommands, and
-# whether -p/--prompt makes a run headless.
-first="" prompts=1 foreground=""
+# take a value (and those whose value is optional), headless subcommands and
+# options, and whether -p/--prompt makes a run headless.
+first="" prompts=1 foreground="" flags=""
 case "$kind" in
   # Kimi retitles its process "kimi-code" as it starts, cut to the length of
   # its command line ("kimi -p" turns into "kimi-co"), so its argv is gone by
@@ -35,16 +35,31 @@ case "$kind" in
     values="-c --config --enable --disable --remote --remote-auth-token-env -i --image -m --model --local-provider -p --profile -s --sandbox -C --cd --add-dir -a --ask-for-approval"
     optional="" commands="exec e review app-server exec-server mcp-server cloud sandbox"
     ;;
+  # Gemini CLI relaunches itself as a child (node, a heap flag, the script),
+  # which runs the hooks. A prompt argument stays interactive in a terminal;
+  # -p and --acp (an editor's server) don't. Gemini also runs headless when
+  # its input or output isn't a terminal, which argv doesn't show: as for
+  # Kimi, a run reports only as the foreground job of its terminal, which one
+  # started by another agent's tool is not.
+  gemini)
+    names="gemini gemini.js" foreground=1 flags="--acp --experimental-acp"
+    values="-m --model -i --prompt-interactive --approval-mode --policy --admin-policy --allowed-mcp-server-names --allowed-tools -e --extensions --session-file --session-id --include-directories -o --output-format"
+    optional="-r --resume -w --worktree --delete-session" commands=""
+    ;;
   *) exit 0 ;;
 esac
+# Gemini shows what a hook prints (stdout, else stderr) and takes exit status
+# 2 as a block (of the prompt, or a retry of the turn): print nothing and
+# always succeed.
+[ "$kind" != gemini ] || { exec >/dev/null 2>&1; trap 'exit 0' EXIT; }
 
 # Headless runs (`kimi -p`, `kimi acp|web|rc`, `mastracode --prompt`,
-# `codex exec`, Codex's background server) can inherit TMUX_PANE from an agent
-# pane and must not report or steal its identity. The payload has no mode
-# field, so read the nearest provider ancestor's argv (and for Kimi, whether
-# it is its terminal's foreground job). Only words before the
-# first non-option word count (a prompt like "fix the -p flag" is never
-# parsed). Where /proc has the argv, a quoted prompt stays one word, and one
+# `codex exec`, Codex's background server, `gemini -p`) can inherit
+# TMUX_PANE from an agent pane and must not report or steal its identity. The
+# payload has no mode field, so read the nearest provider ancestor's argv
+# (and for Kimi and Gemini, whether it is its terminal's foreground job).
+# Only words before the first non-option word count (a prompt like "fix the
+# -p flag" is never parsed). Where /proc has the argv, a quoted prompt stays one word, and one
 # with a blank in it is a prompt. Elsewhere `ps` loses quoting, so a prompt
 # given on the command line that starts with a subcommand's name ("review my
 # change") reads as that subcommand.
@@ -86,6 +101,7 @@ headless() {
       fi
       case "$word" in
         -*)
+          [[ " $flags " != *" $word "* ]] || { set +f; return 0; }
           [[ " $values " != *" $word "* ]] || skip=value
           [[ " $optional " != *" $word "* ]] || skip=optional
           ;;
@@ -113,6 +129,14 @@ agent_pid=""
 ! headless || exit 0
 
 SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
+
+# Gemini's AfterTool, after every tool call, is the hot path. Its session id
+# is in the environment, so the payload (with the tool's whole output) is
+# never read: Gemini ignores the closed pipe.
+if [ "$kind" = gemini ] && [ "$action" = tool ]; then
+  [ -z "${GEMINI_SESSION_ID:-}" ] || "$SCRIPT_DIR/set-state.sh" working "" "$GEMINI_SESSION_ID" "" gemini </dev/null
+  exit 0
+fi
 
 # Codex's payload is what set-state and clear-state read from a Claude hook
 # (session_id, hook_event_name, source, agent_id, tool_name, prompt, ...):
@@ -157,8 +181,8 @@ if command -v jq >/dev/null 2>&1; then
   IFS=$'\037' read -r instance event source reason stop message prompt <<< "$fields"
 fi
 # Only a prompt submit names the pane (Kimi's TurnStarted and SubagentStart
-# carry a prompt too).
-[ "${event:-UserPromptSubmit}" = UserPromptSubmit ] || prompt=""
+# carry a prompt too, and Gemini's AfterAgent the turn's).
+case "${event:-UserPromptSubmit}" in UserPromptSubmit|BeforeAgent) ;; *) prompt="" ;; esac
 
 if [ "$kind" = mastracode ]; then
   # MastraCode's session_id is "session-init" until its first thread exists,
@@ -189,8 +213,9 @@ if [ "$kind" = mastracode ]; then
     idle:*:aborted) action=interrupt ;;
   esac
 fi
-# MastraCode notifies of the waits on the user (and of a finished run).
-if [ "$event" = Notification ]; then
+# MastraCode notifies of the waits on the user (and of a finished run);
+# Gemini only of a confirmation it shows.
+if [ "$event" = Notification ] && [ "$kind" != gemini ]; then
   case "$reason" in ask_question|tool_approval|plan_approval|sandbox_access) ;; *) exit 0 ;; esac
 fi
 
@@ -224,6 +249,9 @@ case "$action" in
     "$SCRIPT_DIR/auto-desc.sh" clear "$source" </dev/null
     ;;
   working|tool)
+    # Gemini's in-app /resume switches sessions without an event: a prompt
+    # rebinds the pane to the session it goes to.
+    [ "$kind" != gemini ] || [ -z "$instance" ] || "$SCRIPT_DIR/set-state.sh" working "" "$instance" "" gemini bind </dev/null || true
     [ -z "$prompt" ] || "$SCRIPT_DIR/auto-desc.sh" set "$prompt" </dev/null || true
     "$SCRIPT_DIR/set-state.sh" working "" "$instance" "" "$kind" "$only" </dev/null
     ;;

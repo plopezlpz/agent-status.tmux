@@ -157,6 +157,69 @@ cmp -s "$lost_kimi/config.toml" "$TMP/lost.want" || fail "kimi uninstall of unma
 bad_mastra="$TMP/bad-mastra"; mkdir -p "$bad_mastra"; printf '[]\n' > "$bad_mastra/hooks.json"
 if MASTRACODE_HOME="$bad_mastra" bash "$ROOT/manage-provider.sh" install mastracode >/dev/null 2>&1; then fail "mastra accepted non-object config"; fi
 
+# ----- Gemini CLI: settings.json, edited in place --------------------------
+export GEMINI_CLI_HOME="$TMP/gemini"; gem="$GEMINI_CLI_HOME/.gemini"; gs="$gem/settings.json"
+# Antigravity's agy keeps its files in ~/.gemini too: that alone isn't Gemini CLI.
+mkdir -p "$gem/antigravity-cli" "$gem/config"; echo '{}' > "$gem/antigravity-cli/settings.json"
+if bash "$ROOT/manage-provider.sh" found gemini; then fail "found gemini with only Antigravity's files"; fi
+bash "$ROOT/manage-provider.sh" install gemini >/dev/null 2>&1 || fail "gemini install without Gemini CLI failed"
+[ ! -e "$gs" ] || fail "gemini install created settings.json for Antigravity's ~/.gemini"
+# Gemini CLI writes installation_id when it first runs, settings.json later.
+echo id > "$gem/installation_id"
+bash "$ROOT/manage-provider.sh" found gemini || fail "gemini with its installation_id not found"
+rm "$gem/installation_id"
+# Other tools' hooks (one with a migrated Claude hook beside it), a hook of
+# ours from a moved checkout, the legacy keys and hooksConfig.
+hook="'$ROOT/scripts/agent/hook-event.sh' gemini"
+backups(){ set -- "$gs".bak-*; [ -e "$1" ] && echo $# || echo 0; }
+jq -n --arg claude "'$ROOT/scripts/agent/set-state.sh' working" '{ui: {theme: "Dracula"}, hooksConfig: {enabled: true, notifications: false},
+  hooks: {enabled: true,
+    BeforeTool: [{matcher: "run_shell_command", hooks: [{type: "command", command: "guard.sh"}]}],
+    AfterAgent: [{hooks: [{type: "command", command: "notify.sh"}]},
+      {hooks: [{type: "command", name: "agent-status", command: "'"'/moved/agent-status.tmux/scripts/agent/hook-event.sh' gemini idle"'"}]}],
+    AfterTool: [{matcher: ".*", hooks: [{type: "command", command: $claude}, {type: "command", command: "log.sh"}]}]},
+  general: {vimMode: true}}' > "$gs"
+cp "$gs" "$TMP/gemini.orig"
+bash "$ROOT/manage-provider.sh" found gemini || fail "gemini with its settings not found"
+bash "$ROOT/manage-provider.sh" install gemini >/dev/null
+cp "$gs" "$TMP/gemini.once"
+out=$(bash "$ROOT/manage-provider.sh" install gemini)
+case "$out" in *"already has the current hooks"*) ;; *) fail "gemini reinstall rewrote settings.json: $out" ;; esac
+cmp -s "$gs" "$TMP/gemini.once" || fail "gemini reinstall is not byte-stable"
+[ "$(backups)" -eq 1 ] || fail "gemini install did not back up settings.json once"
+cmp -s "$gem"/settings.json.bak-* "$TMP/gemini.orig" || fail "gemini backup is not the old settings.json"
+# One definition of ours per event, after the others, named agent-status.
+[ "$(jq -c '[.hooks | to_entries[] | select(.value | type == "array") | [.key, [.value[].hooks[].command | split(" ") | last]]]' "$gs")" = \
+  '[["BeforeTool",["guard.sh"]],["AfterAgent",["notify.sh","idle"]],["AfterTool",["log.sh","tool"]],["SessionStart",["session"]],["SessionEnd",["end"]],["BeforeAgent",["working"]],["Notification",["blocked"]]]' ] \
+  || fail "gemini hook map is not exact: $(jq -c .hooks "$gs")"
+[ "$(jq --arg hook "$hook " '[.hooks[] | arrays | .[].hooks[] | select(.command | startswith($hook)) | select(.name == "agent-status" and .timeout == 10000)] | length' "$gs")" -eq 6 ] || fail "gemini hooks do not run hook-event.sh, named, once per event"
+[ "$(jq -c '.hooks.AfterTool[0]' "$gs")" = '{"matcher":".*","hooks":[{"type":"command","command":"log.sh"}]}' ] || fail "gemini kept the migrated Claude hook or changed the other one"
+[ "$(jq -c '[.ui, .hooksConfig, .hooks.enabled, .general]' "$gs")" = '[{"theme":"Dracula"},{"enabled":true,"notifications":false},true,{"vimMode":true}]' ] || fail "gemini changed unrelated settings"
+[ "$(jq -c 'keys_unsorted' "$gs")" = '["ui","hooksConfig","hooks","general"]' ] || fail "gemini reordered settings"
+bash "$ROOT/manage-provider.sh" uninstall gemini >/dev/null
+jq 'del(.hooks.AfterAgent[1]) | .hooks.AfterTool[0].hooks |= .[1:]' "$TMP/gemini.orig" > "$TMP/gemini.want"
+cmp -s "$gs" "$TMP/gemini.want" || fail "gemini uninstall: $(diff "$TMP/gemini.want" "$gs")"
+out=$(bash "$ROOT/manage-provider.sh" uninstall gemini)
+case "$out" in *"has no agent-status hooks"*) ;; *) fail "gemini uninstall rewrote a file without our hooks: $out" ;; esac
+# Installing into a file it created and uninstalling leaves no hooks key.
+rm "$gs"; echo id > "$gem/installation_id"
+bash "$ROOT/manage-provider.sh" install gemini >/dev/null
+bash "$ROOT/manage-provider.sh" uninstall gemini >/dev/null
+[ "$(jq -c . "$gs")" = '{}' ] || fail "gemini uninstall left $(jq -c . "$gs")"
+# Only our newest 3 backups are kept.
+for _ in 1 2 3; do
+  bash "$ROOT/manage-provider.sh" install gemini >/dev/null; bash "$ROOT/manage-provider.sh" uninstall gemini >/dev/null
+done
+[ "$(backups)" -eq 3 ] || fail "gemini kept more than 3 backups"
+# Gemini reads comments, jq doesn't: such a file (or one that isn't a
+# settings object) is refused and left alone.
+for bad in '{\n  // mine\n  "ui": {}\n}\n' '[]\n' '{"hooks": {"AfterTool": {}}}\n' '{"hooks": []}\n'; do
+  printf '%b' "$bad" > "$gs"; cp "$gs" "$TMP/gemini.bad"
+  if bash "$ROOT/manage-provider.sh" install gemini >/dev/null 2>&1; then fail "gemini accepted $bad"; fi
+  cmp -s "$gs" "$TMP/gemini.bad" || fail "gemini changed a refused settings.json"
+done
+unset GEMINI_CLI_HOME
+
 echo user > "$PI_EXTENSIONS_DIR/agent-status.ts"
 if bash "$ROOT/manage-provider.sh" install pi >/dev/null 2>&1; then fail "installer overwrote user file"; fi
 [ "$(cat "$PI_EXTENSIONS_DIR/agent-status.ts")" = user ] || fail "user file changed"
