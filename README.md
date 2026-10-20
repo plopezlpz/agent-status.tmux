@@ -55,7 +55,8 @@ Older releases' `install-pi-extension.sh`, `uninstall-pi-extension.sh` and
 `manage-provider.sh uninstall pi` and `manage-provider.sh uninstall claude`.
 OMP no longer reads `HERDR_OMP_IDLE_DEBOUNCE_MS` or `HERDR_OMP_RETRY_GRACE_MS`:
 set `AGENT_STATUS_OMP_IDLE_DEBOUNCE_MS` and `AGENT_STATUS_OMP_RETRY_GRACE_MS`
-instead.
+instead. `@agent-log` lines now carry the tmux server's local time with its
+UTC offset (`2026-10-20T11:09:03+0300`) instead of UTC (`...Z`).
 
 ## Providers
 
