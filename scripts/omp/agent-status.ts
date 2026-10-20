@@ -1,5 +1,11 @@
 /** agent-status.tmux — OMP lifecycle adapter. */
 // @ts-nocheck
+import { realpathSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+// Installed as a symlink to the plugin checkout: run that checkout's scripts.
+const scriptsDir = resolve(dirname(realpathSync(fileURLToPath(import.meta.url))), "../agent");
 
 const retryable = /overloaded|provider.?returned.?error|rate.?limit|too many requests|429|500|502|503|504|service.?unavailable|server.?error|internal.?error|network.?error|connection.?error|connection.?refused|connection.?lost|websocket.?closed|websocket.?error|other side closed|fetch failed|upstream.?connect|reset before headers|socket hang up|ended without|http2 request did not get a response|timed? out|timeout|terminated|retry delay/i;
 // AGENT_STATUS_OMP_<NAME>, else the HERDR_OMP_<NAME> this adapter took first.
@@ -10,7 +16,6 @@ const duration = (name: string, fallback: number) => {
 
 export default function (pi) {
 	if (!process.env.TMUX_PANE) return;
-	let scriptsDir: string | undefined;
 	let instance = "", seq = Date.now() * 1000, root = false, active = false;
 	let blocked = 0, blockedMessage = "", retryHold = false, failure = false, failureMessage = "";
 	// announced: completion already published, so later blocker churn settles idle.
@@ -18,15 +23,8 @@ export default function (pi) {
 	let queue = Promise.resolve();
 	// Bound every status command; a blocked script must not stall the queue.
 	const execOptions = { timeout: 5000 };
-	const dir = async () => {
-		if (scriptsDir === undefined) {
-			try { scriptsDir = (await pi.exec("tmux", ["show-option", "-gqv", "@agent-scripts-dir"], execOptions)).stdout.trim(); } catch { scriptsDir = ""; }
-			scriptsDir ||= `${process.env.HOME}/.tmux/plugins/agent-status.tmux/scripts/agent`;
-		}
-		return scriptsDir;
-	};
 	const run = (script: string, args: string[]) => {
-		queue = queue.then(async () => { try { await pi.exec(`${await dir()}/${script}`, args, execOptions); } catch {} });
+		queue = queue.then(async () => { try { await pi.exec(`${scriptsDir}/${script}`, args, execOptions); } catch {} });
 		return queue;
 	};
 	const updateInstance = (ctx: any) => { try { instance = ctx?.sessionManager?.getSessionId?.() || instance; } catch {} };

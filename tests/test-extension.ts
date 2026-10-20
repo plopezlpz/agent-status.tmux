@@ -4,10 +4,12 @@
 // Run with: bun tests/test-extension.ts   (skipped elsewhere; see tests/run.sh)
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import { mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
 
 type ExecCall = { cmd: string; args: string[]; options?: { timeout?: number } };
 
-function makePi(opts: { tmuxStdout?: string; tmuxThrows?: boolean; paneState?: string; paneSeq?: string } = {}) {
+function makePi(opts: { paneState?: string; paneSeq?: string } = {}) {
 	const handlers: Record<string, (e: any, ctx?: any) => unknown> = {};
 	const calls: ExecCall[] = [];
 	const pi = {
@@ -16,13 +18,9 @@ function makePi(opts: { tmuxStdout?: string; tmuxThrows?: boolean; paneState?: s
 		},
 		async exec(cmd: string, args: string[], options?: { timeout?: number }) {
 			calls.push({ cmd, args, options });
-			// Stand in for `tmux show-option -gqv @agent-scripts-dir`.
-			if (cmd === "tmux") {
-				if (opts.tmuxThrows) throw new Error("tmux not found");
-				if (args[0] === "display") {
-					return { stdout: `${opts.paneState ?? "idle"}\t${opts.paneSeq ?? "1"}\n`, code: 0 };
-				}
-				return { stdout: opts.tmuxStdout ?? "/SCRIPTS\n", code: 0 };
+			// Stand in for the pane's state and sequence.
+			if (cmd === "tmux" && args[0] === "display") {
+				return { stdout: `${opts.paneState ?? "idle"}\t${opts.paneSeq ?? "1"}\n`, code: 0 };
 			}
 			return { stdout: "", code: 0 };
 		},
@@ -30,7 +28,8 @@ function makePi(opts: { tmuxStdout?: string; tmuxThrows?: boolean; paneState?: s
 	return { pi, handlers, calls };
 }
 
-const TPM_FALLBACK = "/home/test/.tmux/plugins/agent-status.tmux/scripts/agent";
+const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const SCRIPTS = `${realpathSync(root)}/scripts/agent`;
 
 let failed = 0;
 function check(cond: boolean, msg: string) {
@@ -52,7 +51,11 @@ const clears = (calls: ExecCall[]) => calls.filter((c) => c.cmd.endsWith("clear-
 // Turn-path handlers queue work without awaiting it; let the queue drain.
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
-const mod = await import(resolve(dirname(fileURLToPath(import.meta.url)), "../scripts/pi/agent-status.ts"));
+// Loaded as installed: through a symlink in pi's extensions dir.
+const extDir = mkdtempSync(resolve(tmpdir(), "agent-status-pi."));
+symlinkSync(resolve(root, "scripts/pi/agent-status.ts"), resolve(extDir, "agent-status.ts"));
+const mod = await import(resolve(extDir, "agent-status.ts"));
+rmSync(extDir, { recursive: true, force: true });
 const extension = mod.default as (pi: unknown) => void;
 
 const ctx = (id: string, idle: boolean) => ({
@@ -63,7 +66,6 @@ const ctx = (id: string, idle: boolean) => ({
 
 // --- inside tmux: full mapping + guards ---
 process.env.TMUX_PANE = "%1";
-process.env.HOME = "/home/test";
 {
 	const { pi, handlers, calls } = makePi();
 	extension(pi);
@@ -137,7 +139,7 @@ process.env.HOME = "/home/test";
 	check(clear?.args[1] === "pi-1", "shutdown carries instance identity");
 
 	const sc = calls.find((c) => c.cmd.endsWith("set-state.sh"));
-	check(!!sc && sc.cmd.startsWith("/SCRIPTS/"), "uses @agent-scripts-dir for script path");
+	check(!!sc && sc.cmd === `${SCRIPTS}/set-state.sh`, "runs the checkout's scripts through the installed symlink");
 	const seqs = stateCalls(calls).map((c) => Number(c.args[3])).filter(Number.isFinite);
 	check(seqs.every((n, i) => i === 0 || n > seqs[i - 1]), "reports monotonic sequences");
 	check(calls.every((c) => typeof c.options?.timeout === "number" && c.options.timeout > 0), "every exec is bounded by a timeout");
@@ -164,28 +166,6 @@ process.env.HOME = "/home/test";
 	check(lastState(calls) === "idle", "reload with missing state -> idle registration");
 	const repaired = stateCalls(calls).at(-1);
 	check(repaired?.args[5] === "reset", "reload repair resets instance authority");
-}
-
-// --- fallback path: tmux lookup throws -> conventional TPM path ---
-{
-	process.env.TMUX_PANE = "%1";
-	process.env.HOME = "/home/test";
-	const { pi, handlers, calls } = makePi({ tmuxThrows: true });
-	extension(pi);
-	await handlers.session_start({ reason: "startup" }, ctx("pi-fallback", true));
-	const sc = calls.find((c) => c.cmd.endsWith("set-state.sh"));
-	check(!!sc && sc.cmd === `${TPM_FALLBACK}/set-state.sh`, "tmux throws -> falls back to TPM path");
-}
-
-// --- fallback path: empty @agent-scripts-dir -> conventional TPM path ---
-{
-	process.env.TMUX_PANE = "%1";
-	process.env.HOME = "/home/test";
-	const { pi, handlers, calls } = makePi({ tmuxStdout: "\n" });
-	extension(pi);
-	await handlers.session_start({ reason: "startup" }, ctx("pi-fallback", true));
-	const sc = calls.find((c) => c.cmd.endsWith("set-state.sh"));
-	check(!!sc && sc.cmd === `${TPM_FALLBACK}/set-state.sh`, "empty option -> falls back to TPM path");
 }
 
 // --- headless modes inside tmux do not own the pane ---

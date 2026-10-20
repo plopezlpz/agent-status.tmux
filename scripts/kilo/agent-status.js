@@ -25,7 +25,7 @@ export const AgentStatusPlugin = async () => {
   let quit = () => {
     quit = () => {};
     if (!bound) return;
-    try { execFileSync(`${scriptsDir()}/clear-state.sh`, ["quit", bound, "kilo"], {timeout:5000, stdio:"ignore"}); } catch {}
+    try { execFileSync(`${scriptsDir}/clear-state.sh`, ["quit", bound, "kilo"], {timeout:5000, stdio:"ignore"}); } catch {}
   };
   process.once("exit", () => quit());
   for (const signal of ["SIGINT", "SIGTERM"]) {

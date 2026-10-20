@@ -79,6 +79,10 @@ link_remove() {
   local src="$1" dest="$2"
   if link_points_to "$src" "$dest"; then rm "$dest"; fi
 }
+# sh_word STRING: STRING as one single-quoted shell word.
+sh_word() {
+  printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+}
 require_jq() {
   command -v jq >/dev/null 2>&1 || { echo "agent-status: jq is required${1:+ to edit $1}" >&2; exit 1; }
 }
@@ -151,13 +155,20 @@ case "$PROVIDER" in
     ;;
   kimi)
     base="${KIMI_CODE_HOME:-$HOME/.kimi-code}"
-    src="$ROOT/scripts/kimi/agent-status.sh"; dest="$base/hooks/agent-status.tmux.sh"; config="$base/config.toml"
+    config="$base/config.toml"
     begin='# >>> agent-status.tmux kimi integration' end='# <<< agent-status.tmux kimi integration'
     ;;
   mastracode)
     base="${MASTRACODE_HOME:-$HOME/.mastracode}"
-    src="$ROOT/scripts/mastracode/agent-status.sh"; dest="$base/hooks/agent-status.tmux.sh"; config="$base/hooks.json"
-    # Hook event -> adapter action (scripts/agent/hook-event.sh).
+    config="$base/hooks.json"
+    # Our entries: hook-event.sh from any checkout, or the old symlink.
+    # shellcheck disable=SC2016 # jq variables, not shell variables
+    strip='def ours: type == "object" and ((.command // "" | tostring) as $c
+        | ($c | startswith("\($legacy) ")) or ($c | test("/scripts/agent/hook-event\\.sh'"'"' mastracode [a-z]+$")));
+      if type != "object" then error("root must be object") else . end
+      | with_entries(if (.value | type) == "array" and any(.value[]; ours)
+          then .value |= map(select(ours | not)) | select(.value | length > 0) else . end)'
+    # Hook event -> hook-event.sh action.
     events='[{"event":"SessionStart","action":"session"},{"event":"SessionEnd","action":"end"},{"event":"UserPromptSubmit","action":"working"},{"event":"AgentStart","action":"working"},{"event":"PreToolUse","action":"working"},{"event":"PermissionRequest","action":"blocked"},{"event":"PermissionResult","action":"working"},{"event":"SubagentStart","action":"working"},{"event":"SubagentEnd","action":"working"},{"event":"Interrupt","action":"interrupt"},{"event":"AgentEnd","action":"idle"},{"event":"Stop","action":"idle"}]'
     ;;
 esac
@@ -166,8 +177,13 @@ if [ "$ACTION" = found ]; then
   if [ "$PROVIDER" = pi ] && [ -n "${PI_EXTENSIONS_DIR:-}" ]; then exit 0; fi
   [ -d "$base" ]; exit
 fi
-# The adapter's path as a single-quoted shell word, for hook commands.
-cmd_path=$(printf '%s' "$dest" | sed "s/'/'\\\\''/g")
+if [ "$PROVIDER" = kimi ] || [ "$PROVIDER" = mastracode ]; then
+  # Their hooks run hook-event.sh from this checkout. Older releases ran a
+  # symlink to scripts/<provider>/agent-status.sh (now a shim for hooks not
+  # yet reinstalled); install and uninstall remove it.
+  hook="$(sh_word "$ROOT/scripts/agent/hook-event.sh") $PROVIDER"
+  src="$ROOT/scripts/$PROVIDER/agent-status.sh" dest="$base/hooks/agent-status.tmux.sh"
+fi
 
 if [ "$ACTION" = install ]; then
   # Explicit test/user destination overrides preserve the old Pi behavior of
@@ -190,7 +206,6 @@ if [ "$ACTION" = install ]; then
       require_regular_config "$config"
       original=/dev/null; [ ! -f "$config" ] || original="$config"
       validate_marked_block "$original" "$begin" "$end"
-      link_validate "$src" "$dest"
       tmp=$(mktemp "$config.agent-status.XXXXXX") || exit 1
       strip_marked_block "$original" "$begin" "$end" > "$tmp"
       {
@@ -198,7 +213,7 @@ if [ "$ACTION" = install ]; then
         while IFS='|' read -r event matcher action; do
           printf '[[hooks]]\nevent = "%s"\n' "$event"
           [ -z "$matcher" ] || printf 'matcher = "%s"\n' "$matcher"
-          command_value=$(jq -Rn --arg value "'$cmd_path' $action" '$value')
+          command_value=$(jq -Rn --arg value "$hook $action" '$value')
           printf 'command = %s\ntimeout = 10\n\n' "$command_value"
         done <<'KIMI'
 SessionStart||session
@@ -219,13 +234,12 @@ KIMI
         printf '%s\n' "$end"
       } >> "$tmp"
       replace_from_file "$config" "$tmp"; rm -f "$tmp"
-      link_install "$src" "$dest"
+      link_remove "$src" "$dest"
       ;;
     mastracode)
-      link_validate "$src" "$dest"
       # shellcheck disable=SC2016 # jq variables, not shell variables
-      json_update "$config" 'if type != "object" then error("root must be object") else . end | reduce $events[] as $e (. ; .[$e.event] = (((.[$e.event] // []) | map(select((.command // "") | startswith($command + " ") | not))) + [{type:"command",command:($command + " " + $e.action),timeout:10000}]))' --arg command "'$cmd_path'" --argjson events "$events"
-      link_install "$src" "$dest"
+      json_update "$config" "$strip"' | reduce $events[] as $e (.; .[$e.event] = (.[$e.event] // []) + [{type:"command",command:"\($hook) \($e.action)",timeout:10000}])' --arg hook "$hook" --arg legacy "$(sh_word "$dest")" --argjson events "$events"
+      link_remove "$src" "$dest"
       ;;
     *) link_install "$src" "$dest" ;;
   esac
@@ -248,8 +262,7 @@ else
       ;;
     mastracode)
       if [ -e "$config" ] || [ -L "$config" ]; then
-        # shellcheck disable=SC2016 # jq variables, not shell variables
-        json_update "$config" 'if type != "object" then error("root must be object") else . end | reduce $events[] as $e (. ; ($command + " ") as $owned | if ((.[$e.event] // []) | type) == "array" and ((.[$e.event] // []) | any((.command // "") | startswith($owned))) then .[$e.event] |= map(select((.command // "") | startswith($owned) | not)) | if (.[$e.event] | length) == 0 then del(.[$e.event]) else . end else . end)' --arg command "'$cmd_path'" --argjson events "$events"
+        json_update "$config" "$strip" --arg legacy "$(sh_word "$dest")"
       fi
       link_remove "$src" "$dest"
       ;;

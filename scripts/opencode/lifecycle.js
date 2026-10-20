@@ -1,19 +1,17 @@
 // agent-status.tmux — shared by the OpenCode and Kilo lifecycle adapters.
 // Installed adapters are symlinks, so this resolves from the plugin checkout.
-import { execFile, execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
+import { realpathSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 export const statuses = new Map([["idle", "finished"], ["active", "working"], ["busy", "working"], ["pending", "working"], ["retry", "working"], ["running", "working"], ["streaming", "working"], ["working", "working"]]);
 export const childStates = new Map([["permission.asked", "asking"], ["question.asked", "asking"], ["permission.replied", "working"], ["question.replied", "working"], ["question.rejected", "working"]]);
 export const workingEvents = ["tool.execute.before", "tool.execute.after", "permission.replied", "question.replied", "question.rejected", "session.compacted"];
 export const askingEvents = ["permission.asked", "question.asked", "session.error"];
 
-let scripts;
-export function scriptsDir() {
-  if (scripts !== undefined) return scripts;
-  try { scripts = execFileSync("tmux", ["show-option", "-gqv", "@agent-scripts-dir"], { encoding: "utf8", timeout: 2000, stdio: ["ignore", "pipe", "ignore"] }).trim(); } catch { scripts = ""; }
-  // Cache the fallback too, or every later call would resolve to "/<script>".
-  return scripts ||= `${process.env.HOME}/.tmux/plugins/agent-status.tmux/scripts/agent`;
-}
+// The checkout's state scripts.
+export const scriptsDir = resolve(dirname(realpathSync(fileURLToPath(import.meta.url))), "../agent");
 export function sessionID(properties) { return typeof properties?.sessionID === "string" && properties.sessionID || undefined; }
 export function statusState(status) { const kind = typeof status === "string" ? status : status?.type; return typeof kind === "string" ? statuses.get(kind.toLowerCase()) : undefined; }
 
@@ -27,7 +25,7 @@ export function lifecycle(kind) {
   // stall later updates or the agent. Stdin is closed so no script can wait on it.
   function run(name, args) {
     chain = chain.then(() => new Promise(resolve => {
-      try { execFile(`${scriptsDir()}/${name}`, args, { timeout: 5000 }, () => resolve()).stdin?.end(); } catch { resolve(); }
+      try { execFile(`${scriptsDir}/${name}`, args, { timeout: 5000 }, () => resolve()).stdin?.end(); } catch { resolve(); }
     }));
     return chain;
   }

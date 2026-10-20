@@ -1,15 +1,15 @@
 // Behavioural tests for the OMP, OpenCode, Kilo, Kimi, and MastraCode adapters.
-// Script calls land in argv-logging stubs under a temp HOME (tmux is stubbed to
-// fail, so adapters fall back to $HOME/.tmux/plugins/...); no provider, live
-// tmux server, or LLM is involved.
+// The adapters run from a copy of the plugin whose state scripts are
+// argv-logging stubs (each adapter runs the scripts of its own checkout); no
+// provider, live tmux server, or LLM is involved.
 //
 // Run with: bun tests/test-providers.ts   (skipped elsewhere; see tests/run.sh)
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { execFileSync, spawnSync } from "node:child_process";
-const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const checkout = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const executable = (path: string, body: string) => { writeFileSync(path, body); chmodSync(path, 0o755); };
 
 // Bun resolves execFileSync commands against the PATH the process started
@@ -19,8 +19,10 @@ const executable = (path: string, body: string) => { writeFileSync(path, body); 
 if (!process.env.AGENT_TEST_ROOT) {
   const tmp = mkdtempSync(resolve(tmpdir(), "agent-status-providers."));
   const home = resolve(tmp, "home"), bin = resolve(tmp, "bin");
-  const stubs = resolve(home, ".tmux/plugins/agent-status.tmux/scripts/agent");
-  mkdirSync(stubs, { recursive: true }); mkdirSync(bin, { recursive: true }); mkdirSync(resolve(tmp, "tmux"));
+  const stubs = resolve(tmp, "plugin/scripts/agent");
+  cpSync(resolve(checkout, "scripts"), resolve(tmp, "plugin/scripts"), { recursive: true });
+  rmSync(stubs, { recursive: true }); mkdirSync(stubs);
+  mkdirSync(home); mkdirSync(bin); mkdirSync(resolve(tmp, "tmux"));
   // Each stub logs its name, argv, and whether stdin was closed or left open.
   for (const name of ["set-state.sh", "auto-desc.sh", "clear-state.sh"]) {
     executable(resolve(stubs, name), `#!/bin/bash
@@ -31,10 +33,10 @@ printf '%s|<stdin:%s>\\n' "$line" "$stdin" >> "$AGENT_TEST_LOG"
 case " \${AGENT_TEST_FAIL:-} " in *" ${name} "*) exit 1 ;; esac
 `);
   }
-  // The hook adapters' shared body is real; only what it calls is stubbed.
-  copyFileSync(resolve(root, "scripts/agent/hook-event.sh"), resolve(stubs, "hook-event.sh"));
-  // Lookups fail (forcing the HOME fallback) except a busy pane state, which
-  // an adapter must not copy onto a newly selected session.
+  // The hook command is real; only what it calls is stubbed.
+  copyFileSync(resolve(checkout, "scripts/agent/hook-event.sh"), resolve(stubs, "hook-event.sh"));
+  // Lookups fail except a busy pane state, which an adapter must not copy onto
+  // a newly selected session.
   executable(resolve(bin, "tmux"), '#!/bin/sh\ncase "$*" in *@agent-state*) echo working; exit 0 ;; esac\nexit 1\n');
   const env: Record<string, string | undefined> = { ...process.env, AGENT_TEST_ROOT: tmp, HOME: home, PATH: `${bin}:${process.env.PATH}`, TMUX_TMPDIR: resolve(tmp, "tmux"), AGENT_TEST_LOG: resolve(tmp, "calls.log") };
   delete env.TMUX; delete env.TMUX_PANE;
@@ -47,6 +49,8 @@ let failures = 0;
 const check = (ok: boolean, message: string) => { if (!ok) { console.error(`FAIL: ${message}`); failures++; } };
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 const tmp = process.env.AGENT_TEST_ROOT, home = process.env.HOME!, log = process.env.AGENT_TEST_LOG!;
+// The plugin copy the adapters load from.
+const root = resolve(tmp ?? "", "plugin");
 if (!tmp || !home.startsWith(tmp) || process.env.TMUX || !process.env.TMUX_TMPDIR?.startsWith(tmp)) throw new Error("refusing to run outside the isolated environment");
 // An adapter as manage-provider.sh installs it: a symlink in the provider's
 // plugin dir, so its relative import of lifecycle.js must follow the link.
@@ -276,25 +280,27 @@ process.env.TMUX_PANE = "%4";
   check(got.length === 1 && got[0].startsWith("clear-state.sh|quit|B|opencode|"), "TUI dispose clears the bound root synchronously");
   check(process.listenerCount("exit") === exitListeners, "TUI dispose removes its exit cleanup");
 
-  // A failing reset backs off instead of retrying every 100ms; missing scripts stop it.
-  const start = async (homeDir: string, id: string) => {
-    const saved = process.env.HOME; process.env.HOME = homeDir;
+  // A failing reset backs off instead of retrying every 100ms; missing scripts
+  // stop it. Each case is a plugin copy with its own scripts.
+  const start = async (plugin: string, id: string) => {
+    const file = resolve(plugin, "scripts/opencode/agent-status-tui.js");
+    mkdirSync(dirname(file), { recursive: true }); copyFileSync(resolve(root, "scripts/opencode/agent-status-tui.js"), file);
+    const copy = (await import(file)).default;
     let stop: Function | undefined; const selected = { name: "session", params: { sessionID: id } };
     sessions[id] = { id };
-    await tui.tui({ route: { get current() { return selected; } }, state: { session: { get: (sid: string) => sessions[sid] } }, lifecycle: { onDispose: (fn: Function) => { stop = fn; } } });
-    process.env.HOME = saved;
+    await copy.tui({ route: { get current() { return selected; } }, state: { session: { get: (sid: string) => sessions[sid] } }, lifecycle: { onDispose: (fn: Function) => { stop = fn; } } });
     return stop!;
   };
-  const failing = resolve(tmp, "home-failing/.tmux/plugins/agent-status.tmux/scripts/agent"); mkdirSync(failing, { recursive: true });
+  const failing = resolve(tmp, "plugin-failing/scripts/agent"); mkdirSync(failing, { recursive: true });
   executable(resolve(failing, "set-state.sh"), `#!/bin/sh\necho "set-state.sh|$3|failed" >> "$AGENT_TEST_LOG"\nexit 1\n`);
-  let stop = await start(resolve(tmp, "home-failing"), "F1");
+  let stop = await start(resolve(tmp, "plugin-failing"), "F1");
   await sleep(1000); stop();
   const attempts = since().filter(l => l.includes("|F1|failed")).length;
   check(attempts >= 2 && attempts <= 5, `TUI backs off failed resets (${attempts} attempts in 1s)`);
-  const empty = resolve(tmp, "home-empty"); mkdirSync(empty, { recursive: true });
+  const empty = resolve(tmp, "plugin-empty");
   stop = await start(empty, "E1");
   await sleep(300);
-  const late = resolve(empty, ".tmux/plugins/agent-status.tmux/scripts/agent"); mkdirSync(late, { recursive: true });
+  const late = resolve(empty, "scripts/agent"); mkdirSync(late, { recursive: true });
   executable(resolve(late, "set-state.sh"), `#!/bin/sh\necho "set-state.sh|$3|late" >> "$AGENT_TEST_LOG"\n`);
   await sleep(500); stop();
   check(!since().some(l => l.includes("|E1|")), "TUI stops retrying once the scripts are missing");
@@ -305,16 +311,17 @@ for (const [kind, name, headlessArgs, interactiveArgs, moreHeadless, moreInterac
   ["kimi", "kimi", ["-p", "summarize"], ["--yolo"], [["-m", "k2", "-p", "x"], ["--prompt=x"], ["acp"], ["-S", "-p", "x"]], [["fix the -p flag"], ["--model", "web"], ["-S", "s1", "--yolo"]]],
   ["mastracode", "mastracode", ["--prompt", "summarize"], [], [["-p", "x"], ["--prompt=x"]], [["fix the -p flag"]]],
 ] as const) {
-  const script = resolve(root, `scripts/${kind}/agent-status.sh`);
+  // The hook command, as manage-provider.sh installs it.
+  const script = resolve(root, "scripts/agent/hook-event.sh");
   const provider = resolve(tmp, `provider-${kind}`); mkdirSync(provider, { recursive: true });
   // A fake provider binary that runs the hook as its child, like the real CLI.
-  executable(resolve(provider, name), `#!/bin/bash\n"$HOOK_SCRIPT" "$HOOK_ACTION" < "$HOOK_INPUT"\n`);
+  executable(resolve(provider, name), `#!/bin/bash\n"$HOOK_SCRIPT" ${kind} "$HOOK_ACTION" < "$HOOK_INPUT"\n`);
   const env = { ...process.env, TMUX_PANE: "%5" };
   const hook = (action: string, payload: object, via?: readonly string[]) => {
     const input = resolve(tmp, "hook-input.json"); writeFileSync(input, JSON.stringify(payload));
     const r = via
       ? spawnSync(resolve(provider, name), [...via], { env: { ...env, HOOK_SCRIPT: script, HOOK_ACTION: action, HOOK_INPUT: input }, encoding: "utf8" })
-      : spawnSync(script, [action], { env, input: JSON.stringify(payload), encoding: "utf8" });
+      : spawnSync(script, [kind, action], { env, input: JSON.stringify(payload), encoding: "utf8" });
     check(r.status === 0, `${kind} ${action} hook exits 0 (${r.stderr})`);
     return since();
   };
@@ -326,6 +333,9 @@ for (const [kind, name, headlessArgs, interactiveArgs, moreHeadless, moreInterac
   check(got.length === 0, `${kind} compact SessionStart neither resets nor clears`);
   got = hook("working", { session_id: "s1", hook_event_name: "UserPromptSubmit", prompt: "hi" }, interactiveArgs);
   check(got.some(l => l.startsWith(`set-state.sh|working||s1||${kind}|`)), `${kind} interactive process reports`);
+  check(got[0]?.startsWith("auto-desc.sh|set|hi|<stdin:closed>") === true, `${kind} a prompt submit passes the prompt to auto-desc`);
+  got = hook("working", { session_id: "s1", hook_event_name: "PreToolUse", tool_name: "Bash" });
+  check(got.length === 1 && got[0].startsWith(`set-state.sh|working||s1||${kind}|`), `${kind} a tool event runs no auto-desc`);
   got = hook("session", { session_id: "h1", hook_event_name: "SessionStart", source: "startup" }, headlessArgs);
   check(got.length === 0, `${kind} headless process never resets the pane`);
   got = hook("working", { session_id: "h1", hook_event_name: "UserPromptSubmit", prompt: "hi" }, headlessArgs);
@@ -339,7 +349,7 @@ for (const [kind, name, headlessArgs, interactiveArgs, moreHeadless, moreInterac
     check(got.some(l => l.startsWith(`set-state.sh|working||s1||${kind}|`)), `${kind} ${JSON.stringify(args)} is interactive`);
   }
   {
-    const r = spawnSync(script, ["working"], { env: { ...env, AGENT_TEST_FAIL: "auto-desc.sh" }, input: JSON.stringify({ session_id: "s1", prompt: "hi" }), encoding: "utf8" });
+    const r = spawnSync(script, [kind, "working"], { env: { ...env, AGENT_TEST_FAIL: "auto-desc.sh" }, input: JSON.stringify({ session_id: "s1", prompt: "hi" }), encoding: "utf8" });
     got = since();
     check(r.status === 0 && got.some(l => l.startsWith(`set-state.sh|working||s1||${kind}|`)), `${kind} a failing auto-desc still reports working`);
   }
@@ -355,6 +365,14 @@ for (const [kind, name, headlessArgs, interactiveArgs, moreHeadless, moreInterac
   check(got.length === 1 && got[0].startsWith(`clear-state.sh|exit|s1|${kind}|`), `${kind} SessionEnd clears its own instance`);
   got = hook("end", { session_id: "s1", hook_event_name: "SessionEnd" });
   check(got[0]?.startsWith(`clear-state.sh|exit|s1|${kind}|`), `${kind} SessionEnd without a reason still quits`);
+  {
+    // Hooks installed by older releases run a symlink to the adapter shim.
+    const legacy = resolve(tmp, `legacy-${kind}/agent-status.tmux.sh`);
+    mkdirSync(dirname(legacy), { recursive: true }); symlinkSync(resolve(root, `scripts/${kind}/agent-status.sh`), legacy);
+    const r = spawnSync(legacy, ["blocked"], { env, input: JSON.stringify({ session_id: "s1", tool_name: "Edit" }), encoding: "utf8" });
+    got = since();
+    check(r.status === 0 && got.length === 1 && got[0].startsWith(`set-state.sh|asking|Edit|s1||${kind}|`), `${kind} a hook installed by an older release still reports (${r.stderr})`);
+  }
 }
 
 if (failures) process.exit(1);

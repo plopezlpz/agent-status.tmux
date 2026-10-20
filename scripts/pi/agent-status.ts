@@ -5,11 +5,16 @@
  * status failures never affect the agent itself. No-op outside tmux.
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { realpathSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+// Installed as a symlink to the plugin checkout: run that checkout's scripts.
+const scriptsDir = resolve(dirname(realpathSync(fileURLToPath(import.meta.url))), "../agent");
 
 export default function (pi: ExtensionAPI) {
 	if (!process.env.TMUX_PANE) return;
 
-	let scriptsDir: string | undefined;
 	let instance = "";
 	let seq = Date.now() * 1000;
 	let rootSession = false;
@@ -21,25 +26,11 @@ export default function (pi: ExtensionAPI) {
 	// Bound every status command; a blocked script must not stall the queue.
 	const execOptions = { timeout: 5000 };
 
-	const resolveDir = async (): Promise<string> => {
-		if (scriptsDir === undefined) {
-			let opt = "";
-			try {
-				const { stdout } = await pi.exec("tmux", ["show-option", "-gqv", "@agent-scripts-dir"], execOptions);
-				opt = stdout.trim();
-			} catch {
-				// Fall through to the conventional TPM path.
-			}
-			scriptsDir = opt || `${process.env.HOME}/.tmux/plugins/agent-status.tmux/scripts/agent`;
-		}
-		return scriptsDir;
-	};
-
-	// Queue COMMAND (resolved when its turn comes) after earlier updates.
-	const enqueue = (command: () => Promise<string> | string, args: string[]): Promise<void> => {
+	// Queue COMMAND after earlier updates.
+	const enqueue = (command: string, args: string[]): Promise<void> => {
 		const next = queue.then(async () => {
 			try {
-				await pi.exec(await command(), args, execOptions);
+				await pi.exec(command, args, execOptions);
 			} catch {
 				// A status update must never disrupt the agent.
 			}
@@ -47,8 +38,8 @@ export default function (pi: ExtensionAPI) {
 		queue = next;
 		return next;
 	};
-	const run = (script: string, args: string[]) => enqueue(async () => `${await resolveDir()}/${script}`, args);
-	const tmux = (args: string[]) => enqueue(() => "tmux", args);
+	const run = (script: string, args: string[]) => enqueue(`${scriptsDir}/${script}`, args);
+	const tmux = (args: string[]) => enqueue("tmux", args);
 
 	const updateInstance = (ctx: any): void => {
 		try {
@@ -58,8 +49,8 @@ export default function (pi: ExtensionAPI) {
 		}
 	};
 
-	// Record the session file on the pane so describe.sh generate can read the
-	// conversation (latest prompts) when generating a description. A new session
+	// Record the session file on the pane so describe.sh suggest can read the
+	// conversation (latest prompts) when suggesting a title. A new session
 	// without a file yet unsets the previous session's path.
 	const updateTranscript = (ctx: any, unsetMissing = false): Promise<void> => {
 		let file = "";

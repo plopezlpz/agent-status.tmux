@@ -1,7 +1,11 @@
 // agent-status.tmux — bind OpenCode's selected root session to this pane.
 import { execFile, execFileSync } from "node:child_process";
+import { realpathSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const quiet = { encoding: "utf8", timeout: 2000, stdio: ["ignore", "pipe", "ignore"] };
+// Installed as a symlink to the plugin checkout: run that checkout's scripts.
+const scripts = resolve(dirname(realpathSync(fileURLToPath(import.meta.url))), "../agent");
 
 export default {
   id: "agent-status.tmux.opencode-session",
@@ -10,16 +14,9 @@ export default {
     // `last` is the selected root; `bound` is the root this pane was last reset
     // to. Child views clear only `last`, so returning to the same root keeps its
     // state and label.
-    let last, bound, pending = false, dir;
+    let last, bound, pending = false;
     // Failed resets back off (100ms doubling to 5s); missing scripts stop it.
     let retryAt = 0, delay = 100, missing = false;
-    const scripts = () => {
-      if (dir === undefined) {
-        try { dir = execFileSync("tmux", ["show-option", "-gqv", "@agent-scripts-dir"], quiet).trim(); } catch { dir = ""; }
-        dir ||= `${process.env.HOME}/.tmux/plugins/agent-status.tmux/scripts/agent`;
-      }
-      return dir;
-    };
     const sync = () => {
       let id, session;
       try {
@@ -34,7 +31,7 @@ export default {
       // prior stream sequence so neither clock can permanently stale the other.
       // A newly selected root starts idle; its own server events follow.
       pending = true;
-      const child = execFile(`${scripts()}/set-state.sh`, ["idle", "", id, "", "opencode", "reset"], { timeout: 5000 }, error => {
+      const child = execFile(`${scripts}/set-state.sh`, ["idle", "", id, "", "opencode", "reset"], { timeout: 5000 }, error => {
         pending = false;
         if (error) {
           if (error.code === "ENOENT") missing = true;
@@ -43,7 +40,7 @@ export default {
         }
         retryAt = 0; delay = 100;
         last = bound = id;
-        execFile(`${scripts()}/auto-desc.sh`, ["clear", "opencode"], { timeout: 5000 }, () => {}).stdin?.end();
+        execFile(`${scripts}/auto-desc.sh`, ["clear", "opencode"], { timeout: 5000 }, () => {}).stdin?.end();
       });
       child.stdin?.end();
     };
@@ -53,7 +50,7 @@ export default {
     let quit = () => {
       quit = () => {};
       if (!bound) return;
-      try { execFileSync(`${scripts()}/clear-state.sh`, ["quit", bound, "opencode"], { ...quiet, timeout: 5000 }); } catch {}
+      try { execFileSync(`${scripts}/clear-state.sh`, ["quit", bound, "opencode"], { timeout: 5000, stdio: "ignore" }); } catch {}
     };
     const onExit = () => quit();
     process.once("exit", onExit);

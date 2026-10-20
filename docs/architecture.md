@@ -77,10 +77,14 @@ A future provider adapter must:
 | MastraCode | native hooks incl. `SessionEnd`; headless `--prompt` runs are detected from argv |
 | Claude Code | native hooks, one `set-state.sh` process per event (it also keeps the first prompt); no interrupt or permission-resolved event, so an Esc or a denied prompt settles on `idle_prompt`; a permission prompt stays asking through the tool hooks of parallel tools and subagents until the agent that asked proceeds (`@agent-asks`); API errors end the turn through `StopFailure`; a Stop while background subagents run stays working; headless runs (`claude -p`, the Agent SDK: `CLAUDE_CODE_ENTRYPOINT=sdk-*`) are ignored |
 
-Hook adapters that cannot read an interactive flag from their payload (Kimi,
-MastraCode) inspect the provider process's argv once per hook, honoring only
-options before the first non-option word (`ps` drops quoting); a headless run
-they cannot recognize may still report into the pane it inherited.
+Adapters run the scripts of the checkout they come from: the extensions and
+plugins are symlinks into it and find `scripts/agent` beside their real path,
+and Kimi and MastraCode hooks run `scripts/agent/hook-event.sh` by its path.
+`hook-event.sh` cannot read an interactive flag from the payload, so it
+inspects the provider process's argv once per hook, honoring only options
+before the first non-option word (`ps` drops quoting); a headless run it
+cannot recognize may still report into the pane it inherited.
+
 
 Installer path overrides follow each provider's conventions: pi
 `PI_CODING_AGENT_DIR`, `PI_EXTENSIONS_DIR`; OMP `PI_CONFIG_DIR`,
