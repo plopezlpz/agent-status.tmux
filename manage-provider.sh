@@ -162,7 +162,13 @@ case "$PROVIDER" in
     ;;
   omp)
     base="${PI_CONFIG_DIR:-.omp}"; case "$base" in /*) ;; *) base="$HOME/$base" ;; esac
-    src="$ROOT/scripts/omp/agent-status.ts"; dest="${OMP_EXTENSIONS_DIR:-$base/agent/extensions}/agent-status.ts"
+    # A profile (OMP_PROFILE, else PI_PROFILE) has its own agent dir.
+    profile="${OMP_PROFILE-${PI_PROFILE:-}}" agent="$base/agent"
+    if [ -n "$profile" ]; then
+      [[ "$profile" =~ ^[a-z0-9][a-z0-9._-]{0,63}$ ]] || { echo "agent-status: invalid OMP profile name '$profile'" >&2; exit 1; }
+      agent="$base/profiles/$profile/agent"
+    fi
+    src="$ROOT/scripts/omp/agent-status.ts"; dest="${OMP_EXTENSIONS_DIR:-$agent/extensions}/agent-status.ts"
     ;;
   opencode)
     # OpenCode 1.x: a server plugin and a TUI plugin listed in tui.jsonc.

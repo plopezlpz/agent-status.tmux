@@ -7,7 +7,7 @@ command -v jq >/dev/null 2>&1 || { echo "SKIP: provider installers (jq missing)"
 
 export HOME="$TMP/home"; mkdir -p "$HOME"
 export PI_EXTENSIONS_DIR="$TMP/pi/extensions"
-export PI_CONFIG_DIR="$TMP/omp"; mkdir -p "$PI_CONFIG_DIR"
+export PI_CONFIG_DIR="$TMP/omp"; mkdir -p "$PI_CONFIG_DIR"; unset OMP_PROFILE PI_PROFILE
 export OPENCODE_CONFIG_DIR="$TMP/opencode"; mkdir -p "$OPENCODE_CONFIG_DIR"; echo '{"theme":"safe","plugin":["keep"]}' > "$OPENCODE_CONFIG_DIR/tui.jsonc"; chmod 600 "$OPENCODE_CONFIG_DIR/tui.jsonc"
 export KILO_CONFIG_DIR="$TMP/kilo"; mkdir -p "$KILO_CONFIG_DIR"
 export KIMI_CODE_HOME="$TMP/kimi"; mkdir -p "$KIMI_CODE_HOME"; echo 'model = "keep"' > "$KIMI_CODE_HOME/config.toml"
@@ -83,6 +83,19 @@ done
   [ -L "$XDG_CONFIG_HOME/opencode/plugins/agent-status.tmux" ] || fail "opencode not installed under XDG_CONFIG_HOME"
   [ -L "$XDG_CONFIG_HOME/kilo/plugin/agent-status.tmux.js" ] || fail "kilo not installed under XDG_CONFIG_HOME"
   [ ! -e "$HOME/.config" ] || fail "an installer wrote to ~/.config despite XDG_CONFIG_HOME"
+)
+
+# An OMP profile reads extensions from its own agent dir: OMP_PROFILE, else PI_PROFILE.
+(
+  OMP_PROFILE=work bash "$ROOT/manage-provider.sh" install omp >/dev/null
+  [ -L "$PI_CONFIG_DIR/profiles/work/agent/extensions/agent-status.ts" ] || fail "omp not installed into OMP_PROFILE's agent dir"
+  PI_PROFILE=other bash "$ROOT/manage-provider.sh" install omp >/dev/null
+  [ -L "$PI_CONFIG_DIR/profiles/other/agent/extensions/agent-status.ts" ] || fail "omp not installed into PI_PROFILE's agent dir"
+  OMP_PROFILE=work bash "$ROOT/manage-provider.sh" uninstall omp >/dev/null
+  [ ! -e "$PI_CONFIG_DIR/profiles/work/agent/extensions/agent-status.ts" ] || fail "omp profile uninstall left its link"
+  [ ! -e "$PI_CONFIG_DIR/agent/extensions/agent-status.ts" ] || fail "omp profile install wrote the default agent dir"
+  if OMP_PROFILE=../x bash "$ROOT/manage-provider.sh" install omp >/dev/null 2>&1; then fail "omp accepted an invalid profile name"; fi
+  [ ! -e "$PI_CONFIG_DIR/x" ] && [ ! -e "$PI_CONFIG_DIR/profiles/x" ] || fail "omp invalid profile wrote outside its profiles"
 )
 
 # Invalid or ambiguously marked configs fail before any adapter link is made.

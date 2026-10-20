@@ -96,7 +96,8 @@ headless and does not report.
 
 Installer path overrides follow each provider's conventions: pi
 `PI_CODING_AGENT_DIR`, `PI_EXTENSIONS_DIR`; OMP `PI_CONFIG_DIR`,
-`OMP_EXTENSIONS_DIR`; `OPENCODE_CONFIG_DIR`, `KILO_CONFIG_DIR` (else
+`OMP_PROFILE` (else `PI_PROFILE`), `OMP_EXTENSIONS_DIR`;
+`OPENCODE_CONFIG_DIR`, `KILO_CONFIG_DIR` (else
 `$XDG_CONFIG_HOME/opencode`, `$XDG_CONFIG_HOME/kilo`),
 `KIMI_CODE_HOME`, `CODEX_HOME`, and Claude's `CLAUDE_CONFIG_DIR` (or
 `CLAUDE_SETTINGS`, the settings file itself). `MASTRACODE_HOME` is the

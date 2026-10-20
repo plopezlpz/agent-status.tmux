@@ -65,7 +65,7 @@ carry the tmux server's local time with its UTC offset
 | Provider | Notes | Verified with |
 |---|---|---|
 | pi | before 1.1.0 an Esc shows as finished | 1.1.0, 1.3.0 (needs 0.84.4+; 1.3 turns not run live) |
-| OMP (Oh My Pi) | a dialog from an extension or MCP server shows as working | 18.8.9, 18.12.3 (18.12 turns not run live) |
+| OMP (Oh My Pi) | with `omp --profile <name>`, install with `OMP_PROFILE=<name>`; a dialog from an extension or MCP server shows as working | 18.8.9, 18.12.3 (18.12 turns not run live) |
 | OpenCode | 1.x: `tui.jsonc` must be plain JSON (comments make install refuse). 2.x: the pane shows the active tab's session; `opencode mini` doesn't report | 1.19.3, 2.0.32 (2.x turns not run live) |
 | Kimi Code | shows from the first message (or `/title`, `/new`, a resumed session); a question the model asks in the background shows as working, or finished once the turn ends; a kimi killed by a signal stays listed until the pane's next agent starts | 2.2.0 (no turn run) |
 | MastraCode | runs only the first `SessionEnd` hook, so the installer puts its own first | 0.47.1 (no turn run) |
