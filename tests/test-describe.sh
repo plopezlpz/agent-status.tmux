@@ -69,13 +69,13 @@ tmux send-keys -t "$p1" 'clear; printf "keep x1b[1m literal\n"' Enter; sleep 0.4
 "$DESCRIBE" suggest "$p1" >/dev/null
 grep -F 'keep x1b[1m literal' "$TMP/pi-input" >/dev/null || fail "screen context lost literal text"
 
-# 4b. pi runs without extensions, skills or MCP servers, from an empty
-# directory of its own: a project's .pi extensions where the UI started
-# must not load.
+# 4b. pi runs without extensions, skills, MCP servers or context files,
+# from an empty directory of its own: a project's .pi extensions where the
+# UI started must not load.
 mkdir -p "$TMP/project/.pi/extensions"
 stub_pi "pwd > '$TMP/pi-cwd'; ls -A >> '$TMP/pi-cwd'; printf '%s\\n' \"\$@\" > '$TMP/pi-args'; cat >/dev/null; echo 'Flags title'"
 (cd "$TMP/project" && "$DESCRIBE" suggest "$p1" >/dev/null)
-for flag in --no-extensions --no-skills --no-mcp --no-session --no-tools; do
+for flag in --no-extensions --no-skills --no-mcp --no-context-files --no-session --no-tools; do
   grep -Fx -- "$flag" "$TMP/pi-args" >/dev/null || fail "pi ran without $flag"
 done
 case "$(head -1 "$TMP/pi-cwd")" in */agent-describe.*) ;; *) fail "pi ran from $(head -1 "$TMP/pi-cwd"), not its own directory" ;; esac
