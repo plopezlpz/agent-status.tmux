@@ -267,6 +267,13 @@ process.env.TMUX_PANE = "%2";
   await event("session.status", { sessionID: "root-1", status: { type: "idle" } });
   got = await drain();
   check(got.at(-1)?.startsWith("set-state.sh|finished||root-1|") === true, "OpenCode an allowed permission still finishes");
+  // Events and prompts without a session belong to no root this pane shows.
+  await plugin["chat.message"]({}, { parts: [{ type: "text", text: "no session" }] });
+  await event("session.error", { error: { name: "APIError", data: { message: "boom" } } });
+  await event("session.status", { status: { type: "busy" } });
+  await event("session.idle", {});
+  got = await drain();
+  check(got.length === 0, `OpenCode reports nothing without a session (${JSON.stringify(got)})`);
 }
 
 // --------------------------------------------------------------- Kilo
@@ -358,6 +365,13 @@ await new Promise(r => setTimeout(r, 5000));
   check(got.length === 1 && got[0].startsWith("clear-state.sh|quit|k-quit|kilo|"), "Kilo dispose clears its instance");
   await quitting.dispose();
   check(since().length === 0, "Kilo clears its instance once");
+
+  // Events and prompts without a session belong to no root.
+  await plugin["chat.message"]({}, { parts: [{ type: "text", text: "no session" }] });
+  await event("session.error", { error: { name: "APIError" } });
+  await event("session.status", { status: { type: "busy" } });
+  got = await drain();
+  check(got.length === 0, `Kilo reports nothing without a session (${JSON.stringify(got)})`);
 }
 
 // -------------------------------------------------------- OpenCode TUI

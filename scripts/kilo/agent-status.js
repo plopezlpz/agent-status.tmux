@@ -38,7 +38,7 @@ export const AgentStatusPlugin = async () => {
   }
   return {
     "chat.message": async ({sessionID}, output) => {
-      if (sessionID && childSessions.has(sessionID)) return;
+      if (!sessionID || childSessions.has(sessionID)) return;
       const fresh = claim(sessionID, true);
       const prompt=output?.parts?.find(part => part?.type === "text" && part.text)?.text;
       // Its start only: a whole pasted file must not reach argv.

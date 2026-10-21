@@ -70,10 +70,13 @@ export function lifecycle(kind) {
     }));
     return chain;
   }
-  // RESET: true for a reset, or set-state.sh's flag itself ("bind").
+  // RESET: true for a reset, or set-state.sh's flag itself ("bind"). A report
+  // without a session would get past set-state.sh's instance and sequence
+  // checks: there is none.
   function report(state, id, reset = false) {
-    if (id && (state === "working" || state === "asking")) aborted.delete(id);
-    return run("set-state.sh", [state, "", id || "", String(++seq), kind, reset === true ? "reset" : reset || ""]);
+    if (!id) return chain;
+    if (state === "working" || state === "asking") aborted.delete(id);
+    return run("set-state.sh", [state, "", id, String(++seq), kind, reset === true ? "reset" : reset || ""]);
   }
   function finish(id, reset = false) { return report(id && aborted.has(id) ? "idle" : "finished", id, reset); }
   return { childSessions, aborted, rootOf, run, report, finish };

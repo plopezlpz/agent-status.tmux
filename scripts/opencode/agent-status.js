@@ -9,7 +9,7 @@ export const AgentStatusPlugin = async () => {
   return {
     // Fire-and-forget: the chain keeps order without delaying the turn.
     "chat.message": async ({ sessionID }, output) => {
-      if (sessionID && childSessions.has(sessionID)) return;
+      if (!sessionID || childSessions.has(sessionID)) return;
       const prompt = output?.parts?.find(part => part?.type === "text" && part.text)?.text;
       // A prompt claims the pane for its root. The TUI shows a session
       // started from the home screen only after its first events, which a
