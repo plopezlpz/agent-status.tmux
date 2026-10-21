@@ -3,6 +3,7 @@
 # formats, once, and leaves a format that already shows it alone. Off (the
 # default), the formats are untouched. Throwaway tmux sockets only.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/isolate.sh"
 PLUGIN_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
 command -v tmux >/dev/null 2>&1 || { echo "SKIP: tmux not installed"; exit 0; }
 SOCK="agent-status-icon-test-$$"

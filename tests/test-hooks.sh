@@ -3,8 +3,7 @@
 # stdin handling, compaction, locks, locale, focused completion, notification
 # clicks and log failures on isolated tmux servers.
 set -euo pipefail
-# Run from a headless agent (claude -p), the hooks would ignore every call.
-unset CLAUDE_CODE_ENTRYPOINT
+. "$(dirname "${BASH_SOURCE[0]}")/isolate.sh"
 PLUGIN_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
 AGENT="$PLUGIN_DIR/scripts/agent"
 SET="$AGENT/set-state.sh"
@@ -32,7 +31,7 @@ REAL_TMUX=$(command -v tmux)
 mkdir "$TMP/bin"
 ln -s "$REAL_TMUX" "$TMP/bin/tmux"
 ln -s "$(command -v jq)" "$TMP/bin/jq"
-export PATH="$TMP/bin:/usr/bin:/bin"
+export PATH="$AGENT_STATUS_QUIET:$TMP/bin:/usr/bin:/bin"
 
 ctl -f /dev/null new-session -d -s t -x 120 -y 40
 p1="$(ctl display -pt t:0.0 '#{pane_id}')"

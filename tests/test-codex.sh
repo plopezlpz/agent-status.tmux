@@ -3,8 +3,7 @@
 # Codex keeps trusting them), and the hooks themselves on an isolated tmux
 # server: payloads per event, sticky asks, headless runs.
 set -euo pipefail
-# Run from a headless agent (claude -p), the hooks would ignore every call.
-unset CLAUDE_CODE_ENTRYPOINT CODEX_HOME
+. "$(dirname "${BASH_SOURCE[0]}")/isolate.sh"
 ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
 HOOK="$ROOT/scripts/agent/hook-event.sh"
 SOCK="agent-status-codex-test-$$"

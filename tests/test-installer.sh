@@ -3,6 +3,7 @@
 # symlink creation, idempotency, and that uninstall never clobbers a file that
 # isn't our symlink.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/isolate.sh"
 
 PLUGIN_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
 EXT_SRC="$PLUGIN_DIR/scripts/pi/agent-status.ts"

@@ -3,6 +3,7 @@
 # directory that holds the state scripts. Runs against a throwaway tmux
 # socket so the user's real server is never touched.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/isolate.sh"
 
 PLUGIN_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
 SOCK="agent-status-test-$$"

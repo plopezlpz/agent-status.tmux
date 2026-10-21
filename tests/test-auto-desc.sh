@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Unit-test the pane-scoped first-prompt description.
 set -euo pipefail
-# Run from a headless agent (claude -p), the hooks would ignore every call.
-unset CLAUDE_CODE_ENTRYPOINT
+. "$(dirname "${BASH_SOURCE[0]}")/isolate.sh"
 PLUGIN_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
 SCRIPT="$PLUGIN_DIR/scripts/agent/auto-desc.sh"
 SOCK="agent-status-desc-test-$$"

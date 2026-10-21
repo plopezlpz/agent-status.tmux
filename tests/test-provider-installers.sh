@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/isolate.sh"
 ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 fail(){ echo "FAIL: $1" >&2; exit 1; }

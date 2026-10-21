@@ -3,6 +3,7 @@
 # found on this machine, skips the others, and never creates a config home
 # (Claude's included) for an agent that isn't there.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/isolate.sh"
 ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 fail(){ echo "FAIL: $1" >&2; exit 1; }

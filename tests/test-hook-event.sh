@@ -5,8 +5,7 @@
 # kimi, gemini, qwen and agy as the foreground job of a pane (or a headless
 # one), MastraCode as one long-lived process.
 set -euo pipefail
-# Run from a headless agent (claude -p), the hooks would ignore every call.
-unset CLAUDE_CODE_ENTRYPOINT
+. "$(dirname "${BASH_SOURCE[0]}")/isolate.sh"
 ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
 HOOK="$ROOT/scripts/agent/hook-event.sh"
 SOCK="agent-status-hook-event-test-$$"

@@ -3,6 +3,7 @@
 # validation), dead-pane guards, transcript edge cases, and suggestions that
 # are printed, not set, with their timeouts and signals.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/isolate.sh"
 PLUGIN_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
 SOCK="agent-status-describe-test-$$"
 TMP="$(mktemp -d)"

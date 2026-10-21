@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Exercise pane-option state, unseen completion, stale-report guards, and rollup.
 set -euo pipefail
-# Run from a headless agent (claude -p), the hooks would ignore every call.
-unset CLAUDE_CODE_ENTRYPOINT
+. "$(dirname "${BASH_SOURCE[0]}")/isolate.sh"
 PLUGIN_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
 SET="$PLUGIN_DIR/scripts/agent/set-state.sh"
 CLEAR="$PLUGIN_DIR/scripts/agent/clear-state.sh"
@@ -32,11 +31,12 @@ tmux set-option -g @agent-color-asking red
 tmux set-option -g @agent-color-finished cyan
 tmux set-option -g @agent-color-idle green
 
-# Hide desktop notifier binaries while retaining tmux and standard utilities.
+# Hide desktop notifier binaries, the quiet ones (isolate.sh) aside, while
+# retaining tmux and standard utilities.
 mkdir "$TMP/bin"
 ln -s "$(command -v tmux)" "$TMP/bin/tmux"
 [ -z "$JQ" ] || ln -s "$JQ" "$TMP/bin/jq"
-export PATH="$TMP/bin:/usr/bin:/bin"
+export PATH="$AGENT_STATUS_QUIET:$TMP/bin:/usr/bin:/bin"
 
 state(){ TMUX_PANE="$1" "$SET" "${@:2}" </dev/null; }
 get(){ tmux show-option -p -q -v -t "$1" "$2" 2>/dev/null || true; }
