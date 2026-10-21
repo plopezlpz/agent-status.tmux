@@ -83,8 +83,9 @@ export default {
       // A superseded turn is followed by the next one.
       "session.execution.interrupted": ({ sessionID, reason }) => { if (reason !== "superseded") end(sessionID, "idle"); },
       "permission.asked": ({ sessionID, id }) => ask(sessionID, id, true),
-      // Only the session's own reject stops its turn. A subagent's carries
-      // the user's feedback: the subagent goes on, and so does the turn.
+      // Only the session's own reject or cancel stops its turn. A subagent's
+      // carries the user's feedback: the subagent goes on, and so does the
+      // turn.
       "permission.replied": ({ sessionID, requestID, reply }) => {
         if (reply === "reject" && root(sessionID)) stopped.add(sessionID);
         ask(sessionID, requestID, false);
@@ -92,7 +93,7 @@ export default {
       "form.created": ({ form }) => ask(form?.sessionID, form?.id, true),
       "form.replied": ({ sessionID, id }) => ask(sessionID, id, false),
       "form.cancelled": ({ sessionID, id }) => {
-        if (typeof sessionID === "string") stopped.add(rootOf(sessionID));
+        if (root(sessionID)) stopped.add(sessionID);
         ask(sessionID, id, false);
       },
     };

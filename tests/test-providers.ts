@@ -498,6 +498,12 @@ process.env.TMUX_PANE = "%7";
   emit("permission.replied", { sessionID: "C1", requestID: "per_3", reply: "reject" });
   emit("session.execution.succeeded", { sessionID: "R1" });
   await expect("a turn that goes on after a subagent's rejected permission finishes", "set-state.sh|working||R1|", "set-state.sh|asking||R1|", "set-state.sh|working||R1|", "set-state.sh|finished||R1|");
+  // So does a subagent's cancelled form: it ends only that ask.
+  emit("session.execution.started", { sessionID: "R1" });
+  emit("form.created", { form: { id: "frm_3", sessionID: "C1" } });
+  emit("form.cancelled", { sessionID: "C1", id: "frm_3" });
+  emit("session.execution.succeeded", { sessionID: "R1" });
+  await expect("a turn that goes on after a subagent's cancelled form finishes", "set-state.sh|working||R1|", "set-state.sh|asking||R1|", "set-state.sh|working||R1|", "set-state.sh|finished||R1|");
   emit("session.execution.started", { sessionID: "R1" });
   emit("session.execution.failed", { sessionID: "R1", error: { type: "unknown", message: "boom" } });
   await expect("a failed turn finishes", "set-state.sh|working||R1|", "set-state.sh|finished||R1|");
