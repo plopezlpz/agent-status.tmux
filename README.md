@@ -357,6 +357,25 @@ Set options before TPM runs.
 | `@agent-describe-model` | `openai-codex/gpt-6-luna` (pi `--model` pattern for suggested titles; pick a model your pi has credentials for) |
 | `@agent-log` | `${XDG_DATA_HOME:-$HOME/.local/share}/tmux/agent-status/agent.log` |
 
+A suggested title sends part of the pane to a model. Nothing is sent until
+you ask a UI (paddock's title editor) for a suggestion; then pi sends the
+model in `@agent-describe-model`, by default `openai-codex/gpt-6-luna`
+through your pi login:
+
+- the agent's name, the pane's folder path, its first prompt and its
+  current title;
+- for Claude and pi, from the session's transcript: the last three of your
+  prompts (500 characters each) and the end of the agent's latest reply;
+- the last 80 non-blank lines of the pane's screen and scrollback (30 when
+  there is a transcript), whatever they show, secrets printed there
+  included.
+
+pi runs without tools, extensions, skills or MCP servers, saves no session,
+and runs from an empty directory of its own. To keep this on your machine,
+set `@agent-describe-model` to a local model your pi can run; to never send
+anything, don't ask for suggestions (without pi, on the tmux server's `PATH`
+or in fnm's default alias, there are none).
+
 The plugin turns on tmux's `focus-events` every time it loads, overriding
 `focus-events off`: focusing a pane is what clears its finished marker. An
 empty `@agent-color-*` shows that state's icon uncoloured.
