@@ -232,6 +232,24 @@ ev working PostToolUse '"tool_name":"request_permissions","tool_input":{},"tool_
 # A tool whose input only mentions it is not a question.
 ev tool PreToolUse '"tool_name":"Bash","tool_input":{"command":"echo \"tool_name\":\"request_user_input\""},"tool_use_id":"c5"'
 [ "$(shown)" = "working:0:" ] || fail "a mention of request_user_input asked: $(shown)"
+# Parallel calls ask at once, and return at once: the pane lock records
+# every ask, then ends every one.
+batch(){
+  local i pids=""
+  for i in 1 2 3 4 5 6 7 8; do
+    if [ "$1" = blocked ]; then
+      ev blocked PermissionRequest "\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"rm p$i\"}" & pids="$pids $!"
+    else
+      ev working PostToolUse "\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"rm p$i\"},\"tool_use_id\":\"p$i\",\"tool_response\":\"ok\"" & pids="$pids $!"
+    fi
+  done
+  for i in $pids; do wait "$i" || fail "a parallel $1 hook failed"; done
+}
+batch blocked
+[ "$(shown)" = "asking:0:/Bash /Bash /Bash /Bash /Bash /Bash /Bash /Bash" ] || fail "parallel asks were lost: $(shown)"
+[ "$(get @agent-asks | tr ' ' '\n' | sed 's/@.*//' | sort -u | wc -l | tr -d ' ')" = 8 ] || fail "parallel asks are not 8 distinct calls: $(get @agent-asks)"
+batch working
+[ "$(shown):$(get @agent-asks)" = "working:0::" ] || fail "parallel returns left asks: $(shown)"
 ev idle Stop '"stop_hook_active":false,"last_assistant_message":"done"'
 [ "$(shown)" = "idle:1:" ] || fail "Stop did not finish: $(shown)"
 # A subagent asking as its parent's turn ends outlives it: the turn's end
