@@ -78,7 +78,7 @@ sh_word() {
   printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
 }
 require_jq() {
-  command -v jq >/dev/null 2>&1 || { echo "agent-status: jq is required${1:+ to edit $1}" >&2; exit 1; }
+  command -v jq >/dev/null 2>&1 || { echo "agent-status: jq is required${1:+ to edit $1} (brew install jq | apt install jq)" >&2; exit 1; }
 }
 require_dir() {
   [ -d "$1" ] && return 0
@@ -534,8 +534,9 @@ settings_update() {
 
 # Kimi: put the edited config.toml ($EDIT_NEW) in place, backing up the old
 # one, unless it is the same text.
+# awk ends the text with a newline: a file that only lacked one is unchanged.
 kimi_write() {
-  if [ -f "$config" ] && cmp -s "$EDIT_NEW" "$config"; then return 0; fi
+  if [ -f "$config" ] && [ "$(cat "$EDIT_NEW")" = "$(cat "$config")" ]; then return 0; fi
   config_replace "$config" "$EDIT_NEW"
   [ -z "$BACKUP" ] || echo "agent-status: backup saved to $BACKUP"
 }

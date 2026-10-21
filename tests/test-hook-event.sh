@@ -68,7 +68,8 @@ in_pty(){
 detached(){ TMUX_PANE="$to" perl -MPOSIX -e 'setsid(); exec @ARGV' bash -c "$1" </dev/null >/dev/null 2>&1 & disown; }
 # send FIFO ACTION JSON [COMMAND]: one hook through that stand-in (by default
 # hook-event.sh $KIND); waits for it. Whether it reports or not, a hook
-# succeeds and writes nothing to stderr.
+# succeeds and writes nothing to stderr (Gemini, Qwen and agy hooks send their
+# stderr nowhere, so for them only the exit status counts).
 send(){
   n=$((n + 1))
   local input="$TMP/payload.$n"

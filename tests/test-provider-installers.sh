@@ -165,6 +165,11 @@ cmp -s "$stable_kimi/config.toml" "$TMP/stable-kimi.orig" || fail "kimi uninstal
 # Uninstalling from a config.toml that has no hooks of ours leaves it alone.
 KIMI_CODE_HOME="$stable_kimi" bash "$ROOT/manage-provider.sh" uninstall kimi >/dev/null
 [ "$(baks "$stable_kimi/config.toml")" -eq 2 ] || fail "kimi uninstall without our hooks backed up config.toml"
+# Nor is a hook-free config.toml that only lacks its last newline rewritten.
+bare_kimi="$TMP/bare-kimi"; mkdir -p "$bare_kimi"; printf 'model = "keep"' > "$bare_kimi/config.toml"
+KIMI_CODE_HOME="$bare_kimi" bash "$ROOT/manage-provider.sh" uninstall kimi >/dev/null
+[ "$(cat "$bare_kimi/config.toml")" = 'model = "keep"' ] && [ "$(wc -c < "$bare_kimi/config.toml")" -eq 14 ] || fail "kimi uninstall rewrote a config.toml without a last newline"
+[ "$(baks "$bare_kimi/config.toml")" -eq 0 ] || fail "kimi uninstall backed up a config.toml without a last newline"
 # Kimi rewrites its whole config.toml when it adds a top-level key after our
 # block, dropping comments and so our markers: uninstall and reinstall still
 # find our tables, and nothing else.

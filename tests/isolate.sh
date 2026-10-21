@@ -33,6 +33,6 @@ if [ -z "${AGENT_STATUS_QUIET:-}" ] || [ ! -d "$AGENT_STATUS_QUIET" ]; then
   done
   PATH="$AGENT_STATUS_QUIET:$PATH"
   _rc=0
-  bash "${BASH_SOURCE[1]}" ${1+"$@"} || _rc=$?
+  "$BASH" "${BASH_SOURCE[1]}" ${1+"$@"} || _rc=$?
   exit "$_rc"
 fi
