@@ -114,11 +114,16 @@ ask_title() {
       waitpid($p, 0); exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' "$limit")
   fi
   ASK_TMP=$(mktemp -d "${TMPDIR:-/tmp}/agent-describe.XXXXXX")
+  mkdir "$ASK_TMP/cwd"
+  # pi loads extensions, skills and MCP servers from its directory as well
+  # as the user's: none of them, and an empty directory of its own rather
+  # than wherever the UI was started (a cloned repo's .pi would run).
   printf 'Agent: %s\nFolder: %s\nFirst prompt: %s\nCurrent title: %s\n%s\nVisible terminal (may be stale UI):\n%s\n' \
       "${kind:-unknown}" "$path" "$auto" "$current" "$conversation" "$context" \
-    | ${runner[@]+"${runner[@]}"} pi --print --no-session --no-tools --model "${model:-openai-codex/gpt-6-luna}" --thinking minimal \
+    | ( cd "$ASK_TMP/cwd" && exec ${runner[@]+"${runner[@]}"} pi --print --no-session --no-tools --no-extensions --no-skills --no-mcp \
+        --model "${model:-openai-codex/gpt-6-luna}" --thinking minimal \
         --system-prompt 'You label coding-agent terminal sessions for a task switcher. Reply with ONE line only: what the agent is working on now, as a concise title of at most 60 characters, imperative mood, no quotes, no trailing period. Weigh the latest user prompts most; the first prompt may be outdated.' \
-        'Write the title for this session.' > "$ASK_TMP/out" 2> "$ASK_TMP/err" &
+        'Write the title for this session.' ) > "$ASK_TMP/out" 2> "$ASK_TMP/err" &
   ASK_PID=$!
   wait "$ASK_PID" || rc=$?
   ASK_PID=""
