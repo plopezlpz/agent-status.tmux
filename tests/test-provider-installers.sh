@@ -191,7 +191,7 @@ MASTRACODE_HOME="$bad_mastra" bash "$ROOT/manage-provider.sh" install mastracode
 # Every JSON config the installers edit: one that isn't a single plain JSON
 # object is refused, saying why, and left as it was, with no backup or
 # temp file beside it.
-for p in codex gemini qwen antigravity mastracode opencode; do
+for p in claude codex gemini qwen antigravity mastracode opencode; do
   d="$TMP/refused-$p"; mkdir -p "$d"
   case "$p" in
     claude) f="$d/settings.json" var=CLAUDE_SETTINGS val="$f" ;;

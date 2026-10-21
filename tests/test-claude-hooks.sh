@@ -88,18 +88,91 @@ m=$(jq '[.. | .command? // empty | select(test("scripts/agent/"))] | length' "$C
 # Backups are pruned to our newest 3; files merely resembling them are kept.
 : > "$CLAUDE_SETTINGS.bak-keep"
 : > "$CLAUDE_SETTINGS.bak-1.notours"
-for _ in 1 2 3 4 5; do bash "$PLUGIN_DIR/install-claude-hooks.sh" >/dev/null; done
-bash "$PLUGIN_DIR/install-claude-hooks.sh" uninstall >/dev/null
+for _ in 1 2 3 4 5; do
+  bash "$PLUGIN_DIR/install-claude-hooks.sh" >/dev/null; bash "$PLUGIN_DIR/install-claude-hooks.sh" uninstall >/dev/null
+done
 n=$(find "$TMP" -maxdepth 1 -name 'settings.json.bak-[0-9]*.??????' | wc -l | tr -d ' ')
 [ "$n" -eq 3 ] || fail "installer kept $n backups, expected 3"
 [ -e "$CLAUDE_SETTINGS.bak-keep" ] && [ -e "$CLAUDE_SETTINGS.bak-1.notours" ] || fail "backup pruning removed a foreign file"
-# A failed write leaves no temp file behind and the settings untouched.
+# A failed write leaves no temp file or backup behind and the settings untouched.
 mkdir "$TMP/failbin"; printf '#!/bin/sh\nexit 1\n' > "$TMP/failbin/mv"; chmod +x "$TMP/failbin/mv"
-cp "$CLAUDE_SETTINGS" "$TMP/before.json"
+baks(){ find "$TMP" -maxdepth 1 -name 'settings.json.bak-[0-9]*.??????' | sort; }
+cp "$CLAUDE_SETTINGS" "$TMP/before.json"; baks > "$TMP/baks.before"
 if PATH="$TMP/failbin:$PATH" bash "$PLUGIN_DIR/install-claude-hooks.sh" >/dev/null 2>&1; then fail "install ignored a failed write"; fi
+cmp -s "$CLAUDE_SETTINGS" "$TMP/before.json" || fail "failed install changed settings"
+baks | cmp -s - "$TMP/baks.before" || fail "failed install left a backup"
+bash "$PLUGIN_DIR/install-claude-hooks.sh" >/dev/null
+cp "$CLAUDE_SETTINGS" "$TMP/before.json"; baks > "$TMP/baks.before"
 if PATH="$TMP/failbin:$PATH" bash "$PLUGIN_DIR/install-claude-hooks.sh" uninstall >/dev/null 2>&1; then fail "uninstall ignored a failed write"; fi
 [ -z "$(find "$TMP" -maxdepth 1 -name 'settings.json.agent-status.*')" ] || fail "failed write left a temp file"
-cmp -s "$CLAUDE_SETTINGS" "$TMP/before.json" || fail "failed write changed settings"
+cmp -s "$CLAUDE_SETTINGS" "$TMP/before.json" || fail "failed uninstall changed settings"
+baks | cmp -s - "$TMP/baks.before" || fail "failed write left a backup"
+
+# ----- what a reinstall and an uninstall leave alone -------------------------
+fresh(){ rm -f "$CLAUDE_SETTINGS" "$CLAUDE_SETTINGS".bak-*; }
+inode(){ ls -i "$CLAUDE_SETTINGS" | awk '{print $1}'; }
+# An empty settings.json is {}: it gets the hooks.
+fresh; : > "$CLAUDE_SETTINGS"
+bash "$PLUGIN_DIR/install-claude-hooks.sh" >/dev/null
+[ "$(jq '[.hooks[][].hooks[]] | length' "$CLAUDE_SETTINGS")" -eq 14 ] || fail "install into an empty settings.json: $(cat "$CLAUDE_SETTINGS")"
+# A reinstall that changes nothing writes nothing and backs nothing up, so
+# the backup of the settings from before the first install survives.
+fresh; printf '{\n    "model": "opus",\n    "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "notify.sh"}]}]}\n}\n' > "$CLAUDE_SETTINGS"
+cp "$CLAUDE_SETTINGS" "$TMP/orig.json"
+bash "$PLUGIN_DIR/install-claude-hooks.sh" >/dev/null
+cp "$CLAUDE_SETTINGS" "$TMP/once.json"; ino=$(inode)
+for _ in 1 2 3 4 5; do
+  out=$(bash "$PLUGIN_DIR/install-claude-hooks.sh")
+  case "$out" in *"already has the current hooks"*) ;; *) fail "a reinstall rewrote settings.json: $out" ;; esac
+done
+cmp -s "$CLAUDE_SETTINGS" "$TMP/once.json" && [ "$(inode)" = "$ino" ] || fail "a reinstall wrote settings.json"
+set -- "$CLAUDE_SETTINGS".bak-*
+[ $# -eq 1 ] && cmp -s "$1" "$TMP/orig.json" || fail "reinstalls lost the backup of the original settings ($# backups)"
+# Uninstall drops only our handlers (and the groups and events they leave
+# empty): other tools' groups stay as they were, even with no hooks of their
+# own; so does an event holding only those, and a hooks of null.
+fresh
+jq -n --arg r "'$PLUGIN_DIR/scripts/agent/set-state.sh'" '{hooks: {
+  Stop: [{hooks: []}, {matcher: "x"}, {hooks: null}, {hooks: [{type: "command", command: "\($r) finished"}, {type: "command", command: "notify.sh"}]},
+    {hooks: [{type: "command", command: "\($r) finished"}]}],
+  PreToolUse: [{matcher: "Bash", hooks: [{type: "command", command: "guard.sh"}]}, {hooks: [{type: "command", command: "\($r) working"}]}],
+  SessionEnd: [{hooks: [{type: "command", command: "\($r) idle"}]}],
+  Custom: [{hooks: []}]}, model: "opus"}' > "$CLAUDE_SETTINGS"
+jq '.hooks.Stop |= .[:3] + [{hooks: [{type: "command", command: "notify.sh"}]}] | .hooks.PreToolUse |= .[:1] | del(.hooks.SessionEnd)' "$CLAUDE_SETTINGS" > "$TMP/want.json"
+bash "$PLUGIN_DIR/install-claude-hooks.sh" uninstall >/dev/null
+[ "$(jq -cS . "$CLAUDE_SETTINGS")" = "$(jq -cS . "$TMP/want.json")" ] || fail "uninstall changed other tools' hooks: $(jq -c .hooks "$CLAUDE_SETTINGS")"
+[ "$(jq -c '.hooks | keys_unsorted' "$CLAUDE_SETTINGS")" = '["Stop","PreToolUse","Custom"]' ] || fail "uninstall reordered the events"
+bash "$PLUGIN_DIR/install-claude-hooks.sh" >/dev/null; bash "$PLUGIN_DIR/install-claude-hooks.sh" uninstall >/dev/null
+[ "$(jq -cS . "$CLAUDE_SETTINGS")" = "$(jq -cS . "$TMP/want.json")" ] || fail "install and uninstall changed other tools' hooks: $(jq -c .hooks "$CLAUDE_SETTINGS")"
+printf '{"model": "opus", "hooks": null}\n' > "$CLAUDE_SETTINGS"
+bash "$PLUGIN_DIR/install-claude-hooks.sh" uninstall >/dev/null
+[ "$(cat "$CLAUDE_SETTINGS")" = '{"model": "opus", "hooks": null}' ] || fail "uninstall changed a hooks of null: $(cat "$CLAUDE_SETTINGS")"
+# Uninstalling from settings that never had our hooks leaves them byte for
+# byte, layout and all, with no backup.
+for never in '{"model":"opus","hooks":{"Stop":[{"hooks":[]}]}}' '{\n    "model": "opus"\n}' ''; do
+  fresh; printf '%b' "$never" > "$CLAUDE_SETTINGS"; cp "$CLAUDE_SETTINGS" "$TMP/never.json"
+  out=$(bash "$PLUGIN_DIR/install-claude-hooks.sh" uninstall)
+  case "$out" in *"has no agent-status hooks"*) ;; *) fail "uninstall rewrote settings without our hooks ('$never'): $out" ;; esac
+  cmp -s "$CLAUDE_SETTINGS" "$TMP/never.json" || fail "uninstall changed settings without our hooks ('$never')"
+  [ -z "$(find "$TMP" -maxdepth 1 -name 'settings.json.bak-*')" ] || fail "uninstall backed up settings it left alone ('$never')"
+done
+# Settings that aren't one plain JSON object (comments, which Claude doesn't
+# read either; another shape) are refused, says why, and changes nothing.
+for bad in '{\n  // mine\n  "model": "opus"\n}\n' '[]\n' '{"hooks": []}\n' '{"hooks": {"Stop": {}}}\n' '{}\n{}\n' 'nope\n'; do
+  for action in install uninstall; do
+    fresh; printf '%b' "$bad" > "$CLAUDE_SETTINGS"; cp "$CLAUDE_SETTINGS" "$TMP/bad.json"
+    rc=0; err=$(bash "$PLUGIN_DIR/install-claude-hooks.sh" "$action" 2>&1 >/dev/null) || rc=$?
+    [ "$rc" -eq 1 ] || fail "$action accepted $bad (exit $rc)"
+    case "$err" in "agent-status: refusing to edit $CLAUDE_SETTINGS: "?*) ;; *) fail "$action of $bad said: $err" ;; esac
+    cmp -s "$CLAUDE_SETTINGS" "$TMP/bad.json" || fail "$action changed refused settings $bad"
+    [ -z "$(find "$TMP" -maxdepth 1 -name 'settings.json.*')" ] || fail "$action of $bad left a backup or temp file"
+  done
+done
+err=$(printf '{\n  // mine\n}\n' > "$CLAUDE_SETTINGS"; bash "$PLUGIN_DIR/install-claude-hooks.sh" 2>&1 >/dev/null || true)
+case "$err" in *"it must be plain JSON (no comments)"*) ;; *) fail "a settings.json with comments was refused with: $err" ;; esac
+err=$(printf '{"hooks": {"Stop": {}}}\n' > "$CLAUDE_SETTINGS"; bash "$PLUGIN_DIR/install-claude-hooks.sh" 2>&1 >/dev/null || true)
+case "$err" in *'each event in "hooks" must be a list'*) ;; *) fail "an event that isn't a list was refused with: $err" ;; esac
+fresh
 
 # Claude runs hooks with sh -c: a plugin path with a space still works.
 mkdir "$TMP/sp ace"; cp -R "$PLUGIN_DIR" "$TMP/sp ace/agent-status.tmux"

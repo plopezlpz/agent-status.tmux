@@ -42,13 +42,6 @@ case "$PROVIDER" in
   *) echo "$USAGE" >&2; exit 2 ;;
 esac
 
-if [ "$PROVIDER" = claude ]; then
-  # Claude's installer would create its settings.json, so "found" means the
-  # directory for it exists (~/.claude, or $CLAUDE_CONFIG_DIR as Claude reads it).
-  if [ "$ACTION" = found ]; then [ -d "$(dirname "${CLAUDE_SETTINGS:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json}")" ]; exit; fi
-  exec bash "$ROOT/install-claude-hooks.sh" "$ACTION"
-fi
-
 canonical_path() {
   local dir base
   dir=$(dirname "$1"); base=$(basename "$1")
@@ -240,6 +233,12 @@ case "$PROVIDER" in
     base="${KILO_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/kilo}"
     src="$ROOT/scripts/kilo/agent-status.js"; dest="$base/plugin/agent-status.tmux.js"
     ;;
+  claude)
+    # $CLAUDE_CONFIG_DIR as Claude reads it, else ~/.claude. Its installer
+    # creates settings.json, so "found" means the directory for it exists.
+    config="${CLAUDE_SETTINGS:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json}"
+    base=$(dirname "$config")
+    ;;
   kimi)
     base="${KIMI_CODE_HOME:-$HOME/.kimi-code}"
     config="$base/config.toml"
@@ -325,9 +324,10 @@ codex_groups() {
     | from_entries'
 }
 # hook_ours KIND: jq's `ours`, our hooks: hook-event.sh for KIND from any
-# checkout, and the Claude hooks Codex and Gemini copy from Claude's settings
-# when they migrate them (they would report the session as Claude; Qwen's
-# hooks take the same commands). `owned`:
+# checkout, and the Claude hooks, from any checkout or release, that Codex
+# and Gemini also copy from Claude's settings when they migrate them (they
+# would report the session as Claude; Qwen's hooks take the same commands).
+# `owned`:
 # a group holding one ($s, $r: this checkout's scripts/agent).
 hook_ours() {
   # shellcheck disable=SC2016 # jq variables, not shell variables
@@ -406,7 +406,7 @@ gemini_groups() {
   hook="$(sh_word "$ROOT/scripts/agent/hook-event.sh") gemini"
   jq -n --arg hook "$hook" '[["SessionStart", "session"], ["SessionEnd", "end"], ["BeforeAgent", "working"],
       ["AfterAgent", "idle"], ["Notification", "blocked"], ["AfterTool", "tool"]]
-    | map({key: .[0], value: {hooks: [{type: "command", name: "agent-status", command: "\($hook) \(.[1])", timeout: 10000}]}})
+    | map({key: .[0], value: [{hooks: [{type: "command", name: "agent-status", command: "\($hook) \(.[1])", timeout: 10000}]}]})
     | from_entries'
 }
 # Qwen's events and payloads are Claude Code's; its timeouts are in seconds.
@@ -419,15 +419,56 @@ qwen_groups() {
       ["PreToolUse", "working"], ["PostToolUse", "working"], ["PostToolUseFailure", "working"],
       ["PermissionRequest", "blocked"], ["SubagentStop", "working"], ["Stop", "idle"], ["StopFailure", "idle"],
       ["Notification", "interrupt", "idle_prompt"]]
-    | map({key: .[0], value: ((if .[2] then {matcher: .[2]} else {} end)
-        + {hooks: [{type: "command", name: "agent-status", command: "\($hook) \(.[1])", timeout: 10}]})})
+    | map({key: .[0], value: [(if .[2] then {matcher: .[2]} else {} end)
+        + {hooks: [{type: "command", name: "agent-status", command: "\($hook) \(.[1])", timeout: 10}]}]})
     | from_entries'
 }
+# Claude Code: settings.json's "hooks" too, running the plugin's own scripts
+# from the resolved path, so installs through a symlinked plugin dir (e.g.
+# TPM) never duplicate them.
+claude_groups() {
+  # shellcheck disable=SC2016 # jq program, not shell interpolation
+  jq -n --arg r "$(cd "$ROOT/scripts/agent" && pwd -P)" '
+    # Claude runs a hook command with sh -c: quote the path.
+    def script($name): {type: "command", command: ("\($r)/\($name)" | @sh)};
+    def state($s): script("set-state.sh") | .command += " \($s)";
+    # set-state also sets (UserPromptSubmit) and clears (SessionStart) the
+    # first-prompt description; older releases ran auto-desc.sh beside it.
+    {SessionStart: [{hooks: [state("idle")]}],
+     SessionEnd: [{hooks: [script("clear-state.sh")]}],
+     UserPromptSubmit: [{hooks: [state("working")]}],
+     Stop: [{hooks: [state("finished")]}],
+     # A turn that ends in an API error (rate limit, overload, auth) fires
+     # StopFailure instead of Stop.
+     StopFailure: [{hooks: [state("finished")]}],
+     # An Esc interrupt fires neither. idle_prompt is sent once the prompt
+     # has sat idle (default 60s) with no turn, dialog, or background agent
+     # running, so it ends a working/asking state that no Stop will ever
+     # close. The network request of a sandboxed command only notifies, once
+     # its dialog has waited about 6s.
+     Notification: [{matcher: "idle_prompt", hooks: [state("idle")]},
+       {matcher: "permission_prompt|elicitation_dialog|elicitation_url_dialog", hooks: [state("asking")]}],
+     # Claude Code has no "permission answered" event. PostToolUse (or
+     # PostToolUseFailure) of the asking agent fires after its approved tool
+     # runs, and set-state keeps the pane asking through the tool hooks of
+     # other tools and agents meanwhile; a denial ends the turn like an
+     # interrupt, so the idle_prompt notification above closes it. A
+     # subagent that stops ends its own asks.
+     PermissionRequest: [{hooks: [state("asking")]}],
+     PreToolUse: [{hooks: [state("working")]}],
+     PostToolUse: [{hooks: [state("working")]}],
+     PostToolUseFailure: [{hooks: [state("working")]}],
+     SubagentStop: [{hooks: [state("working")]}],
+     # A form or URL an MCP server asks for fires no PermissionRequest
+     # (answered: ElicitationResult).
+     Elicitation: [{hooks: [state("asking")]}],
+     ElicitationResult: [{hooks: [state("working")]}]}'
+}
 # Our handlers are dropped, with the definitions and events they leave
-# empty; an event that already holds just our current definition keeps it
-# where it is. Other keys (hooksConfig, and the enabled, disabled and
-# notifications that older Gemini releases and Qwen keep in "hooks") are left
-# alone.
+# empty; an event that already holds just our current definitions keeps them
+# where they are. Other tools' definitions, even ones holding no handler, and
+# other keys (hooksConfig, and the enabled, disabled and notifications that
+# older Gemini releases and Qwen keep in "hooks") are left alone.
 # shellcheck disable=SC2016 # jq variables, not shell variables
 settings_filter='
   def strip: map(if owned then .hooks |= map(select(ours | not)) | select(.hooks != []) else . end);
@@ -441,7 +482,7 @@ settings_filter='
   | if $install then
       reduce ($groups | to_entries[]) as $g (.hooks //= {};
         (.hooks[$g.key] // []) as $a
-        | if [$a[] | select(owned)] == [$g.value] then . else .hooks[$g.key] = ($a | strip) + [$g.value] end)
+        | if [$a[] | select(owned)] == $g.value then . else .hooks[$g.key] = ($a | strip) + $g.value end)
     elif .hooks == {} and $orig.hooks != {} then del(.hooks)
     else . end'
 # Antigravity CLI: hooks.json is an object of named hooks, each holding
@@ -482,7 +523,12 @@ settings_update() {
     return 0
   fi
   json_commit "$config"
-  echo "agent-status: hooks $([ "$1" = install ] && echo written to || echo removed from) $config"
+  # Claude's words are the ones install-claude-hooks.sh always printed.
+  case "$PROVIDER:$1" in
+    claude:install) echo "agent-status: hooks installed in $config" ;;
+    *:install) echo "agent-status: hooks written to $config" ;;
+    *) echo "agent-status: hooks removed from $config" ;;
+  esac
   [ -z "$BACKUP" ] || echo "agent-status: backup saved to $BACKUP"
 }
 
@@ -493,6 +539,18 @@ kimi_write() {
   config_replace "$config" "$EDIT_NEW"
   [ -z "$BACKUP" ] || echo "agent-status: backup saved to $BACKUP"
 }
+
+# Claude Code: its settings.json, edited as Qwen's is. install-claude-hooks.sh
+# runs this, and says what it always said.
+if [ "$PROVIDER" = claude ]; then
+  require_regular_config "$config"
+  if [ "$ACTION" = uninstall ] && [ ! -f "$config" ]; then
+    echo "agent-status: $config not found, nothing to do"; exit 0
+  fi
+  mkdir -p "$base"
+  settings_update "$ACTION"
+  exit 0
+fi
 
 if [ "$ACTION" = install ]; then
   # Explicit test/user destination overrides preserve the old Pi behavior of

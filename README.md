@@ -31,7 +31,9 @@ It lists the supported agents it finds on this machine and, in a terminal,
 asks before hooking them up (`--yes` doesn't ask); the others are skipped.
 `manage-provider.sh install claude` does just one, and `manage-provider.sh uninstall`
 (with or without a name) undoes it. Installers only add or remove their own
-entries and refuse to overwrite files they don't own. Codex needs more
+entries and refuse to overwrite files they don't own. A config file they
+edit is written only when that changes it, and the old one is kept beside
+it as `<file>.bak-*` (the newest three). Codex needs more
 setup: see [Codex](#codex). Gemini CLI runs hooks only in folders you
 trust: see [Gemini CLI](#gemini-cli). Antigravity CLI support is partial:
 see [Antigravity CLI](#antigravity-cli).

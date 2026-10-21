@@ -158,8 +158,8 @@ installer's own, for tests: MastraCode always reads `~/.mastracode`, and
 Antigravity CLI `~/.gemini` (only `HOME` moves it).
 Providers whose config directory is missing are skipped (Claude's
 `settings.json` is created).
-`install-claude-hooks.sh [install|uninstall]` is what `manage-provider.sh`
-runs for Claude.
+`install-claude-hooks.sh [install|uninstall]` runs `manage-provider.sh
+install|uninstall claude`.
 
 `manage-provider.sh found <provider>` exits 0 when that agent is installed,
 meaning its config directory exists (for Claude, the directory holding its
