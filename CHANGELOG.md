@@ -4,6 +4,28 @@ Notable changes to agent-status.tmux, newest first. The format follows [Keep a C
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-10-21
+
+### Fixed
+
+- Claude Code: installing hooks into an empty `settings.json` adds them, instead of leaving the file empty and reporting success.
+- Claude Code: reinstalling when nothing changed no longer rewrites `settings.json` or makes a backup, so the backup of your original settings is no longer pruned away.
+- Claude Code: uninstalling keeps other tools' hook groups, even ones with no hooks of their own, and leaves a `settings.json` that never had our hooks untouched.
+- Settings that aren't plain JSON, or have the wrong shape, are refused with the reason and left unchanged (Claude Code, Codex, Gemini CLI, Qwen Code, Antigravity CLI, MastraCode, OpenCode).
+- MastraCode's `hooks.json`, OpenCode's `tui.jsonc` and Kimi Code's `config.toml` are backed up before an edit that changes them, and not rewritten when nothing changes; MastraCode's events keep their order.
+- Codex: a subagent's permission prompt that is still open when the main turn ends keeps the pane asking; the pane shows finished once the prompt is answered.
+- Notifications whose text starts with a dash, or holds `<`, `>` or `&`, show correctly with alerter, terminal-notifier and notify-send.
+- Suggested titles run pi without extensions, skills, MCP servers or `AGENTS.md`/`CLAUDE.md` context files, from an empty folder of their own, so a project's pi extensions no longer load. The README now says what a suggestion sends, to which model by default, and how to keep it local.
+- OpenCode and Kilo no longer mark a pane as in use again after they quit, when a report was still running or queued, including from OpenCode 1.x's server plugin.
+- OpenCode and Kilo ignore events and prompts that carry no session, instead of applying them to the pane.
+- OpenCode 2: cancelling a subagent's question no longer stops the main turn, so its completion still notifies.
+- OpenCode 1.x: the TUI plugin no longer crashes OpenCode when its status script can't be started.
+- The test suite is isolated when a test file runs on its own, and sends no desktop notifications on Linux either.
+
+### Upgrading
+
+Press `prefix U` and reload tmux. Restart running OpenCode and Kilo sessions to load the fixed plugins. No hooks need reinstalling.
+
 ## [0.6.0] - 2026-10-20
 
 ### Added
@@ -224,7 +246,8 @@ Descriptions under `~/.cache/agent-status` are not moved. Move them yourself, or
 - `prefix A` navigator popup: one card per Claude pane, grouped by session and folder, with editable descriptions.
 - `install-claude-hooks.sh` and `uninstall-claude-hooks.sh`.
 
-[Unreleased]: https://github.com/plopezlpz/agent-status.tmux/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/plopezlpz/agent-status.tmux/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/plopezlpz/agent-status.tmux/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/plopezlpz/agent-status.tmux/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/plopezlpz/agent-status.tmux/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/plopezlpz/agent-status.tmux/compare/v0.3.0...v0.4.0
