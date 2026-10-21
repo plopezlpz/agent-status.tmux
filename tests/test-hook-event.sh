@@ -18,6 +18,13 @@ trap cleanup EXIT
 command -v tmux >/dev/null 2>&1 || { echo "SKIP: hook-event (tmux not installed)"; exit 0; }
 command -v jq >/dev/null 2>&1 || { echo "SKIP: hook-event (jq not installed)"; exit 0; }
 export HOME="$TMP/home"; mkdir -p "$HOME"
+# Gemini's, Qwen's and agy's hooks always exit 0, so one that crashed would
+# pass for one that rightly reports nothing: the hooks run from a copy of
+# the scripts whose hook-event.sh keeps its real exit status.
+mkdir "$TMP/scripts"; cp "$ROOT"/scripts/agent/*.sh "$TMP/scripts/"
+sed "s/; trap 'exit 0' EXIT//" "$HOOK" > "$TMP/scripts/hook-event.sh"
+[ "$(grep -c "trap 'exit 0' EXIT" "$HOOK"):$(grep -c "trap 'exit 0' EXIT" "$TMP/scripts/hook-event.sh" || :)" = 2:0 ] || fail "the hook's exit traps changed: update its copy"
+RUN="$TMP/scripts/hook-event.sh"
 
 ctl -f /dev/null new-session -d -s t -x 120 -y 40 'exec sleep 600'
 TMUX="$(ctl display -pt t:0.0 '#{socket_path},#{pid},0')"
@@ -29,13 +36,15 @@ shown(){ printf '%s:%s' "$(get "$1" @agent-state)" "$(get "$1" @agent-unseen)"; 
 
 # The stand-in: for each line "<payload file> <command words...>" from its
 # FIFO, it runs the command as its child with the payload on stdin, then
-# marks the payload done. It holds the FIFO open itself, so it never ends.
+# marks the payload done with its exit status (its stderr beside it). It
+# holds the FIFO open itself, so it never ends.
 cat > "$TMP/agent.sh" <<'EOF'
 exec 3<>"$1"
 while read -r input command; do
+  rc=0
   # shellcheck disable=SC2086 # the command's words
-  $command < "$input" || :
-  : > "$input.done"
+  $command < "$input" 2> "$input.err" || rc=$?
+  echo "$rc" > "$input.rc"; mv "$input.rc" "$input.done"
 done <&3
 EOF
 n=0
@@ -58,16 +67,18 @@ in_pty(){
 # With no terminal (run by another agent's tool), inheriting TMUX_PANE=$to.
 detached(){ TMUX_PANE="$to" perl -MPOSIX -e 'setsid(); exec @ARGV' bash -c "$1" </dev/null >/dev/null 2>&1 & disown; }
 # send FIFO ACTION JSON [COMMAND]: one hook through that stand-in (by default
-# hook-event.sh $KIND); waits for it.
+# hook-event.sh $KIND); waits for it. Whether it reports or not, a hook
+# succeeds and writes nothing to stderr.
 send(){
   n=$((n + 1))
   local input="$TMP/payload.$n"
   printf '%s' "$3" > "$input"
   exec 9>"$1"
-  printf '%s %s %s\n' "$input" "${4:-$HOOK $KIND}" "$2" >&9
+  printf '%s %s %s\n' "$input" "${4:-$RUN $KIND}" "$2" >&9
   exec 9>&-
-  for _ in $(seq 1 100); do [ -e "$input.done" ] && return 0; sleep 0.05; done
-  fail "hook $2 never ran: $3"
+  for _ in $(seq 1 100); do [ -e "$input.done" ] && break; sleep 0.05; done
+  [ -e "$input.done" ] || fail "hook $2 never ran: $3"
+  [ "$(cat "$input.done"):$(cat "$input.err")" = "0:" ] || fail "hook $2 exited $(cat "$input.done") or wrote to stderr: $(cat "$input.err") ($3)"
 }
 
 # ----- Kimi ------------------------------------------------------------------
@@ -222,7 +233,7 @@ gstart(){ mkfifo "$2"; "$3" "GEMINI_FIFO='$2' exec -a node bash --norc '$TMP/bin
 KIND=gemini
 pg=$(gstart "" "$TMP/g" in_pane)
 # gev FIFO ACTION EVENT SESSION [FIELDS]: one hook, as Gemini sends it.
-gev(){ send "$1" "$2" "{\"session_id\":\"$4\",\"transcript_path\":\"/h/.gemini/tmp/w/chats/session-$4.jsonl\",\"cwd\":\"/w\",\"hook_event_name\":\"$3\",\"timestamp\":\"2026-10-20T13:46:00.000Z\"${5:+,$5}}" "env GEMINI_SESSION_ID=$4 $HOOK gemini"; }
+gev(){ send "$1" "$2" "{\"session_id\":\"$4\",\"transcript_path\":\"/h/.gemini/tmp/w/chats/session-$4.jsonl\",\"cwd\":\"/w\",\"hook_event_name\":\"$3\",\"timestamp\":\"2026-10-20T13:46:00.000Z\"${5:+,$5}}" "env GEMINI_SESSION_ID=$4 $RUN gemini"; }
 gev "$TMP/g" session SessionStart g1 '"source":"startup"'
 [ "$(get "$pg" @agent-kind):$(get "$pg" @agent-instance):$(shown "$pg")" = "gemini:gemini:g1:idle:0" ] || fail "gemini SessionStart: $(get "$pg" @agent-instance) $(shown "$pg")"
 gev "$TMP/g" working BeforeAgent g1 '"prompt":"fix the login bug"'
