@@ -139,6 +139,33 @@ state "$p2" working "" 42 "" mastracode only
 [ "$(get "$p2" @agent-state):$(get "$p2" @agent-instance)" = working:mastracode:42 ] || fail "only did not report into its own pane"
 TMUX_PANE="$p2" "$CLEAR" quit 42 mastracode </dev/null
 
+# A notification's text stays text whatever it starts with or holds:
+# alerter reads an option's value after "=", terminal-notifier's message
+# comes on stdin (it parses its option values as property lists), and
+# notify-send's body (markup to most notification servers) is escaped.
+# Stand-ins record their words, one [word] each, then their stdin.
+mkdir "$TMP/notified"
+cat > "$TMP/recorder" <<'EOF'
+#!/bin/sh
+{ for a; do printf '[%s]' "$a"; done; echo; cat; } > "$NOTIFIED/.$$"
+mv "$NOTIFIED/.$$" "$NOTIFIED/${0##*/}"
+EOF
+chmod +x "$TMP/recorder"
+msg='-x <b>&</b>' s=1
+for n in alerter terminal-notifier notify-send; do
+  mkdir "$TMP/n-$n"; ln -s "$TMP/recorder" "$TMP/n-$n/$n"
+  state "$p2" working "" n-1 "$s" test
+  NOTIFIED="$TMP/notified" PATH="$TMP/n-$n:$TMP/bin:/usr/bin:/bin" TMUX_PANE="$p2" "$SET" asking "$msg" n-1 $((s + 1)) test </dev/null
+  s=$((s + 2))
+  for _ in $(seq 1 50); do [ -e "$TMP/notified/$n" ] && break; sleep 0.1; done
+  [ -e "$TMP/notified/$n" ] || fail "$n was not called"
+done
+case "$(sed -n 1p "$TMP/notified/alerter")" in *"[--message=$msg]"*) ;; *) fail "alerter message: $(cat "$TMP/notified/alerter")" ;; esac
+case "$(sed -n 1p "$TMP/notified/terminal-notifier")" in *'[-message]'*|*"$msg"*) fail "terminal-notifier message as an option: $(cat "$TMP/notified/terminal-notifier")" ;; esac
+[ "$(sed 1d "$TMP/notified/terminal-notifier")" = "$msg" ] || fail "terminal-notifier message not on stdin: $(cat "$TMP/notified/terminal-notifier")"
+[ "$(cat "$TMP/notified/notify-send")" = '[--][Agent • asking][-x &lt;b&gt;&amp;&lt;/b&gt;]' ] || fail "notify-send words: $(cat "$TMP/notified/notify-send")"
+TMUX_PANE="$p2" "$CLEAR" quit n-1 test </dev/null
+
 if [ -n "$JQ" ]; then
   printf '%s\n' '{"session_id":"claude-1","hook_event_name":"SessionStart"}' | \
     TMUX_PANE="$p1" AGENT_STATUS_KIND=claude "$SET" idle

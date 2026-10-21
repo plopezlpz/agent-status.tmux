@@ -499,7 +499,7 @@ eventually focused || fail "attached client is not focused"
 # A recording notifier: notifications land in $TMP/notified-<pane>, the last
 # message in $TMP/message.
 mkdir "$TMP/rbin"
-printf '#!/bin/sh\nwhile [ $# -gt 0 ]; do case "$1" in --group) touch "%s/notified-$2" ;; --message) printf %%s "$2" > "%s/message" ;; esac; shift; done\n' "$TMP" "$TMP" > "$TMP/rbin/alerter"
+printf '#!/bin/sh\nwhile [ $# -gt 0 ]; do case "$1" in --group) touch "%s/notified-$2" ;; --message=*) printf %%s "${1#--message=}" > "%s/message" ;; esac; shift; done\n' "$TMP" "$TMP" > "$TMP/rbin/alerter"
 chmod +x "$TMP/rbin/alerter"
 nstate(){ PATH="$TMP/rbin:$PATH" TMUX_PANE="$1" "$SET" "${@:2}" </dev/null; }
 notified(){ [ -e "$TMP/notified-agent-$1" ]; }

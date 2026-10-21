@@ -343,6 +343,10 @@ agent_shown "$prev_state" "$prev_unseen"
 agent_log "$log_file" "$log_time" "pane=$TMUX_PANE ${SHOWN:-none}->$raw_state$held"
 
 # send_notification: show $title/$message with the first notifier found.
+# The message is free text, which may start with "-": alerter takes it
+# after "=", terminal-notifier on stdin (it reads option values as property
+# lists, so "[" or "(" first breaks them too), notify-send after "--", and
+# escaped, as its body is markup to most notification servers.
 send_notification() {
   if command -v alerter >/dev/null 2>&1; then
     case "$notify_timeout" in ''|*[!0-9]*) notify_timeout=300 ;; esac
@@ -351,7 +355,7 @@ send_notification() {
       # kill it before the click check.
       result=$(alerter \
         --title "$title" \
-        --message "$message" \
+        --message="$message" \
         --group "agent-$TMUX_PANE" \
         --timeout "$notify_timeout" \
         --json 2>/dev/null) || true
@@ -362,14 +366,15 @@ send_notification() {
     ) >/dev/null 2>&1 &
   elif command -v terminal-notifier >/dev/null 2>&1; then
     printf -v click '%q %q %q %q' "$SCRIPT_DIR/focus-pane.sh" "$TMUX_PANE" "$socket" "$client"
-    terminal-notifier \
+    printf '%s' "$message" | terminal-notifier \
       -title "$title" \
-      -message "$message" \
       -execute "$click" \
       -group "agent-$TMUX_PANE" \
       >/dev/null 2>&1 &
   elif command -v notify-send >/dev/null 2>&1; then
-    notify-send "$title" "$message" >/dev/null 2>&1 &
+    # Quoted replacements: bash 5.2 reads an unquoted & in one as the match.
+    body=${message//&/"&amp;"}; body=${body//</"&lt;"}; body=${body//>/"&gt;"}
+    notify-send -- "$title" "$body" >/dev/null 2>&1 &
   fi
 }
 
