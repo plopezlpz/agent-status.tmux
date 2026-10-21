@@ -99,9 +99,8 @@ require_regular_config() {
 replace_from_file() {
   local target="$1" source="$2" out
   out=$(mktemp "$target.agent-status.XXXXXX") || exit 1
-  if [ -f "$target" ]; then cp -p "$target" "$out"; fi
-  cat "$source" > "$out"
-  mv "$out" "$target"
+  { { [ ! -f "$target" ] || cp -p "$target" "$out"; } && cat "$source" > "$out" && mv "$out" "$target"; } \
+    || { rm -f "$out"; return 1; }
 }
 # Also drops the one blank separator line install writes before the begin
 # marker, so reinstall and uninstall are byte-stable.
@@ -141,19 +140,73 @@ validate_marked_block() {
     $0 == end { if (!open) bad = 1; open = 0 }
     END { exit (bad || open) }' "$1" || { echo "agent-status: refusing unmatched integration markers in $1" >&2; exit 1; }
 }
-json_update() {
-  local file="$1" filter="$2" tmp
+# prune_backups FILE: keep only our newest 3 backups of FILE (the exact
+# mktemp name pattern of config_replace).
+prune_backups() {
+  local f stamp
+  for f in "$1".bak-*; do
+    stamp="${f#"$1".bak-}"
+    [[ "$stamp" =~ ^[0-9]+\.[A-Za-z0-9]{6}$ ]] && [ -f "$f" ] && [ ! -L "$f" ] || continue
+    printf '%s\t%s\n' "${stamp%%.*}" "$f"
+  done | sort -t $'\t' -k1,1nr | tail -n +4 | cut -f2- | while IFS= read -r f; do rm -f -- "$f"; done
+}
+# config_replace FILE NEW: put NEW in FILE's place, first copying an
+# existing FILE to a new FILE.bak-<time>.XXXXXX ($BACKUP).
+BACKUP=""
+config_replace() {
+  BACKUP=""
+  if [ -f "$1" ]; then
+    BACKUP=$(mktemp "$1.bak-$(date +%s).XXXXXX") || exit 1
+    cp -p "$1" "$BACKUP" || { rm -f "$BACKUP"; exit 1; }
+  fi
+  replace_from_file "$1" "$2" || { [ -z "$BACKUP" ] || rm -f "$BACKUP"; exit 1; }
+  prune_backups "$1"
+}
+# The new file an edit is writing, removed on exit unless moved in place.
+EDIT_NEW=""
+trap 'rm -f "$EDIT_NEW"' EXIT
+# json_edit FILE FILTER [JQ ARGS...]: FILTER's result for FILE in $EDIT_NEW,
+# with EDIT_SAME=1 when that is FILE as it is (formatting aside), so there
+# is nothing to write. FILE must hold one plain JSON document (comments, which
+# some agents read, jq can't keep); an empty or missing FILE is {}. A FILE
+# that isn't, or that FILTER refuses (error), is left alone and we stop.
+EDIT_SAME=0
+json_edit() {
+  local file="$1" filter="$2" src err
   shift 2
   require_jq "$file"
   require_regular_config "$file"
-  tmp=$(mktemp "$file.agent-status.XXXXXX") || exit 1
-  if [ -f "$file" ]; then
-    if ! jq "$@" "$filter" "$file" > "$tmp"; then rm "$tmp"; echo "agent-status: refusing to edit $file: it must be plain JSON (no comments) with an object at the top level" >&2; exit 1; fi
-  else
-    if ! printf '{}\n' | jq "$@" "$filter" > "$tmp"; then rm "$tmp"; exit 1; fi
+  src=/dev/null; [ ! -f "$file" ] || src="$file"
+  EDIT_NEW=$(mktemp "$file.agent-status.XXXXXX") || exit 1
+  if ! err=$(jq -s "$@" 'if length == 0 then {} elif length == 1 then .[0] else error("it holds several JSON documents") end
+      | ['"$filter"'] | if length == 1 then .[0] else error("the edit made \(length) documents") end' "$src" 2>&1 > "$EDIT_NEW"); then
+    err=${err##*$'\n'}
+    case "$err" in
+      *"parse error: "*) err="it must be plain JSON (no comments): ${err#*parse error: }" ;;
+      "jq: error (at "*"): "*) err=${err#jq: error (at *): } ;;
+      "") err="jq failed" ;;
+    esac
+    echo "agent-status: refusing to edit $file: $err" >&2
+    exit 1
   fi
-  replace_from_file "$file" "$tmp"
-  rm -f "$tmp"
+  EDIT_SAME=0
+  if [ -f "$file" ] && [ "$(jq -s -cS 'if length == 0 then [{}] else . end' "$file")" = "$(jq -s -cS . "$EDIT_NEW")" ]; then EDIT_SAME=1; fi
+}
+# json_commit FILE: put $EDIT_NEW in FILE's place (config_replace), which
+# jq writes in its own layout.
+json_commit() {
+  local relaid=0
+  if [ -s "$1" ] && ! jq . "$1" | cmp -s - "$1"; then relaid=1; fi
+  config_replace "$1" "$EDIT_NEW"
+  [ "$relaid" = 0 ] || echo "agent-status: $1 is rewritten in jq's layout (2-space indent); its old text is in the backup"
+}
+# json_update FILE FILTER [JQ ARGS...]: edit FILE with FILTER (json_edit),
+# writing it, and backing up the old one, only when that changes it.
+json_update() {
+  json_edit "$@"
+  [ "$EDIT_SAME" = 0 ] || return 0
+  json_commit "$1"
+  [ -z "$BACKUP" ] || echo "agent-status: backup saved to $BACKUP"
 }
 
 case "$PROVIDER" in
@@ -197,12 +250,14 @@ case "$PROVIDER" in
     base="${MASTRACODE_HOME:-$HOME/.mastracode}"
     config="$base/hooks.json"
     # Our entries: hook-event.sh from any checkout, or the old symlink.
+    # strip($keep) drops them, with the events they leave empty, but those
+    # in $keep, which install fills again where they are.
     # shellcheck disable=SC2016 # jq variables, not shell variables
     strip='def ours: type == "object" and ((.command // "" | tostring) as $c
         | ($c | startswith("\($legacy) ")) or ($c | test("/scripts/agent/hook-event\\.sh'"'"' mastracode [a-z]+$")));
-      if type != "object" then error("root must be object") else . end
-      | with_entries(if (.value | type) == "array" and any(.value[]; ours)
-          then .value |= map(select(ours | not)) | select(.value | length > 0) else . end)'
+      def strip($keep): if type != "object" then error("its top level must be an object") else . end
+        | with_entries(.key as $e | if (.value | type) == "array" and any(.value[]; ours)
+            then .value |= map(select(ours | not)) | select((.value | length > 0) or any($keep[]; . == $e)) else . end);'
     # Hook event -> hook-event.sh action. MastraCode exits without waiting
     # for its SessionEnd hooks, which run one after another, so only the
     # first one runs: ours goes first.
@@ -290,9 +345,9 @@ codex_filter="$CODEX_OURS"'
   def strip: map(if owned then .hooks |= map(select(ours | not)) | if .hooks == [] then {hooks: []} else . end else . end);
   # Placeholders hold no index once nothing follows them.
   def trim: until(length == 0 or (.[-1] | placeholder | not); .[:-1]);
-  if type != "object" then error("root must be an object") else . end
-  | if (.hooks // {} | type) != "object" then error("hooks must be an object") else . end
-  | if any(.hooks // {} | .[]; type != "array") then error("each event must be an array") else . end
+  if type != "object" then error("its top level must be an object") else . end
+  | if (.hooks // {} | type) != "object" then error("\"hooks\" must be an object") else . end
+  | if any(.hooks // {} | .[]; type != "array") then error("each event in \"hooks\" must be a list") else . end
   | if $install then .hooks //= {} else . end
   | reduce (.hooks // {} | keys_unsorted[]) as $e (.;
       if $install and $groups[$e] != null then . else
@@ -324,56 +379,21 @@ codex_hooks_off() {
     (features && line ~ /^(codex_)?hooks=false/) || line ~ /^features\.(codex_)?hooks=false/ { off = 1 }
     END { exit !off }' "$base/config.toml"
 }
-# config_backup FILE: copy FILE to a new FILE.bak-<time>.XXXXXX ($BACKUP)
-# before jq rewrites it, which it does in its own layout.
-BACKUP=""
-config_backup() {
-  BACKUP=$(mktemp "$1.bak-$(date +%s).XXXXXX") || exit 1
-  cp -p "$1" "$BACKUP"
-  if [ -s "$1" ] && ! jq . "$1" | cmp -s - "$1"; then
-    echo "agent-status: $1 is rewritten in jq's layout (2-space indent); its old text is in the backup"
-  fi
-}
-# prune_backups FILE: keep only our newest 3 backups of FILE (the exact
-# mktemp name pattern above).
-prune_backups() {
-  local f stamp
-  for f in "$1".bak-*; do
-    stamp="${f#"$1".bak-}"
-    [[ "$stamp" =~ ^[0-9]+\.[A-Za-z0-9]{6}$ ]] && [ -f "$f" ] && [ ! -L "$f" ] || continue
-    printf '%s\t%s\n' "${stamp%%.*}" "$f"
-  done | sort -t $'\t' -k1,1nr | tail -n +4 | cut -f2- | while IFS= read -r f; do rm -f -- "$f"; done
-}
-# The new file an update is writing, removed on exit unless moved in place.
-EDIT_NEW=""
 # codex_update install|uninstall: edit hooks.json, backing up the old one.
 codex_update() {
-  local new backup="" moved=0
-  require_jq "$config"
-  require_regular_config "$config"
-  new=$(mktemp "$config.agent-status.XXXXXX") || exit 1
-  EDIT_NEW="$new"
-  trap 'rm -f "$EDIT_NEW"' EXIT
+  local moved=0
   # Exactly one JSON document, as Codex reads it; an empty file is {}.
-  { if [ -f "$config" ]; then cat "$config"; else printf '{}\n'; fi; } \
-    | jq -s --argjson install "$([ "$1" = install ] && echo true || echo false)" --argjson groups "$(codex_groups)" \
-      --arg s "$ROOT/scripts/agent" --arg r "$(cd "$ROOT/scripts/agent" && pwd -P)" \
-      'if length == 0 then {} elif length == 1 then .[0] else error("several JSON documents") end | '"$codex_filter" > "$new" \
-    && [ "$(jq -s length "$new" 2>/dev/null)" = 1 ] \
-    || { echo "agent-status: refusing to edit $config: not a Codex hooks file" >&2; exit 1; }
-  if [ -f "$config" ]; then
-    # Unchanged (formatting aside): leave the file alone.
-    if [ "$(jq -s -cS 'if length == 0 then [{}] else . end' "$config")" = "$(jq -s -cS . "$new")" ]; then
-      echo "agent-status: $config already $([ "$1" = install ] && echo has the current hooks || echo has no agent-status hooks)"
-      return 0
-    fi
-    moved=$(codex_moved "$config" "$new")
-    config_backup "$config"; backup=$BACKUP
+  json_edit "$config" "$codex_filter" --argjson install "$([ "$1" = install ] && echo true || echo false)" \
+    --argjson groups "$(codex_groups)" --arg s "$ROOT/scripts/agent" --arg r "$(cd "$ROOT/scripts/agent" && pwd -P)"
+  # Unchanged (formatting aside): leave the file alone.
+  if [ "$EDIT_SAME" = 1 ]; then
+    echo "agent-status: $config already $([ "$1" = install ] && echo has the current hooks || echo has no agent-status hooks)"
+    return 0
   fi
-  replace_from_file "$config" "$new"
-  prune_backups "$config"
+  [ ! -f "$config" ] || moved=$(codex_moved "$config" "$EDIT_NEW")
+  json_commit "$config"
   echo "agent-status: hooks $([ "$1" = install ] && echo written to || echo removed from) $config"
-  [ -z "$backup" ] || echo "agent-status: backup saved to $backup"
+  [ -z "$BACKUP" ] || echo "agent-status: backup saved to $BACKUP"
   case "$moved" in 0) ;; *) echo "agent-status: $moved hook(s) of other tools moved in $config; Codex asks you to review them again" ;; esac
 }
 
@@ -411,9 +431,9 @@ qwen_groups() {
 # shellcheck disable=SC2016 # jq variables, not shell variables
 settings_filter='
   def strip: map(if owned then .hooks |= map(select(ours | not)) | select(.hooks != []) else . end);
-  if type != "object" then error("root must be an object") else . end
-  | if (.hooks // {} | type) != "object" then error("hooks must be an object") else . end
-  | if any(.hooks // {} | to_entries[]; $groups[.key] != null and (.value | type) != "array") then error("each event must be a list") else . end
+  if type != "object" then error("its top level must be an object") else . end
+  | if (.hooks // {} | type) != "object" then error("\"hooks\" must be an object") else . end
+  | if any(.hooks // {} | to_entries[]; $groups[.key] != null and (.value | type) != "array") then error("each event in \"hooks\" must be a list") else . end
   | . as $orig
   | reduce (.hooks // {} | keys_unsorted[]) as $e (.;
       if (.hooks[$e] | type) != "array" or ($install and $groups[$e] != null) or (any(.hooks[$e][]; owned) | not) then .
@@ -444,7 +464,7 @@ antigravity_filter='
   def ours: type == "object" and ((.command // "") | type == "string" and test("/scripts/agent/hook-event\\.sh'"'"' antigravity [a-z]+$"));
   def strip: map(if type == "object" and (.hooks | type) == "array" and any(.hooks[]; ours)
       then .hooks |= map(select(ours | not)) | select(.hooks != []) elif ours then empty else . end);
-  if type != "object" then error("root must be an object") else . end
+  if type != "object" then error("its top level must be an object") else . end
   | with_entries(if .key == "agent-status" or (.value | type) != "object" then . else .value |= with_entries(
       if (.value | type) == "array" and (.value | strip) != .value then .value |= strip | select(.value != []) else . end) end)
   | if $install then .["agent-status"] as $o | .["agent-status"] = (if ($o | type) == "object" and $o.enabled == false then {enabled: false} else {} end) + $groups
@@ -452,30 +472,25 @@ antigravity_filter='
 # settings_update install|uninstall: edit $PROVIDER's settings.json (or
 # Antigravity's hooks.json), backing up the old one.
 settings_update() {
-  local new filter
-  require_jq "$config"
-  require_regular_config "$config"
-  new=$(mktemp "$config.agent-status.XXXXXX") || exit 1
-  EDIT_NEW="$new"
-  trap 'rm -f "$EDIT_NEW"' EXIT
+  local filter
   filter="$(hook_ours "$PROVIDER")$settings_filter"
   [ "$PROVIDER" != antigravity ] || filter=$antigravity_filter
-  # Comments, which Gemini and Qwen read, jq can't keep: such a file is
-  # refused.
-  { if [ -f "$config" ]; then cat "$config"; else printf '{}\n'; fi; } \
-    | jq -s --argjson install "$([ "$1" = install ] && echo true || echo false)" --argjson groups "$("${PROVIDER}_groups")" \
-      --arg s "$ROOT/scripts/agent" --arg r "$(cd "$ROOT/scripts/agent" && pwd -P)" \
-      'if length == 0 then {} elif length == 1 then .[0] else error("several JSON documents") end | '"$filter" > "$new" \
-    || { echo "agent-status: refusing to edit $config: it must be plain JSON (no comments) with an object at the top level" >&2; exit 1; }
-  if [ -f "$config" ] && [ "$(jq -s -cS 'if length == 0 then [{}] else . end' "$config")" = "$(jq -s -cS . "$new")" ]; then
+  json_edit "$config" "$filter" --argjson install "$([ "$1" = install ] && echo true || echo false)" \
+    --argjson groups "$("${PROVIDER}_groups")" --arg s "$ROOT/scripts/agent" --arg r "$(cd "$ROOT/scripts/agent" && pwd -P)"
+  if [ "$EDIT_SAME" = 1 ]; then
     echo "agent-status: $config already $([ "$1" = install ] && echo has the current hooks || echo has no agent-status hooks)"
     return 0
   fi
-  BACKUP=""
-  [ ! -f "$config" ] || config_backup "$config"
-  replace_from_file "$config" "$new"
-  prune_backups "$config"
+  json_commit "$config"
   echo "agent-status: hooks $([ "$1" = install ] && echo written to || echo removed from) $config"
+  [ -z "$BACKUP" ] || echo "agent-status: backup saved to $BACKUP"
+}
+
+# Kimi: put the edited config.toml ($EDIT_NEW) in place, backing up the old
+# one, unless it is the same text.
+kimi_write() {
+  if [ -f "$config" ] && cmp -s "$EDIT_NEW" "$config"; then return 0; fi
+  config_replace "$config" "$EDIT_NEW"
   [ -z "$BACKUP" ] || echo "agent-status: backup saved to $BACKUP"
 }
 
@@ -485,14 +500,11 @@ if [ "$ACTION" = install ]; then
   if [ "$PROVIDER" = pi ] && [ -n "${PI_EXTENSIONS_DIR:-}" ]; then :; else require_dir "$base"; fi
   case "$PROVIDER" in
     opencode)
-      require_jq
-      require_regular_config "$config"
-      if [ -f "$config" ]; then
-        jq -e 'type == "object" and ((.plugin // []) | type == "array")' "$config" >/dev/null 2>&1 || { echo "agent-status: refusing to edit $config: it must be plain JSON (no comments) with an object at the top level and \"plugin\" as a list" >&2; exit 1; }
-      fi
       link_validate "$src" "$dest"; link_validate "$tui_src" "$tui_dest"; link_validate "$v2_src" "$v2_dest"
       # shellcheck disable=SC2016 # jq variables, not shell variables
-      json_update "$config" '(.plugin // []) as $p | .plugin = (if any($p[]; . == "./agent-status-tui.js" or (type == "array" and .[0] == "./agent-status-tui.js")) then $p else $p + ["./agent-status-tui.js"] end)'
+      json_update "$config" 'if type != "object" then error("its top level must be an object")
+        elif (.plugin // [] | type) != "array" then error("\"plugin\" must be a list") else . end
+        | (.plugin // []) as $p | .plugin = (if any($p[]; . == "./agent-status-tui.js" or (type == "array" and .[0] == "./agent-status-tui.js")) then $p else $p + ["./agent-status-tui.js"] end)'
       link_install "$src" "$dest"; link_install "$tui_src" "$tui_dest"; link_install "$v2_src" "$v2_dest"
       ;;
     kimi)
@@ -500,8 +512,8 @@ if [ "$ACTION" = install ]; then
       require_regular_config "$config"
       original=/dev/null; [ ! -f "$config" ] || original="$config"
       validate_marked_block "$original" "$begin" "$end"
-      tmp=$(mktemp "$config.agent-status.XXXXXX") || exit 1
-      strip_marked_block "$original" "$begin" "$end" | strip_kimi_hooks > "$tmp"
+      EDIT_NEW=$(mktemp "$config.agent-status.XXXXXX") || exit 1
+      strip_marked_block "$original" "$begin" "$end" | strip_kimi_hooks > "$EDIT_NEW"
       {
         printf '\n%s\n' "$begin"
         while IFS='|' read -r event matcher action; do
@@ -527,13 +539,15 @@ StopFailure||idle
 Interrupt||interrupt
 KIMI
         printf '%s\n' "$end"
-      } >> "$tmp"
-      replace_from_file "$config" "$tmp"; rm -f "$tmp"
+      } >> "$EDIT_NEW"
+      kimi_write
       ;;
     mastracode)
       # shellcheck disable=SC2016 # jq variables, not shell variables
-      json_update "$config" "$strip"' | reduce $events[] as $e (.; {type:"command",command:"\($hook) \($e.action)",timeout:10000} as $h
-        | .[$e.event] = if $e.first then [$h] + (.[$e.event] // []) else (.[$e.event] // []) + [$h] end)' --arg hook "$hook" --arg legacy "$(sh_word "$dest")" --argjson events "$events"
+      json_update "$config" "$strip"' strip([$events[].event])
+        | if any($events[].event as $e | .[$e]; type != "array" and type != "null") then error("each event must be a list") else . end
+        | reduce $events[] as $e (.; {type:"command",command:"\($hook) \($e.action)",timeout:10000} as $h
+          | .[$e.event] = if $e.first then [$h] + (.[$e.event] // []) else (.[$e.event] // []) + [$h] end)' --arg hook "$hook" --arg legacy "$(sh_word "$dest")" --argjson events "$events"
       ;;
     codex) codex_update install ;;
     gemini)
@@ -585,22 +599,22 @@ EOF
 else
   case "$PROVIDER" in
     opencode)
-      if [ -e "$config" ] || [ -L "$config" ]; then require_regular_config "$config"; json_update "$config" 'if type != "object" then error("root must be object") elif (.plugin | type) == "array" then .plugin |= map(select(. != "./agent-status-tui.js" and (type != "array" or .[0] != "./agent-status-tui.js"))) else . end'; fi
+      if [ -e "$config" ] || [ -L "$config" ]; then require_regular_config "$config"; json_update "$config" 'if type != "object" then error("its top level must be an object") elif (.plugin | type) == "array" then .plugin |= map(select(. != "./agent-status-tui.js" and (type != "array" or .[0] != "./agent-status-tui.js"))) else . end'; fi
       link_remove "$src" "$dest"; link_remove "$tui_src" "$tui_dest"; link_remove "$v2_src" "$v2_dest"
       ;;
     kimi)
       if [ -e "$config" ] || [ -L "$config" ]; then
         require_regular_config "$config"
         validate_marked_block "$config" "$begin" "$end"
-        tmp=$(mktemp "$config.agent-status.XXXXXX") || exit 1
-        strip_marked_block "$config" "$begin" "$end" | strip_kimi_hooks > "$tmp"
-        replace_from_file "$config" "$tmp"; rm -f "$tmp"
+        EDIT_NEW=$(mktemp "$config.agent-status.XXXXXX") || exit 1
+        strip_marked_block "$config" "$begin" "$end" | strip_kimi_hooks > "$EDIT_NEW"
+        kimi_write
       fi
       link_remove "$src" "$dest"
       ;;
     mastracode)
       if [ -e "$config" ] || [ -L "$config" ]; then
-        json_update "$config" "$strip" --arg legacy "$(sh_word "$dest")"
+        json_update "$config" "$strip"' strip([])' --arg legacy "$(sh_word "$dest")"
       fi
       link_remove "$src" "$dest"
       ;;

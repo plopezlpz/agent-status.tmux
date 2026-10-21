@@ -19,11 +19,29 @@ jq -n --arg wrapped "wrapper $MASTRACODE_HOME/hooks/agent-status.tmux.sh extra" 
 for home in "$KIMI_CODE_HOME" "$MASTRACODE_HOME"; do
   mkdir -p "$home/hooks"; ln -s "$ROOT/scripts/${home##*/}/agent-status.sh" "$home/hooks/agent-status.tmux.sh"
 done
+edited="$OPENCODE_CONFIG_DIR/tui.jsonc $KIMI_CODE_HOME/config.toml $MASTRACODE_HOME/hooks.json"
+for f in $edited; do cp "$f" "$f.orig"; done
+inode(){ ls -i "$1" | awk '{print $1}'; }
+baks(){ set -- "$1".bak-*; [ -e "$1" ] && echo $# || echo 0; }
 
 for provider in pi omp opencode kilo kimi mastracode; do
   bash "$ROOT/manage-provider.sh" install "$provider" >/dev/null
   bash "$ROOT/manage-provider.sh" install "$provider" >/dev/null
 done
+# Only the install that changed a config backed it up; a reinstall that
+# changes nothing writes nothing.
+for f in $edited; do
+  [ "$(baks "$f")" -eq 1 ] || fail "${f#"$TMP"/} has $(baks "$f") backups after an install and a reinstall"
+  cmp -s "$f".bak-* "$f.orig" || fail "${f#"$TMP"/}'s backup is not the old file"
+done
+for provider in opencode kimi mastracode; do
+  case "$provider" in opencode) f="$OPENCODE_CONFIG_DIR/tui.jsonc" ;; kimi) f="$KIMI_CODE_HOME/config.toml" ;; *) f="$MASTRACODE_HOME/hooks.json" ;; esac
+  cp "$f" "$TMP/before"; ino=$(inode "$f")
+  bash "$ROOT/manage-provider.sh" install "$provider" >/dev/null
+  cmp -s "$f" "$TMP/before" && [ "$(inode "$f")" = "$ino" ] || fail "$provider reinstall rewrote ${f##*/}"
+done
+# MastraCode's events keep their place: ours are replaced where they are.
+[ "$(jq -c 'keys_unsorted[:3]' "$MASTRACODE_HOME/hooks.json")" = '["UserPromptSubmit","Interrupt","SessionEnd"]' ] || fail "mastra reordered its events: $(jq -c keys_unsorted "$MASTRACODE_HOME/hooks.json")"
 ln -s "$ROOT" "$TMP/plugin-alias"
 bash "$TMP/plugin-alias/manage-provider.sh" install pi >/dev/null
 [ -L "$PI_EXTENSIONS_DIR/agent-status.ts" ] || fail "pi link missing"
@@ -57,6 +75,11 @@ jq -e 'has("Stop") | not' "$MASTRACODE_HOME/hooks.json" >/dev/null || fail "mast
 [ "$(jq -c '[.Notification[].command | split(" ") | last]' "$MASTRACODE_HOME/hooks.json")" = '["blocked"]' ] || fail "mastra Notification does not ask"
 
 for provider in pi omp opencode kilo kimi mastracode; do bash "$ROOT/manage-provider.sh" uninstall "$provider" >/dev/null; done
+# Uninstall backs up what it changes; uninstalling again changes nothing.
+for provider in opencode kimi mastracode; do bash "$ROOT/manage-provider.sh" uninstall "$provider" >/dev/null; done
+for f in $edited; do
+  [ "$(baks "$f")" -eq 2 ] || fail "${f#"$TMP"/} has $(baks "$f") backups after install and uninstall, twice each"
+done
 [ ! -e "$PI_EXTENSIONS_DIR/agent-status.ts" ] || fail "pi link remained"
 for link in plugins/agent-status.tmux.js plugins/agent-status.tmux agent-status-tui.js; do
   [ ! -e "$OPENCODE_CONFIG_DIR/$link" ] && [ ! -L "$OPENCODE_CONFIG_DIR/$link" ] || fail "opencode $link remained"
@@ -135,8 +158,12 @@ cp "$stable_kimi/config.toml" "$TMP/stable-kimi.once"
 KIMI_CODE_HOME="$stable_kimi" bash "$ROOT/manage-provider.sh" install kimi >/dev/null
 KIMI_CODE_HOME="$stable_kimi" bash "$ROOT/manage-provider.sh" install kimi >/dev/null
 cmp -s "$stable_kimi/config.toml" "$TMP/stable-kimi.once" || fail "kimi reinstall is not byte-stable"
+[ "$(baks "$stable_kimi/config.toml")" -eq 1 ] || fail "kimi reinstalls backed up config.toml"
 KIMI_CODE_HOME="$stable_kimi" bash "$ROOT/manage-provider.sh" uninstall kimi >/dev/null
 cmp -s "$stable_kimi/config.toml" "$TMP/stable-kimi.orig" || fail "kimi uninstall did not restore the original config"
+# Uninstalling from a config.toml that has no hooks of ours leaves it alone.
+KIMI_CODE_HOME="$stable_kimi" bash "$ROOT/manage-provider.sh" uninstall kimi >/dev/null
+[ "$(baks "$stable_kimi/config.toml")" -eq 2 ] || fail "kimi uninstall without our hooks backed up config.toml"
 # Kimi rewrites its whole config.toml when it adds a top-level key after our
 # block, dropping comments and so our markers: uninstall and reinstall still
 # find our tables, and nothing else.
@@ -156,6 +183,37 @@ printf 'default_model = "k2"\nmodel = "keep"\n\n[[hooks]]\nevent = "Stop"\ncomma
 cmp -s "$lost_kimi/config.toml" "$TMP/lost.want" || fail "kimi uninstall of unmarked hooks: $(diff "$TMP/lost.want" "$lost_kimi/config.toml")"
 bad_mastra="$TMP/bad-mastra"; mkdir -p "$bad_mastra"; printf '[]\n' > "$bad_mastra/hooks.json"
 if MASTRACODE_HOME="$bad_mastra" bash "$ROOT/manage-provider.sh" install mastracode >/dev/null 2>&1; then fail "mastra accepted non-object config"; fi
+# An empty hooks.json is {} to MastraCode's installer, as to the others.
+: > "$bad_mastra/hooks.json"
+MASTRACODE_HOME="$bad_mastra" bash "$ROOT/manage-provider.sh" install mastracode >/dev/null
+[ "$(jq 'keys | length' "$bad_mastra/hooks.json")" -eq 12 ] || fail "mastra install into an empty hooks.json: $(cat "$bad_mastra/hooks.json")"
+
+# Every JSON config the installers edit: one that isn't a single plain JSON
+# object is refused, saying why, and left as it was, with no backup or
+# temp file beside it.
+for p in codex gemini qwen antigravity mastracode opencode; do
+  d="$TMP/refused-$p"; mkdir -p "$d"
+  case "$p" in
+    claude) f="$d/settings.json" var=CLAUDE_SETTINGS val="$f" ;;
+    codex) f="$d/hooks.json" var=CODEX_HOME val="$d" ;;
+    gemini) mkdir -p "$d/.gemini"; f="$d/.gemini/settings.json" var=GEMINI_CLI_HOME val="$d" ;;
+    qwen) f="$d/settings.json" var=QWEN_HOME val="$d" ;;
+    antigravity) mkdir -p "$d/.gemini/antigravity-cli" "$d/.gemini/config"; f="$d/.gemini/config/hooks.json" var=HOME val="$d" ;;
+    mastracode) f="$d/hooks.json" var=MASTRACODE_HOME val="$d" ;;
+    opencode) f="$d/tui.jsonc" var=OPENCODE_CONFIG_DIR val="$d" ;;
+  esac
+  for bad in '{\n  // mine\n  "x": 1\n}\n|it must be plain JSON (no comments): ' '[]\n|its top level must be an object' \
+      'nope\n|it must be plain JSON (no comments): ' '{}\n{}\n|it holds several JSON documents'; do
+    for action in install uninstall; do
+      printf '%b' "${bad%|*}" > "$f"; cp "$f" "$TMP/refused.orig"
+      rc=0; err=$(env "$var=$val" bash "$ROOT/manage-provider.sh" "$action" "$p" 2>&1 >/dev/null) || rc=$?
+      [ "$rc" -eq 1 ] || fail "$p $action accepted ${bad%|*} (exit $rc)"
+      case "$err" in "agent-status: refusing to edit $f: ${bad#*|}"*) ;; *) fail "$p $action of ${bad%|*} said: $err" ;; esac
+      cmp -s "$f" "$TMP/refused.orig" || fail "$p $action changed a refused ${f##*/}"
+      [ -z "$(find "$d" -name "${f##*/}.*")" ] || fail "$p $action of ${bad%|*} left a backup or temp file"
+    done
+  done
+done
 
 # ----- Gemini CLI: settings.json, edited in place --------------------------
 export GEMINI_CLI_HOME="$TMP/gemini"; gem="$GEMINI_CLI_HOME/.gemini"; gs="$gem/settings.json"
