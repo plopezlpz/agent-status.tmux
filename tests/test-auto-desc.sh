@@ -5,9 +5,10 @@ set -euo pipefail
 PLUGIN_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
 SCRIPT="$PLUGIN_DIR/scripts/agent/auto-desc.sh"
 SOCK="agent-status-desc-test-$$"
+TMP="$(mktemp -d)"
 fail(){ echo "FAIL: $1" >&2; exit 1; }
 ctl(){ TMUX='' tmux -L "$SOCK" "$@"; }
-cleanup(){ ctl kill-server 2>/dev/null || true; }
+cleanup(){ ctl kill-server 2>/dev/null || true; rm -rf "$TMP"; }
 trap cleanup EXIT
 
 command -v tmux >/dev/null 2>&1 || { echo "SKIP: tmux not installed"; exit 0; }
@@ -56,13 +57,20 @@ unset_desc
 bash "$SCRIPT" set 'run it\;'
 [ "$(get)" = 'run it\;' ] || fail "trailing '\\;' not kept: [$(get)]"
 
-bash "$SCRIPT" set $'safe\033bad\037end'
-case "$(get)" in *$'\033'*|*$'\037'*) fail "control characters were retained" ;; esac
 unset_desc
-bash "$SCRIPT" set "first concurrent value" & p1=$!
-bash "$SCRIPT" set "second concurrent value" & p2=$!
-wait "$p1" "$p2"
-case "$(get)" in "first concurrent value"|"second concurrent value") ;; *) fail "locked concurrent set was corrupt: [$(get)]" ;; esac
+bash "$SCRIPT" set $'safe\033bad\037end'
+[ "$(get)" = safebadend ] || fail "control characters were retained: [$(get)]"
+unset_desc
+# Concurrent first prompts: the lock lets one write; the others find the
+# pane described. A tmux on PATH logs each write.
+mkdir "$TMP/bin"
+printf '#!/bin/sh\ncase " $* " in *" set-option "*" @agent-auto-description "*) echo "$*" >> "%s/writes" ;; esac\nexec "%s" "$@"\n' "$TMP" "$(command -v tmux)" > "$TMP/bin/tmux"
+chmod +x "$TMP/bin/tmux"
+pids=""
+for i in 1 2 3 4 5 6; do PATH="$TMP/bin:$PATH" bash "$SCRIPT" set "concurrent value $i" & pids="$pids $!"; done
+for p in $pids; do wait "$p"; done
+[ "$(wc -l < "$TMP/writes" | tr -d ' ')" = 1 ] || fail "concurrent first prompts wrote $(wc -l < "$TMP/writes" | tr -d ' ') times"
+case "$(get)" in "concurrent value "[1-6]) ;; *) fail "concurrent first prompts left [$(get)]" ;; esac
 unset_desc
 
 echo '{"prompt":"from stdin json"}' | bash "$SCRIPT" set
