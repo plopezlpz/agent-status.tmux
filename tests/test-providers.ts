@@ -73,6 +73,20 @@ const waitFor = async (pattern: string, timeout = 5000) => {
   if (process.env.AGENT_TEST_DEBUG) console.error(lines().slice(mark));
   return false;
 };
+// A plugin copy whose set-state.sh takes a second: a report still running
+// when the agent quits. It logs as it starts and as it ends.
+const slow = resolve(tmp ?? "", "plugin-slow");
+cpSync(resolve(root, "scripts"), resolve(slow, "scripts"), { recursive: true });
+executable(resolve(slow, "scripts/agent/set-state.sh"), `#!/bin/sh
+echo "set-state.sh|$1|$2|$3|started" >> "$AGENT_TEST_LOG"
+sleep 1
+echo "set-state.sh|$1|$2|$3|done" >> "$AGENT_TEST_LOG"
+`);
+// Whether GOT holds the clear starting with QUIT, and no report after it.
+const clearedLast = (got: string[], quit: string) => {
+  const at = got.findIndex(l => l.startsWith(quit));
+  return at >= 0 && !got.slice(at).some(l => l.startsWith("set-state.sh|"));
+};
 
 // ---------------------------------------------------------------- OMP
 process.env.TMUX_PANE = "%1";
@@ -372,6 +386,18 @@ await new Promise(r => setTimeout(r, 5000));
   await event("session.status", { status: { type: "busy" } });
   got = await drain();
   check(got.length === 0, `Kilo reports nothing without a session (${JSON.stringify(got)})`);
+
+  // A report still running, or queued, as Kilo quits lands before the clear
+  // or not at all.
+  process.env.TMUX_PANE = "%8";
+  const racing = await (await import(resolve(slow, "scripts/kilo/agent-status.js"))).AgentStatusPlugin();
+  await racing["chat.message"]({ sessionID: "k-race" }, { parts: [] });
+  check(await waitFor("set-state.sh|working||k-race|started"), "Kilo starts a slow report");
+  await racing.event({ event: { type: "session.status", properties: { sessionID: "k-race", status: { type: "busy" } } } });
+  await racing.dispose();
+  await sleep(1500);
+  got = since();
+  check(clearedLast(got, "clear-state.sh|quit|k-race|kilo|"), `Kilo quit clears after its last report (${JSON.stringify(got)})`);
 }
 
 // -------------------------------------------------------- OpenCode TUI
@@ -424,6 +450,19 @@ process.env.TMUX_PANE = "%4";
   executable(resolve(late, "set-state.sh"), `#!/bin/sh\necho "set-state.sh|$3|late" >> "$AGENT_TEST_LOG"\n`);
   await sleep(500); stop();
   check(!since().some(l => l.includes("|E1|")), "TUI stops retrying once the scripts are missing");
+  // A script it cannot even start (an argument Node rejects) must not
+  // throw into OpenCode.
+  let threw = false;
+  try { stop = await start(resolve(tmp, "plugin-bad-id"), "bad\0id"); await sleep(300); stop(); } catch { threw = true; }
+  check(!threw, "TUI survives a script it cannot start");
+  // A bind still running as the TUI quits lands before the clear or not at all.
+  since();
+  stop = await start(slow, "Q1");
+  check(await waitFor("set-state.sh|idle||Q1|started"), "TUI starts a slow bind");
+  stop();
+  await sleep(1500);
+  got = since();
+  check(clearedLast(got, "clear-state.sh|quit|Q1|opencode|"), `TUI quit clears after its bind (${JSON.stringify(got)})`);
 }
 
 // ------------------------------------------------------ OpenCode 2 TUI
@@ -537,6 +576,26 @@ process.env.TMUX_PANE = "%7";
   check(got.length === 1 && got[0].startsWith("clear-state.sh|quit|R3|opencode|"), "OpenCode 2 TUI cleanup clears the bound root synchronously");
   check(process.listenerCount("exit") === exitListeners, "OpenCode 2 TUI cleanup removes its exit cleanup");
   check(Object.values(handlers).every(list => list.length === 0), "OpenCode 2 TUI cleanup unsubscribes its events");
+}
+
+// A report still running, or queued, as the OpenCode 2 TUI quits lands
+// before the clear or not at all.
+process.env.TMUX_PANE = "%9";
+{
+  const v2 = (await import(resolve(slow, "scripts/opencode/v2/tui.js"))).default;
+  const handlers: Record<string, Function[]> = {};
+  const ctx = {
+    ui: { router: { current: () => ({ type: "session", sessionID: "V1" }) } },
+    data: { on: (type: string, fn: Function) => { (handlers[type] ??= []).push(fn); return () => {}; }, session: { root: (id: string) => id, status: () => "running" } },
+  };
+  since();
+  const cleanup = await v2.setup(ctx);
+  check(await waitFor("set-state.sh|working||V1|started"), "OpenCode 2 starts a slow report");
+  for (const fn of handlers["session.execution.succeeded"] ?? []) fn({ data: { sessionID: "V1" } });
+  await cleanup();
+  await sleep(1500);
+  const got = since();
+  check(clearedLast(got, "clear-state.sh|quit|V1|opencode|"), `OpenCode 2 quit clears after its last report (${JSON.stringify(got)})`);
 }
 
 if (failures) process.exit(1);

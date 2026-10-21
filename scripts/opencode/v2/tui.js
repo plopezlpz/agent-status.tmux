@@ -12,7 +12,7 @@ export default {
   id: "agent-status.tmux.opencode-tui",
   setup: (ctx) => {
     if (!process.env.TMUX_PANE) return;
-    const { run, report } = lifecycle("opencode");
+    const { run, report, stop } = lifecycle("opencode");
     // Per root session, from the service's events (it sends every session's):
     // its state, open asks (permission and form ids), whether the user stopped
     // its turn (a rejected permission or cancelled form), its first prompt.
@@ -103,9 +103,11 @@ export default {
     }
     // Unregister the pane when the TUI goes away; synchronous because the
     // process may be exiting. clear-state ignores a pane rebound elsewhere; its
-    // pane lock can wait ~3.5s, so allow 5s.
+    // pane lock can wait ~3.5s, so allow 5s. Reports stop first: none may
+    // land after the clear.
     let quit = () => {
       quit = () => {};
+      stop();
       if (!bound) return;
       try { execFileSync(`${scriptsDir}/clear-state.sh`, ["quit", bound, "opencode"], { timeout: 5000, stdio: "ignore" }); } catch {}
     };

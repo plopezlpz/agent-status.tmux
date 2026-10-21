@@ -52,7 +52,9 @@ export function stoppedSession(type, properties) {
 
 // One adapter's reporting state: KIND names it to set-state.sh.
 export function lifecycle(kind) {
-  let seq = Date.now() * 1000, chain = Promise.resolve();
+  // epoch: bumped by stop(), which drops what is queued before it; running:
+  // the script now running.
+  let seq = Date.now() * 1000, chain = Promise.resolve(), epoch = 0, running;
   // Child session -> its parent session.
   const childSessions = new Map();
   // Sessions whose last turn the user aborted: their idle is not a completion.
@@ -65,10 +67,22 @@ export function lifecycle(kind) {
   // Serialized, bounded, and never rejecting: a stuck status script must not
   // stall later updates or the agent. Stdin is closed so no script can wait on it.
   function run(name, args) {
-    chain = chain.then(() => new Promise(resolve => {
-      try { execFile(`${scriptsDir}/${name}`, args, { timeout: 5000 }, () => resolve()).stdin?.end(); } catch { resolve(); }
+    const queued = epoch;
+    chain = chain.then(() => queued === epoch && new Promise(resolve => {
+      try {
+        running = execFile(`${scriptsDir}/${name}`, args, { timeout: 5000 }, () => { running = undefined; resolve(); });
+        running.stdin?.end();
+      } catch { running = undefined; resolve(); }
     }));
     return chain;
+  }
+  // As the agent quits, before its synchronous clear-state: drop the queued
+  // scripts and stop the running one, so no report lands after the clear. A
+  // stopped set-state.sh holding the pane lock ends its one write before it
+  // releases the lock to the clear; one not holding it yet never writes.
+  function stop() {
+    epoch++;
+    try { running?.kill(); } catch {}
   }
   // RESET: true for a reset, or set-state.sh's flag itself ("bind"). A report
   // without a session would get past set-state.sh's instance and sequence
@@ -79,5 +93,5 @@ export function lifecycle(kind) {
     return run("set-state.sh", [state, "", id, String(++seq), kind, reset === true ? "reset" : reset || ""]);
   }
   function finish(id, reset = false) { return report(id && aborted.has(id) ? "idle" : "finished", id, reset); }
-  return { childSessions, aborted, rootOf, run, report, finish };
+  return { childSessions, aborted, rootOf, run, report, finish, stop };
 }

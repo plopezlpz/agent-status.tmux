@@ -13,8 +13,8 @@ export default {
     if (!process.env.TMUX_PANE) return;
     // `last` is the selected root; `bound` is the root this pane was last reset
     // to. Child views clear only `last`, so returning to the same root keeps its
-    // state and label.
-    let last, bound, pending = false;
+    // state and label. `pending` is a reset still running, to `binding`.
+    let last, bound, pending, binding;
     // Failed resets back off (100ms doubling to 5s); missing scripts stop it.
     let retryAt = 0, delay = 100, missing = false;
     const sync = () => {
@@ -32,26 +32,38 @@ export default {
       // A newly selected root starts idle, without the old label; its own
       // server events follow. `bind` leaves a pane the server plugin already
       // bound to this root (a first prompt from the home screen) as it is.
-      pending = true;
-      const child = execFile(`${scripts}/set-state.sh`, ["idle", "", id, "", "opencode", "bind"], { timeout: 5000 }, error => {
-        pending = false;
-        if (error) {
-          if (error.code === "ENOENT") missing = true;
-          else { retryAt = Date.now() + delay; delay = Math.min(delay * 2, 5000); }
-          return;
-        }
-        retryAt = 0; delay = 100;
-        last = bound = id;
-      });
-      child.stdin?.end();
+      const failed = error => {
+        pending = undefined;
+        if (error?.code === "ENOENT") missing = true;
+        else { retryAt = Date.now() + delay; delay = Math.min(delay * 2, 5000); }
+      };
+      binding = id;
+      // execFile throws for arguments it rejects (a NUL in the id): that
+      // must not reach OpenCode.
+      try {
+        pending = execFile(`${scripts}/set-state.sh`, ["idle", "", id, "", "opencode", "bind"], { timeout: 5000 }, error => {
+          if (error) return failed(error);
+          pending = undefined;
+          retryAt = 0; delay = 100;
+          last = bound = id;
+        });
+        pending.stdin?.end();
+      } catch (error) { failed(error); }
     };
     // Unregister the pane when the TUI goes away; synchronous because the
     // process may be exiting. clear-state ignores a pane rebound elsewhere; its
-    // pane lock can wait ~3.5s, so allow 5s.
+    // pane lock can wait ~3.5s, so allow 5s. A reset still running is stopped
+    // first: holding the pane lock, it ends its write before the clear; not
+    // holding it, it never writes. Either root may then hold the pane, and
+    // clear-state ignores the other.
     let quit = () => {
       quit = () => {};
-      if (!bound) return;
-      try { execFileSync(`${scripts}/clear-state.sh`, ["quit", bound, "opencode"], { timeout: 5000, stdio: "ignore" }); } catch {}
+      const ids = new Set();
+      if (pending) { try { pending.kill(); } catch {} ids.add(binding); }
+      if (bound) ids.add(bound);
+      for (const id of ids) {
+        try { execFileSync(`${scripts}/clear-state.sh`, ["quit", id, "opencode"], { timeout: 5000, stdio: "ignore" }); } catch {}
+      }
     };
     const onExit = () => quit();
     process.once("exit", onExit);

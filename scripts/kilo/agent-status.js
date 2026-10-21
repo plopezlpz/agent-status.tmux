@@ -4,7 +4,7 @@ import { askingEvents, childStates, interactive, lifecycle, scriptsDir, sessionI
 // Kilo has no TUI selection plugin here, so pane ownership is gated on where
 // the plugin runs: headless commands (`kilo run`, `serve`, ...) can inherit
 // TMUX_PANE from an agent pane but must never report or reset it.
-const { childSessions, aborted, rootOf, run, report, finish } = lifecycle("kilo");
+const { childSessions, aborted, rootOf, run, report, finish, stop } = lifecycle("kilo");
 
 export const AgentStatusPlugin = async () => {
   if (!process.env.TMUX_PANE || !interactive()) return {};
@@ -21,9 +21,12 @@ export const AgentStatusPlugin = async () => {
   // Unregister synchronously as Kilo ends. The default TUI runs this plugin
   // in a worker, where exit and signal handlers never run, and calls
   // `dispose` instead; `kilo --mini` runs it on the main thread. A signal is
-  // handled only when Kilo itself does not, and is then re-raised.
+  // handled only when Kilo itself does not, and is then re-raised. Reports
+  // stop as quitting starts: none may land after the clear.
+  let quitting = false;
   let quit = () => {
     quit = () => {};
+    quitting = true; stop();
     if (!bound) return;
     try { execFileSync(`${scriptsDir}/clear-state.sh`, ["quit", bound, "kilo"], {timeout:5000, stdio:"ignore"}); } catch {}
   };
@@ -38,7 +41,7 @@ export const AgentStatusPlugin = async () => {
   }
   return {
     "chat.message": async ({sessionID}, output) => {
-      if (!sessionID || childSessions.has(sessionID)) return;
+      if (quitting || !sessionID || childSessions.has(sessionID)) return;
       const fresh = claim(sessionID, true);
       const prompt=output?.parts?.find(part => part?.type === "text" && part.text)?.text;
       // Its start only: a whole pasted file must not reach argv.
@@ -46,6 +49,7 @@ export const AgentStatusPlugin = async () => {
       void report("working", sessionID, fresh);
     },
     event: async ({event}) => {
+      if (quitting) return;
       const type=event?.type, p=event?.properties || {};
       // Session lifecycle events carry the session as `info` (child: info.parentID).
       const info = typeof type === "string" && type.startsWith("session.") ? p.info : undefined;
