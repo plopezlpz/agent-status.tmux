@@ -55,9 +55,12 @@ export default {
     // pane lock can wait ~3.5s, so allow 5s. A reset still running is stopped
     // first: holding the pane lock, it ends its write before the clear; not
     // holding it, it never writes. Either root may then hold the pane, and
-    // clear-state ignores the other.
+    // clear-state ignores the other. The server plugin (agent-status.js)
+    // reports from a worker OpenCode shuts down only after this: it is told
+    // first, and stops its reports the same way while the clear runs.
     let quit = () => {
       quit = () => {};
+      try { const channel = new BroadcastChannel("agent-status.tmux.opencode.quit"); channel.postMessage("quit"); channel.close(); } catch {}
       const ids = new Set();
       if (pending) { try { pending.kill(); } catch {} ids.add(binding); }
       if (bound) ids.add(bound);

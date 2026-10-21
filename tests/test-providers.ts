@@ -10,6 +10,7 @@ import { dirname, resolve } from "node:path";
 import { chmodSync, copyFileSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { execFileSync, spawnSync } from "node:child_process";
+import { Worker } from "node:worker_threads";
 const checkout = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const executable = (path: string, body: string) => { writeFileSync(path, body); chmodSync(path, 0o755); };
 
@@ -289,6 +290,20 @@ process.env.TMUX_PANE = "%2";
   got = await drain();
   check(got.length === 0, `OpenCode reports nothing without a session (${JSON.stringify(got)})`);
 }
+// OpenCode 1.x disposes the server plugin as it shuts its worker down: the
+// report running is stopped, the queued one dropped, later events ignored.
+process.env.TMUX_PANE = "%10";
+{
+  const plugin = await (await import(resolve(slow, "scripts/opencode/agent-status.js"))).AgentStatusPlugin();
+  since();
+  await plugin["chat.message"]({ sessionID: "S1" }, { parts: [] });
+  check(await waitFor("set-state.sh|working||S1|started"), "OpenCode starts a slow report");
+  await plugin.dispose?.();
+  await plugin.event({ event: { type: "session.status", properties: { sessionID: "S1", status: { type: "idle" } } } });
+  await sleep(1500);
+  const got = since();
+  check(got.length === 1, `OpenCode reports nothing once disposed (${JSON.stringify(got)})`);
+}
 
 // --------------------------------------------------------------- Kilo
 process.env.TMUX_PANE = "%3";
@@ -463,6 +478,29 @@ process.env.TMUX_PANE = "%4";
   await sleep(1500);
   got = since();
   check(clearedLast(got, "clear-state.sh|quit|Q1|opencode|"), `TUI quit clears after its bind (${JSON.stringify(got)})`);
+  // The server plugin reports from a worker OpenCode shuts down only after
+  // the TUI's clear: a report it has running, or queued, as the TUI quits
+  // lands before the clear or not at all.
+  process.env.TMUX_PANE = "%11";
+  const script = resolve(tmp, "opencode-worker.mjs");
+  writeFileSync(script, `import { parentPort } from "node:worker_threads";
+const { AgentStatusPlugin } = await import(${JSON.stringify(resolve(slow, "scripts/opencode/agent-status.js"))});
+const plugin = await AgentStatusPlugin();
+parentPort.on("message", id => void plugin["chat.message"]({ sessionID: id }, { parts: [] }));
+parentPort.postMessage("ready");
+`);
+  const worker = new Worker(script);
+  await new Promise(r => worker.once("message", r));
+  stop = await start(slow, "W1");
+  check(await waitFor("set-state.sh|idle||W1|done"), "TUI binds the worker's root");
+  since();
+  worker.postMessage("W1");
+  check(await waitFor("set-state.sh|working||W1|started"), "the OpenCode worker starts a slow report");
+  stop();
+  await sleep(1500);
+  got = since();
+  check(clearedLast(got, "clear-state.sh|quit|W1|opencode|"), `TUI quit stops the worker's reports (${JSON.stringify(got)})`);
+  await worker.terminate();
 }
 
 // ------------------------------------------------------ OpenCode 2 TUI

@@ -2,14 +2,21 @@
 import { askingEvents, childStates, interactive, lifecycle, sessionID, statusState, stoppedSession, workingEvents } from "./lifecycle.js";
 
 const pane = process.env.TMUX_PANE;
-const { childSessions, aborted, rootOf, run, report, finish } = lifecycle("opencode");
+const { childSessions, aborted, rootOf, run, report, finish, stop } = lifecycle("opencode");
 
 export const AgentStatusPlugin = async () => {
   if (!pane || !interactive()) return {};
+  // The TUI's worker, where this runs, shuts down (and disposes this plugin)
+  // only after the TUI plugin (agent-status-tui.js) has cleared the pane from
+  // the main thread. That plugin posts on this channel as it quits, so
+  // reports stop as quitting starts: none may land after the clear.
+  let quitting = false, channel;
+  const quit = () => { quitting = true; stop(); try { channel?.close(); } catch {} };
+  try { channel = new BroadcastChannel("agent-status.tmux.opencode.quit"); channel.onmessage = quit; channel.unref?.(); } catch {}
   return {
     // Fire-and-forget: the chain keeps order without delaying the turn.
     "chat.message": async ({ sessionID }, output) => {
-      if (!sessionID || childSessions.has(sessionID)) return;
+      if (quitting || !sessionID || childSessions.has(sessionID)) return;
       const prompt = output?.parts?.find(part => part?.type === "text" && part.text)?.text;
       // A prompt claims the pane for its root. The TUI shows a session
       // started from the home screen only after its first events, which a
@@ -22,6 +29,7 @@ export const AgentStatusPlugin = async () => {
       void report("working", sessionID);
     },
     event: async ({ event }) => {
+      if (quitting) return;
       const type = event?.type, properties = event?.properties || {};
       // Session lifecycle events carry the session as `info` (child: info.parentID).
       const info = typeof type === "string" && type.startsWith("session.") ? properties.info : undefined;
@@ -51,6 +59,9 @@ export const AgentStatusPlugin = async () => {
       // After the report: a working report forgets an earlier abort.
       if (stopped && !childSessions.has(stopped)) aborted.add(stopped);
     },
+    // OpenCode calls this as it shuts the plugin down (also on a config
+    // reload, after which a new instance reports).
+    dispose: async () => quit(),
   };
 };
 
