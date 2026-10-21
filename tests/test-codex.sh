@@ -234,6 +234,19 @@ ev tool PreToolUse '"tool_name":"Bash","tool_input":{"command":"echo \"tool_name
 [ "$(shown)" = "working:0:" ] || fail "a mention of request_user_input asked: $(shown)"
 ev idle Stop '"stop_hook_active":false,"last_assistant_message":"done"'
 [ "$(shown)" = "idle:1:" ] || fail "Stop did not finish: $(shown)"
+# A subagent asking as its parent's turn ends outlives it: the turn's end
+# keeps that ask (not the main thread's own), and once it ends the pane
+# shows the finished turn.
+ev working UserPromptSubmit '"prompt":"next"'
+ev blocked PermissionRequest '"agent_id":"a5","agent_type":"default","tool_name":"Bash","tool_input":{"command":"rm s"}'
+ev blocked PermissionRequest '"agent_id":"a6","agent_type":"default","tool_name":"apply_patch","tool_input":{}'
+ev blocked PermissionRequest '"tool_name":"Bash","tool_input":{"command":"rm m"}'
+ev idle Stop '"stop_hook_active":false,"last_assistant_message":"done"'
+[ "$(shown):$(get @agent-settled)" = "asking:0:a5/Bash a6/apply_patch:1" ] || fail "the turn's end dropped its subagents' asks: $(shown) $(get @agent-settled)"
+ev working PostToolUse '"agent_id":"a5","agent_type":"default","tool_name":"Bash","tool_input":{"command":"rm s"},"tool_use_id":"s5","tool_response":"ok"'
+[ "$(shown):$(get @agent-settled)" = "asking:0:a6/apply_patch:1" ] || fail "a subagent's answered ask after the turn's end: $(shown) $(get @agent-settled)"
+ev working SubagentStop '"agent_id":"a6","agent_type":"default","agent_transcript_path":null,"stop_hook_active":false,"last_assistant_message":"late"'
+[ "$(shown):$(get @agent-settled)" = "idle:1::" ] || fail "the last subagent ask's end did not show the finished turn: $(shown) $(get @agent-settled)"
 # A subagent outliving its parent's turn doesn't wake the pane: neither its
 # tools nor its end. Its ask shows, then the pane settles as it was.
 ev tool PreToolUse '"agent_id":"a2","agent_type":"default","tool_name":"Bash","tool_input":{"command":"ls"},"tool_use_id":"s1"'

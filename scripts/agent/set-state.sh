@@ -248,7 +248,18 @@ if [ -n "$hook_name" ] && [ -z "$compact" ]; then
         state=idle unseen="$settled" raw_state=idle settled=""
       fi
       ;;
-    *) asks="" ;;
+    *)
+      asks=""
+      # A Codex subagent may outlive its parent's turn: the turn's end keeps
+      # its asks, and the pane settles as the turn left it once they end.
+      # Each has notified already.
+      if [ "$kind:$raw_state:$agent" = codex:finished: ]; then
+        for ask in $prev_asks; do
+          case "$ask" in /*) ;; *) asks="${asks:+$asks }$ask" ;; esac
+        done
+        [ -z "$asks" ] || state=asking settled="$unseen" unseen=0 raw_state=asking notify_state=""
+      fi
+      ;;
   esac
 fi
 
