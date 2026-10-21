@@ -8,11 +8,17 @@ export const AgentStatusPlugin = async () => {
   if (!pane || !interactive()) return {};
   // The TUI's worker, where this runs, shuts down (and disposes this plugin)
   // only after the TUI plugin (agent-status-tui.js) has cleared the pane from
-  // the main thread. That plugin posts on this channel as it quits, so
-  // reports stop as quitting starts: none may land after the clear.
+  // the main thread. That plugin posts "quit" on this channel as it quits, so
+  // reports stop as quitting starts: none may land after the clear. It is
+  // also disposed when turned off in OpenCode's plugin dialog, and posts
+  // "start" when turned on again. Disposing this plugin (a reload, a config
+  // change) only stops later reports: nothing clears the pane then.
   let quitting = false, channel;
-  const quit = () => { quitting = true; stop(); try { channel?.close(); } catch {} };
-  try { channel = new BroadcastChannel("agent-status.tmux.opencode.quit"); channel.onmessage = quit; channel.unref?.(); } catch {}
+  try {
+    channel = new BroadcastChannel("agent-status.tmux.opencode.quit");
+    channel.onmessage = ({ data }) => { quitting = data === "quit"; if (quitting) stop(); };
+    channel.unref?.();
+  } catch {}
   return {
     // Fire-and-forget: the chain keeps order without delaying the turn.
     "chat.message": async ({ sessionID }, output) => {
@@ -61,7 +67,7 @@ export const AgentStatusPlugin = async () => {
     },
     // OpenCode calls this as it shuts the plugin down (also on a config
     // reload, after which a new instance reports).
-    dispose: async () => quit(),
+    dispose: async () => { quitting = true; try { channel?.close(); } catch {} },
   };
 };
 

@@ -290,8 +290,9 @@ process.env.TMUX_PANE = "%2";
   got = await drain();
   check(got.length === 0, `OpenCode reports nothing without a session (${JSON.stringify(got)})`);
 }
-// OpenCode 1.x disposes the server plugin as it shuts its worker down: the
-// report running is stopped, the queued one dropped, later events ignored.
+// OpenCode 1.x disposes the server plugin as it shuts its worker down, and
+// on a reload or config change, while the session goes on: later events are
+// ignored, but the report running finishes (the TUI's quit stops it, below).
 process.env.TMUX_PANE = "%10";
 {
   const plugin = await (await import(resolve(slow, "scripts/opencode/agent-status.js"))).AgentStatusPlugin();
@@ -300,9 +301,10 @@ process.env.TMUX_PANE = "%10";
   check(await waitFor("set-state.sh|working||S1|started"), "OpenCode starts a slow report");
   await plugin.dispose?.();
   await plugin.event({ event: { type: "session.status", properties: { sessionID: "S1", status: { type: "idle" } } } });
-  await sleep(1500);
+  // The prompt's two reports (bind, then working) take a second each.
+  await sleep(2500);
   const got = since();
-  check(got.length === 1, `OpenCode reports nothing once disposed (${JSON.stringify(got)})`);
+  check(got.length === 4 && got.every(l => l.startsWith("set-state.sh|working||S1|")), `OpenCode reports nothing once disposed (${JSON.stringify(got)})`);
 }
 
 // --------------------------------------------------------------- Kilo
@@ -500,6 +502,17 @@ parentPort.postMessage("ready");
   await sleep(1500);
   got = since();
   check(clearedLast(got, "clear-state.sh|quit|W1|opencode|"), `TUI quit stops the worker's reports (${JSON.stringify(got)})`);
+  // Turned off and on again in OpenCode's plugin dialog, the TUI plugin
+  // gets the worker reporting again.
+  stop = await start(slow, "W1");
+  check(await waitFor("set-state.sh|idle||W1|done"), "TUI turned on again binds the root");
+  since();
+  worker.postMessage("W1");
+  check(await waitFor("set-state.sh|working||W1|done"), "the worker reports again once the TUI is back");
+  stop();
+  await sleep(1500);
+  got = since();
+  check(clearedLast(got, "clear-state.sh|quit|W1|opencode|"), `TUI quit again stops the worker's reports (${JSON.stringify(got)})`);
   await worker.terminate();
 }
 
@@ -521,7 +534,7 @@ process.env.TMUX_PANE = "%7";
     },
   };
   const emit = (type: string, data: any) => { for (const fn of handlers[type] ?? []) fn({ id: "evt", type, data }); };
-  const quiet = async (what: string) => { await sleep(250); check(since().length === 0, `OpenCode 2: ${what} reports nothing`); };
+  const quiet = async (what: string) => { await sleep(250); const q = since(); check(q.length === 0, `OpenCode 2: ${what} reports nothing ${JSON.stringify(q)}`); };
   const expect = async (what: string, ...want: string[]) => {
     check(await waitFor(want.at(-1)!), `OpenCode 2: ${what}`);
     await sleep(50);

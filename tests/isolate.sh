@@ -4,15 +4,17 @@
 # - A private tmux socket dir: plain `tmux` calls can't reach the user's
 #   server, and tmux 3.8 leaves socket files behind on exit (removed with it).
 # - No headless marker (the hooks ignore headless runs, such as claude -p, and
-#   the suite may be run from one), and no real Claude, Codex, Gemini or Qwen
-#   config for an installer test to reach.
+#   the suite may be run from one), and no agent's config directory from the
+#   environment for an installer test to reach.
 # - Notifiers that do nothing first on PATH, in $AGENT_STATUS_QUIET: a test's
 #   finished or asking pane sends no desktop notification. A test that resets
 #   PATH puts that directory first again; one that checks notifications puts
 #   its own stand-ins in front of it.
 # Outside such a run, the sourcing script runs again inside one, and this
 # copy cleans up after it and exits with its status.
-unset TMUX CLAUDE_CODE_ENTRYPOINT CLAUDE_CONFIG_DIR CODEX_HOME GEMINI_CLI_HOME QWEN_HOME
+unset TMUX CLAUDE_CODE_ENTRYPOINT CLAUDE_CONFIG_DIR CLAUDE_SETTINGS CODEX_HOME GEMINI_CLI_HOME QWEN_HOME \
+  PI_EXTENSIONS_DIR PI_CODING_AGENT_DIR PI_CONFIG_DIR PI_PROFILE OMP_PROFILE OMP_EXTENSIONS_DIR \
+  OPENCODE_CONFIG_DIR KILO_CONFIG_DIR KIMI_CODE_HOME MASTRACODE_HOME XDG_CONFIG_HOME
 if [ -z "${AGENT_STATUS_QUIET:-}" ] || [ ! -d "$AGENT_STATUS_QUIET" ]; then
   # /tmp keeps socket paths under the macOS 104-byte limit.
   TMUX_TMPDIR=$(mktemp -d /tmp/agent-status-tests.XXXXXX) || exit 1

@@ -6,11 +6,18 @@ import { fileURLToPath } from "node:url";
 
 // Installed as a symlink to the plugin checkout: run that checkout's scripts.
 const scripts = resolve(dirname(realpathSync(fileURLToPath(import.meta.url))), "../agent");
+// Tells the server plugin, in OpenCode's worker, that this one quits or starts.
+const post = message => {
+  try { const channel = new BroadcastChannel("agent-status.tmux.opencode.quit"); channel.postMessage(message); channel.close(); } catch {}
+};
 
 export default {
   id: "agent-status.tmux.opencode-session",
   tui: async (api) => {
     if (!process.env.TMUX_PANE) return;
+    // The server plugin (agent-status.js) reports again, if this plugin was
+    // turned off and on in OpenCode's plugin dialog.
+    post("start");
     // `last` is the selected root; `bound` is the root this pane was last reset
     // to. Child views clear only `last`, so returning to the same root keeps its
     // state and label. `pending` is a reset still running, to `binding`.
@@ -60,7 +67,7 @@ export default {
     // first, and stops its reports the same way while the clear runs.
     let quit = () => {
       quit = () => {};
-      try { const channel = new BroadcastChannel("agent-status.tmux.opencode.quit"); channel.postMessage("quit"); channel.close(); } catch {}
+      post("quit");
       const ids = new Set();
       if (pending) { try { pending.kill(); } catch {} ids.add(binding); }
       if (bound) ids.add(bound);
