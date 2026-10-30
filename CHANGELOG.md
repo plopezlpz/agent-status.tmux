@@ -4,6 +4,10 @@ Notable changes to agent-status.tmux, newest first. The format follows [Keep a C
 
 ## [Unreleased]
 
+### Fixed
+
+- Suggested titles use `openai/gpt-6-luna`, pi's current provider name, instead of `openai-codex/gpt-6-luna`. On an already-running tmux server, update the old default with `tmux set -g @agent-describe-model openai/gpt-6-luna`; explicit model overrides are still respected.
+
 ## [0.6.1] - 2026-10-21
 
 ### Fixed

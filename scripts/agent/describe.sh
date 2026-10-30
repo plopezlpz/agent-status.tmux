@@ -122,7 +122,7 @@ ask_title() {
   printf 'Agent: %s\nFolder: %s\nFirst prompt: %s\nCurrent title: %s\n%s\nVisible terminal (may be stale UI):\n%s\n' \
       "${kind:-unknown}" "$path" "$auto" "$current" "$conversation" "$context" \
     | ( cd "$ASK_TMP/cwd" && exec ${runner[@]+"${runner[@]}"} pi --print --no-session --no-tools --no-extensions --no-skills --no-mcp --no-context-files \
-        --model "${model:-openai-codex/gpt-6-luna}" --thinking minimal \
+        --model "${model:-openai/gpt-6-luna}" --thinking minimal \
         --system-prompt 'You label coding-agent terminal sessions for a task switcher. Reply with ONE line only: what the agent is working on now, as a concise title of at most 60 characters, imperative mood, no quotes, no trailing period. Weigh the latest user prompts most; the first prompt may be outdated.' \
         'Write the title for this session.' ) > "$ASK_TMP/out" 2> "$ASK_TMP/err" &
   ASK_PID=$!

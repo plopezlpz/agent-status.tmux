@@ -46,7 +46,7 @@ _options=(
   set-option -gqo @agent-color-finished 'cyan' \;
   set-option -gqo @agent-color-idle     'green' \;
   # Model for suggested titles (describe.sh suggest; pi --model pattern).
-  set-option -gqo @agent-describe-model 'openai-codex/gpt-6-luna' \;
+  set-option -gqo @agent-describe-model 'openai/gpt-6-luna' \;
   # Pane options hold transient state; the audit log lives under
   # XDG_DATA_HOME, like tmux-resurrect.
   set-option -gqo @agent-log "${XDG_DATA_HOME:-$HOME/.local/share}/tmux/agent-status/agent.log" \;

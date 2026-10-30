@@ -354,13 +354,13 @@ Set options before TPM runs.
 | `@agent-terminal-app` | empty (macOS app to raise on a notification click, e.g. `Ghostty`) |
 | `@agent-notify-timeout` | `300` (seconds before an alerter notification closes; `0` = never) |
 | `@agent-notify-team-delay` | `10` (seconds a Claude agent-team lead's notification waits for its teammates; `0` = off) |
-| `@agent-describe-model` | `openai-codex/gpt-6-luna` (pi `--model` pattern for suggested titles; pick a model your pi has credentials for) |
+| `@agent-describe-model` | `openai/gpt-6-luna` (pi `--model` pattern for suggested titles; pick a model your pi has credentials for) |
 | `@agent-log` | `${XDG_DATA_HOME:-$HOME/.local/share}/tmux/agent-status/agent.log` |
 
 A suggested title sends part of the pane to a model. Nothing is sent until
 you ask a UI (paddock's title editor) for a suggestion; then pi sends the
 following to the model in `@agent-describe-model` (by default
-`openai-codex/gpt-6-luna`, through your pi login):
+`openai/gpt-6-luna`, through your pi login):
 
 - the agent's name, the pane's folder path, its first prompt and its
   current title;
