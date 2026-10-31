@@ -81,6 +81,11 @@ done
 case "$(head -1 "$TMP/pi-cwd")" in */agent-describe.*) ;; *) fail "pi ran from $(head -1 "$TMP/pi-cwd"), not its own directory" ;; esac
 [ "$(wc -l < "$TMP/pi-cwd")" -eq 1 ] || fail "pi's directory was not empty: $(tail -n +2 "$TMP/pi-cwd" | tr '\n' ' ')"
 
+# Suggestions ask for short, stable topics rather than clipped instructions.
+grep -F 'a specific topic label of one or two words' "$TMP/pi-args" >/dev/null || fail 'not requesting short topic labels'
+grep -F 'Use a noun phrase' "$TMP/pi-args" >/dev/null || fail 'not requesting noun phrases'
+grep -F 'Keep the current title' "$TMP/pi-args" >/dev/null || fail 'topic stability missing'
+
 # 4c. Default to pi's current OpenAI provider; an explicit model stays literal.
 grep -Fx -- 'openai/gpt-6-luna' "$TMP/pi-args" >/dev/null || fail "pi did not use the current default model"
 tmux set-option -g @agent-describe-model 'local/custom-model'

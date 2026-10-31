@@ -59,6 +59,11 @@ _options=(
   # Seconds a Claude agent-team lead's completion notification waits while
   # its teammates are alive; dropped if the lead resumes. 0 = notify at once.
   set-option -gqo @agent-notify-team-delay '10' \;
+  # Optional Paddock executable (one path, no shell arguments): compact
+  # icon/state + repository/branch notifications. Empty keeps normal messages.
+  set-option -gqo @agent-notify-paddock '' \;
+  # Native notification fonts may not contain Nerd Font private glyphs.
+  set-option -gqo @agent-notify-icons 'unicode' \;
   # Set on every load, since they name this checkout and this version: how a
   # UI asks for a title suggestion (the command, run with a pane id as its
   # last argument, prints one); where other tools can find the shared

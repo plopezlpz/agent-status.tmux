@@ -35,10 +35,12 @@ esac
 # options, the time (%s), notification and log settings, and whether the
 # most recently active client shows the pane with terminal focus.
 sep=$'\037'
+# A literal control-byte range avoids colons inside a tmux modifier's regex.
+path_field=$'#{s/[\001-\037]/ /:pane_current_path}'
 read_pane() {
   IFS="$sep" read -r cur_pane pane_dead prev_state prev_unseen prev_instance prev_seq prev_kind \
     prev_state_at prev_transcript prev_asks prev_settled described now notify_timeout team_delay pane_active viewers clients \
-    socket client log_file log_time name <<< "$(tmux display -t "$TMUX_PANE" -p "#{pane_id}$sep#{pane_dead}$sep#{@agent-state}$sep#{@agent-unseen}$sep#{@agent-instance}$sep#{@agent-seq}$sep#{@agent-kind}$sep#{@agent-state-at}$sep#{@agent-transcript}$sep#{@agent-asks}$sep#{@agent-settled}$sep#{?@agent-auto-description,1,}$sep%s$sep#{@agent-notify-timeout}$sep#{@agent-notify-team-delay}$sep#{pane_active}$sep#{window_active_clients_list}$sep#{L/t:#{?client_control_mode,,#{client_name}=#{client_flags} }}$sep#{socket_path}$sep#{client_name}$sep$AGENT_LOG_FIELDS$sep#S / #W" 2>/dev/null || true)"
+    socket client log_file log_time notify_paddock notify_icons pane_path name <<< "$(tmux display -t "$TMUX_PANE" -p "#{pane_id}$sep#{pane_dead}$sep#{@agent-state}$sep#{@agent-unseen}$sep#{@agent-instance}$sep#{@agent-seq}$sep#{@agent-kind}$sep#{@agent-state-at}$sep#{@agent-transcript}$sep#{@agent-asks}$sep#{@agent-settled}$sep#{?@agent-auto-description,1,}$sep%s$sep#{@agent-notify-timeout}$sep#{@agent-notify-team-delay}$sep#{pane_active}$sep#{window_active_clients_list}$sep#{L/t:#{?client_control_mode,,#{client_name}=#{client_flags} }}$sep#{socket_path}$sep#{client_name}$sep$AGENT_LOG_FIELDS$sep#{@agent-notify-paddock}$sep#{@agent-notify-icons}$sep$path_field$sep#S / #W" 2>/dev/null || true)"
   # display -t on a vanished pane silently describes another one.
   [ "$cur_pane" = "$TMUX_PANE" ] && [ "$pane_dead" != 1 ] || exit 0
 }
@@ -348,6 +350,18 @@ agent_log "$log_file" "$log_time" "pane=$TMUX_PANE ${SHOWN:-none}->$raw_state$he
 # lists, so "[" or "(" first breaks them too), notify-send after "--", and
 # escaped, as its body is markup to most notification servers.
 send_notification() {
+  if [ -n "$notify_paddock" ]; then
+    # shellcheck source=notification-format.sh
+    . "$SCRIPT_DIR/notification-format.sh"
+    if paddock_notification "$notify_paddock" "$notification_state" "${kind:-$prev_kind}" "$pane_path" "$notify_icons"; then
+      title=$NOTIFY_TITLE message=$NOTIFY_MESSAGE
+    fi
+    # Formatting can take a moment: do not notify for a state already replaced
+    # or a completion already acknowledged while the formatter was running.
+    local current
+    current=$(tmux display -t "$TMUX_PANE" -p $'#{pane_id}\037#{@agent-state}\037#{@agent-unseen}\037#{@agent-notify-token}' 2>/dev/null || true)
+    [ "$current" = "$TMUX_PANE$sep$state$sep$unseen$sep$$" ] || return 0
+  fi
   if command -v alerter >/dev/null 2>&1; then
     case "$notify_timeout" in ''|*[!0-9]*) notify_timeout=300 ;; esac
     (
@@ -380,9 +394,9 @@ send_notification() {
 
 case "$notify_state" in
   asking|finished)
-    title="Agent • $notify_state"
+    title="Agent • $notify_state" notification_state=$notify_state
     if [ "$hook_name" = StopFailure ]; then
-      title="Agent • failed" message="$name: $hook_error"
+      title="Agent • failed" message="$name: $hook_error" notification_state=failed
     elif [ -z "$message" ]; then
       message="$hook_message"
     fi
@@ -408,7 +422,8 @@ case "$notify_state" in
         send_notification
       ) </dev/null >/dev/null 2>&1 &
     else
-      send_notification
+      # Optional formatting is bounded, but never delays the provider hook.
+      send_notification </dev/null >/dev/null 2>&1 &
     fi
     ;;
 esac

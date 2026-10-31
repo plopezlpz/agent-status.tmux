@@ -4,6 +4,16 @@ Notable changes to agent-status.tmux, newest first. The format follows [Keep a C
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-31
+
+### Added
+
+- Optional `@agent-notify-paddock` executable path uses Paddock's shared notification formatter: agent icon + state in the title, compact repository/worktree path and branch in the body. `@agent-notify-icons` defaults to portable Unicode; Nerd Font glyphs are opt-in. Formatting is bounded and asynchronous, preserves click routing and stale-state cancellation, and falls back to existing notifications if unavailable.
+
+### Changed
+
+- Title suggestions request stable one- or two-word topic labels instead of imperative sentences. Existing titles and manual overrides are preserved; suggestions remain on demand.
+
 ### Fixed
 
 - Suggested titles use `openai/gpt-6-luna`, pi's current provider name, instead of `openai-codex/gpt-6-luna`. On an already-running tmux server, update the old default with `tmux set -g @agent-describe-model openai/gpt-6-luna`; explicit model overrides are still respected.
@@ -250,7 +260,8 @@ Descriptions under `~/.cache/agent-status` are not moved. Move them yourself, or
 - `prefix A` navigator popup: one card per Claude pane, grouped by session and folder, with editable descriptions.
 - `install-claude-hooks.sh` and `uninstall-claude-hooks.sh`.
 
-[Unreleased]: https://github.com/plopezlpz/agent-status.tmux/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/plopezlpz/agent-status.tmux/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/plopezlpz/agent-status.tmux/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/plopezlpz/agent-status.tmux/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/plopezlpz/agent-status.tmux/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/plopezlpz/agent-status.tmux/compare/v0.4.0...v0.5.0

@@ -353,9 +353,17 @@ Set options before TPM runs.
 | `@agent-icon-in-status` | `off` (`on`: put the icon in front of both window status formats; set your own formats before the plugin loads) |
 | `@agent-terminal-app` | empty (macOS app to raise on a notification click, e.g. `Ghostty`) |
 | `@agent-notify-timeout` | `300` (seconds before an alerter notification closes; `0` = never) |
+| `@agent-notify-paddock` | empty (optional Paddock executable path for icon/state + directory/branch notifications; one executable, no shell arguments) |
+| `@agent-notify-icons` | `unicode` (`nerd` opts into Nerd Font glyphs for Paddock-formatted notifications) |
 | `@agent-notify-team-delay` | `10` (seconds a Claude agent-team lead's notification waits for its teammates; `0` = off) |
 | `@agent-describe-model` | `openai/gpt-6-luna` (pi `--model` pattern for suggested titles; pick a model your pi has credentials for) |
 | `@agent-log` | `${XDG_DATA_HOME:-$HOME/.local/share}/tmux/agent-status/agent.log` |
+
+Suggested titles request a specific one- or two-word topic, such as `Token expiry`,
+rather than a sentence or a clipped prompt. They avoid repeating directory/branch
+context and keep a suitable short label stable through incidental testing or
+review steps. Suggestions remain on demand; existing and manual titles are not
+rewritten automatically.
 
 A suggested title sends part of the pane to a model. Nothing is sent until
 you ask a UI (paddock's title editor) for a suggestion; then pi sends the
@@ -380,6 +388,31 @@ anything, don't ask for suggestions (without pi, on the tmux server's
 The plugin turns on tmux's `focus-events` every time it loads, overriding
 `focus-events off`: focusing a pane is what clears its finished marker. An
 empty `@agent-color-*` shows that state's icon uncoloured.
+
+## Compact notifications with Paddock
+
+To use the same agent icon and repository/worktree/branch label as Paddock's
+Agents tab, configure Paddock 0.7.0 or later (with the `notification` command):
+
+```tmux
+set -g @agent-notify-paddock '/path/to/paddock'
+set -g @agent-notify-icons unicode
+```
+
+For example, the title is `✳ finished` and the body is
+`myrepo/…/topic (topic)`. Prompts show `waiting` and hook failures keep `failed`.
+The body replaces the provider's prompt/error text with the directory/branch;
+clicking still focuses the pane, where the full context is available. Branches
+remain visible even when they match the directory; detached HEAD is explicit.
+
+Unicode is recommended: the desktop's notification font is not your terminal's
+font. `nerd` is available, but unsupported glyphs may appear as boxes. Existing
+focus suppression and delayed-team cancellation still apply. Formatting runs
+outside the provider hook, with a short watchdog; missing, old, failed or
+malformed formatters fall back to normal notification text. Leave the executable
+option empty to keep standalone behavior. Perl is required only for the optional
+formatter's bounded output collector (two seconds, at most 1,000 bytes), not for
+normal notifications. The collector also cleans up formatter descendants.
 
 ## Requirements
 
