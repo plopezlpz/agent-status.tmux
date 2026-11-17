@@ -29,6 +29,11 @@ case "$cmd" in
     agent_lock "pane-${TMUX_PANE#%}"
     undescribed || exit 0
     tmux set-option -p -t "$TMUX_PANE" @agent-auto-description "$AUTO"
+    agent_unlock
+    # Read as the pane sees it (a pane or session may differ from the
+    # global), with the session the title is for.
+    IFS=$'\037' read -r on instance <<< "$(tmux display -p -t "$TMUX_PANE" $'#{@agent-auto-title}\037#{@agent-instance}' 2>/dev/null || true)"
+    agent_auto_title "$TMUX_PANE" "$raw" "$on" "$AUTO_TEXT" "$instance"
     ;;
   clear)
     src="${2:-}"

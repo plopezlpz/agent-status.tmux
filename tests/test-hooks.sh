@@ -271,6 +271,39 @@ icon_is "$w7" working || fail "a ';' prompt left the window icon: $(icon "$w7")"
 grep -F "pane=$p7 idle->working" "$TMP/agent.log" >/dev/null || fail "a ';' prompt was not logged"
 tmux kill-window -t "$w7"
 
+# ----- with @agent-auto-title on, pi titles the session from its first prompt -
+# In the background: the prompt's start shows until the title comes, and a
+# later prompt asks nothing.
+w8=$(tmux new-window -d -P -F '#{window_id}' -t t:)
+p8=$(tmux display -p -t "$w8" '#{pane_id}')
+cat > "$TMP/bin/pi" <<STUB
+#!/bin/sh
+cat >> '$TMP/pi-in'
+echo '"Cart Total Check."'
+STUB
+chmod +x "$TMP/bin/pi"
+tmux set-option -g @agent-auto-title on
+AGENT_PI_FALLBACK_PATH='' claude "$p8" '{"session_id":"c-8","hook_event_name":"SessionStart","source":"startup"}' idle
+AGENT_PI_FALLBACK_PATH='' claude "$p8" '{"session_id":"c-8","hook_event_name":"UserPromptSubmit","prompt":"the cart total looks wrong after a coupon, can you check?"}' working
+titled(){ [ "$(get "$p8" @agent-auto-description)" = "Cart Total Check" ]; }
+for _ in $(seq 1 50); do titled && break; sleep 0.1; done
+titled || fail "pi's title did not replace the first prompt: [$(get "$p8" @agent-auto-description)]"
+grep -F 'the cart total looks wrong after a coupon' "$TMP/pi-in" >/dev/null || fail "pi was not given the first prompt"
+: > "$TMP/pi-in"
+AGENT_PI_FALLBACK_PATH='' claude "$p8" '{"session_id":"c-8","hook_event_name":"UserPromptSubmit","prompt":"and the tax too"}' working
+sleep 0.5
+[ ! -s "$TMP/pi-in" ] && titled || fail "a later prompt asked pi again"
+# The hook doesn't wait for pi: Claude would hang on it (its output pipe
+# stays open while anything holds it).
+printf '#!/bin/sh\ncat >/dev/null; sleep 5; echo Slow\n' > "$TMP/bin/pi"
+AGENT_PI_FALLBACK_PATH='' claude "$p8" '{"session_id":"c-80","hook_event_name":"SessionStart","source":"startup"}' idle
+t0=$SECONDS
+AGENT_PI_FALLBACK_PATH='' claude "$p8" '{"session_id":"c-80","hook_event_name":"UserPromptSubmit","prompt":"a slow title"}' working | cat
+[ $((SECONDS - t0)) -le 2 ] || fail "the prompt's hook waited for pi"
+tmux set-option -gu @agent-auto-title
+rm -f "$TMP/bin/pi"
+tmux kill-window -t "$w8"
+
 # ----- a permission prompt outlasts other tools' hooks --------------------
 p6=$(tmux split-window -d -P -F '#{pane_id}' -t "$p1")
 ev(){ claude "$p6" "{\"session_id\":\"c-4\",\"hook_event_name\":\"$1\"${3:+,$3}}" "$2"; }

@@ -13,7 +13,12 @@ import { fileURLToPath } from "node:url";
 const scriptsDir = resolve(dirname(realpathSync(fileURLToPath(import.meta.url))), "../agent");
 
 export default function (pi: ExtensionAPI) {
-	if (!process.env.TMUX_PANE) return;
+	if (!process.env.TMUX_PANE) {
+		// A Rex pane keeps pi's state itself (OSC 7501): only its title is
+		// this plugin's there, with AGENT_AUTO_TITLE=on.
+		if (process.env.REX_BLOCK && process.env.AGENT_AUTO_TITLE === "on") titleRexPane(pi);
+		return;
+	}
 
 	let instance = "";
 	let seq = Date.now() * 1000;
@@ -162,5 +167,35 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("session_shutdown", async (event) => {
 		if (rootSession && event.reason === "quit") await run("clear-state.sh", ["quit", instance, "pi"]);
+	});
+}
+
+/** A Rex pane's title: each session's first prompt, titled by rex-title.sh
+ * (in the background, so the agent never waits for it). */
+function titleRexPane(pi: ExtensionAPI): void {
+	let tui = false;
+	let session = "";
+	const sessionOf = (ctx: any): string => {
+		try {
+			return ctx?.sessionManager?.getSessionId?.() || session;
+		} catch {
+			return session;
+		}
+	};
+	pi.on("session_start", (_event, ctx) => {
+		tui = ctx?.mode === "tui";
+		session = sessionOf(ctx);
+	});
+	// Quitting gives the pane its label back (rex-title.sh keeps a label
+	// someone gave it since).
+	pi.on("session_shutdown", async (event) => {
+		if (tui && event.reason === "quit") await pi.exec(`${scriptsDir}/rex-title.sh`, ["drop"], { timeout: 5000 }).catch(() => {});
+	});
+	// Only the prompt's start: a whole pasted file must not reach argv.
+	pi.on("before_agent_start", (event, ctx) => {
+		if (!tui || !event.prompt) return;
+		session = sessionOf(ctx);
+		if (!session) return;
+		void pi.exec(`${scriptsDir}/rex-title.sh`, ["prompt", session, event.prompt.slice(0, 2000)], { timeout: 5000 }).catch(() => {});
 	});
 }

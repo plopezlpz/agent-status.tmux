@@ -14,6 +14,16 @@ set -eu
 SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
 # shellcheck source=lib.sh
 . "$SCRIPT_DIR/lib.sh"
+# In a Rex pane, not tmux: Rex keeps the agent's state itself, and only a
+# prompt's report (working, with a hook payload) may title the pane. Tool
+# reports come by the dozen and carry their output: a glance, not jq, skips
+# them.
+if [ -z "${TMUX_PANE:-}" ] && [ -n "${REX_BLOCK:-}" ] && [ "${AGENT_AUTO_TITLE:-}" = on ] \
+  && [ "${1:-}" = working ] && [ "$#" -eq 1 ] && [ ! -t 0 ]; then
+  payload=$(cat)
+  case "$payload" in *'"UserPromptSubmit"'*) exec bash "$SCRIPT_DIR/rex-title.sh" hook <<< "$payload" ;; esac
+  exit 0
+fi
 agent_pane_guard
 
 raw_state="${1:-}"
@@ -40,7 +50,7 @@ path_field=$'#{s/[\001-\037]/ /:pane_current_path}'
 read_pane() {
   IFS="$sep" read -r cur_pane pane_dead prev_state prev_unseen prev_instance prev_seq prev_kind \
     prev_state_at prev_transcript prev_asks prev_settled described now notify_timeout team_delay pane_active viewers clients \
-    socket client log_file log_time notify_paddock notify_icons prev_command cur_command pane_path name <<< "$(tmux display -t "$TMUX_PANE" -p "#{pane_id}$sep#{pane_dead}$sep#{@agent-state}$sep#{@agent-unseen}$sep#{@agent-instance}$sep#{@agent-seq}$sep#{@agent-kind}$sep#{@agent-state-at}$sep#{@agent-transcript}$sep#{@agent-asks}$sep#{@agent-settled}$sep#{?@agent-auto-description,1,}$sep%s$sep#{@agent-notify-timeout}$sep#{@agent-notify-team-delay}$sep#{pane_active}$sep#{window_active_clients_list}$sep#{L/t:#{?client_control_mode,,#{client_name}=#{client_flags} }}$sep#{socket_path}$sep#{client_name}$sep$AGENT_LOG_FIELDS$sep#{@agent-notify-paddock}$sep#{@agent-notify-icons}$sep#{@agent-command}$sep#{pane_current_command}$sep$path_field$sep#S / #W" 2>/dev/null || true)"
+    socket client log_file log_time notify_paddock notify_icons prev_command cur_command pane_path name auto_title <<< "$(tmux display -t "$TMUX_PANE" -p "#{pane_id}$sep#{pane_dead}$sep#{@agent-state}$sep#{@agent-unseen}$sep#{@agent-instance}$sep#{@agent-seq}$sep#{@agent-kind}$sep#{@agent-state-at}$sep#{@agent-transcript}$sep#{@agent-asks}$sep#{@agent-settled}$sep#{?@agent-auto-description,1,}$sep%s$sep#{@agent-notify-timeout}$sep#{@agent-notify-team-delay}$sep#{pane_active}$sep#{window_active_clients_list}$sep#{L/t:#{?client_control_mode,,#{client_name}=#{client_flags} }}$sep#{socket_path}$sep#{client_name}$sep$AGENT_LOG_FIELDS$sep#{@agent-notify-paddock}$sep#{@agent-notify-icons}$sep#{@agent-command}$sep#{pane_current_command}$sep$path_field$sep#S / #W$sep#{@agent-auto-title}" 2>/dev/null || true)"
   # display -t on a vanished pane silently describes another one.
   [ "$cur_pane" = "$TMUX_PANE" ] && [ "$pane_dead" != 1 ] || exit 0
 }
@@ -320,10 +330,10 @@ fi
 # subagent's prompt doesn't), and a title the session has (Claude: --name,
 # /rename) instead, from its start or the next prompt. It is free text, so it
 # goes last: tmux skips the rest of a chain after a failed command.
-text=""
+text="" first=""
 if [ -z "$agent" ]; then
   case "$hook_name" in SessionStart|UserPromptSubmit) text="$title" ;; esac
-  [ -n "$text" ] || [ "$hook_name" != UserPromptSubmit ] || [ -n "$described" ] || text="$prompt"
+  [ -n "$text" ] || [ "$hook_name" != UserPromptSubmit ] || [ -n "$described" ] || { text="$prompt"; first="$prompt"; }
 fi
 [ -z "$text" ] || agent_auto_text "$text"
 if [ -n "$text" ] && [ -n "$AUTO" ]; then
@@ -335,6 +345,11 @@ fi
 [ "${#args[@]}" -eq 0 ] || tmux "${args[@]}" 2>/dev/null || exit 0
 
 agent_unlock
+# A first prompt's start is the title until pi's (@agent-auto-title) comes.
+# Its session, as the pane now records it: the title is for that one only.
+instance_now=$instance
+[ -n "$instance_now" ] || [ "$reset" = reset ] || instance_now=$prev_instance
+[ -z "$first" ] || [ -z "$AUTO" ] || agent_auto_title "$TMUX_PANE" "$first" "$auto_title" "$AUTO_TEXT" "$instance_now"
 
 # Metadata-only reports need no log, notification, aggregation, or redraw.
 [ "$changed" -eq 1 ] || exit 0

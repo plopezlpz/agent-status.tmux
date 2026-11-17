@@ -83,4 +83,21 @@ tmux set-option -p -t "$TMUX_PANE" @agent-auto-description "keep me"
 echo '{"source":"compact"}' | bash "$SCRIPT" clear
 [ "$(get)" = "keep me" ] || fail "compact clear should keep option"
 
+# With @agent-auto-title on, pi's title for the first prompt replaces its
+# start, in the background (adapters: pi, OpenCode, Kilo, OMP).
+mkdir "$TMP/stub"
+cat > "$TMP/stub/pi" <<STUB
+#!/bin/sh
+cat > '$TMP/pi-in'
+echo 'Release Notes Draft'
+STUB
+chmod +x "$TMP/stub/pi"
+unset_desc
+tmux set-option -g @agent-auto-title on
+PATH="$TMP/stub:$PATH" AGENT_PI_FALLBACK_PATH='' bash "$SCRIPT" set "write the release notes for 2.0 from the changelog"
+for _ in $(seq 1 50); do [ "$(get)" = "Release Notes Draft" ] && break; sleep 0.1; done
+[ "$(get)" = "Release Notes Draft" ] || fail "pi's title did not replace the first prompt: [$(get)]"
+grep -F 'write the release notes for 2.0' "$TMP/pi-in" >/dev/null || fail "pi was not given the prompt"
+tmux set-option -gu @agent-auto-title
+
 echo "PASS: auto-desc"

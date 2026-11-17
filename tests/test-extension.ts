@@ -248,6 +248,40 @@ process.env.TMUX_PANE = "%1";
 	check(Object.keys(handlers).length === 0, "outside tmux -> registers no handlers");
 }
 
+// --- in a Rex pane (outside tmux): with AGENT_AUTO_TITLE=on, only each
+//     session's first prompt goes to rex-title.sh; no state is reported.
+{
+	delete process.env.TMUX_PANE;
+	process.env.REX_BLOCK = "block:1";
+	delete process.env.AGENT_AUTO_TITLE;
+	const off = makePi();
+	extension(off.pi);
+	check(Object.keys(off.handlers).length === 0, "a Rex pane without AGENT_AUTO_TITLE=on -> registers no handlers");
+	process.env.AGENT_AUTO_TITLE = "on";
+	const { pi, handlers, calls } = makePi();
+	extension(pi);
+	check(Object.keys(handlers).sort().join() === "before_agent_start,session_shutdown,session_start", "a Rex pane -> titles only");
+	await handlers.session_start({ reason: "startup" }, ctx("rex-1", true));
+	check(handlers.before_agent_start({ prompt: "x".repeat(3000) }, ctx("rex-1", false)) === undefined, "a Rex prompt is not waited on");
+	await flush();
+	const titled = calls.filter((c) => c.cmd.endsWith("rex-title.sh"));
+	check(titled.length === 1 && titled[0].args[0] === "prompt" && titled[0].args[1] === "rex-1", "a Rex prompt goes to rex-title.sh with its session");
+	check(titled[0]?.args[2].length === 2000, "only the prompt's start reaches argv");
+	check(stateCalls(calls).length === 0, "a Rex pane reports no state");
+	await handlers.session_shutdown({ reason: "reload" });
+	check(calls.filter((c) => c.cmd.endsWith("rex-title.sh") && c.args[0] === "drop").length === 0, "a reload keeps the Rex title");
+	await handlers.session_shutdown({ reason: "quit" });
+	check(calls.filter((c) => c.cmd.endsWith("rex-title.sh") && c.args[0] === "drop").length === 1, "quitting takes the Rex title back");
+	const print = makePi();
+	extension(print.pi);
+	await print.handlers.session_start({ reason: "startup" }, { ...ctx("rex-2", true), mode: "print" });
+	print.handlers.before_agent_start({ prompt: "headless" }, ctx("rex-2", false));
+	await flush();
+	check(print.calls.length === 0, "pi -p in a Rex pane titles nothing");
+	delete process.env.REX_BLOCK;
+	delete process.env.AGENT_AUTO_TITLE;
+}
+
 if (failed) {
 	console.error(`\n${failed} check(s) failed`);
 	process.exit(1);

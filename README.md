@@ -8,7 +8,8 @@ agent state a UI such as [paddock](https://github.com/plopezlpz/paddock) shows.
 - worst-state window icon (asking > working > finished > idle)
 - desktop notifications; a click focuses the pane (alerter or
   terminal-notifier)
-- per-pane titles: the first prompt, or one you set or have pi suggest
+- per-pane titles: a short one pi writes from the first prompt (opt-in), the
+  first prompt, or one you set or have pi suggest
 - no daemon, no polling of pane output or processes
 
 ## Install
@@ -356,18 +357,40 @@ Set options before TPM runs.
 | `@agent-notify-paddock` | empty (optional Paddock executable path for icon/state + directory/branch notifications; one executable, no shell arguments) |
 | `@agent-notify-icons` | `unicode` (`nerd` opts into Nerd Font glyphs for Paddock-formatted notifications) |
 | `@agent-notify-team-delay` | `10` (seconds a Claude agent-team lead's notification waits for its teammates; `0` = off) |
-| `@agent-describe-model` | `openai/gpt-6-luna` (pi `--model` pattern for suggested titles; pick a model your pi has credentials for) |
+| `@agent-describe-model` | `openai/gpt-6-luna` (pi `--model` pattern for suggested and automatic titles; pick a model your pi has credentials for) |
+| `@agent-auto-title` | `off` (`on`: pi titles each agent from its first prompt, in the background; see below) |
 | `@agent-log` | `${XDG_DATA_HOME:-$HOME/.local/share}/tmux/agent-status/agent.log` |
 
-Suggested titles request a specific one- or two-word topic, such as `Token expiry`,
-rather than a sentence or a clipped prompt. They avoid repeating directory/branch
-context and keep a suitable short label stable through incidental testing or
-review steps. Suggestions remain on demand; existing and manual titles are not
-rewritten automatically.
+Titles follow T3 Code's rules for thread titles: 3 to 8 words, under 40
+characters, naming what the session is about and what you want from it
+(`Checkout Totals Bug`, `Rex Popup Performance`), not a clipped prompt or the
+latest step, and without the directory, branch or agent the UI already
+shows. A suggestion keeps the current title when it is still accurate.
 
-A suggested title sends part of the pane to a model. Nothing is sent until
-you ask a UI (paddock's title editor) for a suggestion; then pi sends the
-following to the model in `@agent-describe-model` (by default
+With `@agent-auto-title on`, an agent's first prompt gets such a title on its
+own, as T3 Code does: the prompt's start shows at once, and pi's title
+(usually a few seconds later) replaces it, unless a new session started
+meanwhile. A title you set (`@agent-description`) still comes first. Without
+pi, or when it gives no usable title, the prompt's start stays.
+
+In [Rex](https://www.superlogical.com/rex), which keeps an agent's state
+itself, the plugin only titles agents: set `AGENT_AUTO_TITLE=on` in your
+shell's environment (Rex panes run your login shell), and each Claude Code or
+pi session's first prompt gets the same title, as its Rex pane's label, which
+Rex and paddock show. A label you gave a pane stays; the title replaces only
+Rex's default label or the title it set for an earlier session, and goes
+when the agent quits or the session is given a name. Without tmux the model
+is `AGENT_DESCRIBE_MODEL` (else the tmux server's `@agent-describe-model`
+when one runs, else `openai/gpt-6-luna`): set it beside `AGENT_AUTO_TITLE`
+to use another, such as a local one. `rex` and `jq` must be on the agent's
+`PATH`.
+
+A title sends text to a model. With `@agent-auto-title on` (or, in Rex,
+`AGENT_AUTO_TITLE=on`), pi sends each
+agent's first prompt (its first 500 characters on hook-based agents; 2000
+on pi, OMP, OpenCode and Kilo) and the name of its folder. Otherwise nothing is sent
+until you ask a UI (paddock's title editor) for a suggestion; then pi sends
+the following to the model in `@agent-describe-model` (by default
 `openai/gpt-6-luna`, through your pi login):
 
 - the agent's name, the pane's folder path, its first prompt and its
@@ -381,8 +404,8 @@ following to the model in `@agent-describe-model` (by default
 pi runs without tools, extensions, skills, MCP servers or context files
 (`AGENTS.md`, `CLAUDE.md`), saves no session, and runs from an empty
 directory of its own. To keep this on your machine, set
-`@agent-describe-model` to a local model your pi can run; to never send
-anything, don't ask for suggestions (without pi, on the tmux server's
+`@agent-describe-model` (and, for Rex, `AGENT_DESCRIBE_MODEL`) to a local model your pi can run; to never send
+anything, leave `@agent-auto-title` off (and `AGENT_AUTO_TITLE` unset) and don't ask for suggestions (without pi, on the tmux server's
 `PATH` or in fnm's default alias, there are none).
 
 The plugin turns on tmux's `focus-events` every time it loads, overriding

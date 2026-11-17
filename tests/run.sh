@@ -18,6 +18,7 @@ bash "$HERE/test-state.sh" || rc=1
 bash "$HERE/test-notification-format.sh" || rc=1
 bash "$HERE/test-hooks.sh" || rc=1
 bash "$HERE/test-describe.sh" || rc=1
+bash "$HERE/test-rex-title.sh" || rc=1
 bash "$HERE/test-claude-hooks.sh" || rc=1
 bash "$HERE/test-codex.sh" || rc=1
 bash "$HERE/test-hook-event.sh" || rc=1

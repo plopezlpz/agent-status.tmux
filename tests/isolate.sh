@@ -3,6 +3,7 @@
 # own gets what the suite gives every test.
 # - A private tmux socket dir: plain `tmux` calls can't reach the user's
 #   server, and tmux 3.8 leaves socket files behind on exit (removed with it).
+#   State and data dirs of its own too (kept titles, the log).
 # - No headless marker (the hooks ignore headless runs, such as claude -p, and
 #   the suite may be run from one), and no agent's config directory from the
 #   environment for an installer test to reach.
@@ -19,7 +20,9 @@ if [ -z "${AGENT_STATUS_QUIET:-}" ] || [ ! -d "$AGENT_STATUS_QUIET" ]; then
   # /tmp keeps socket paths under the macOS 104-byte limit.
   TMUX_TMPDIR=$(mktemp -d /tmp/agent-status-tests.XXXXXX) || exit 1
   AGENT_STATUS_QUIET="$TMUX_TMPDIR/quiet"
-  export TMUX_TMPDIR AGENT_STATUS_QUIET
+  # Titles kept and the log: the run's own, not the user's.
+  XDG_STATE_HOME="$TMUX_TMPDIR/state" XDG_DATA_HOME="$TMUX_TMPDIR/data"
+  export TMUX_TMPDIR AGENT_STATUS_QUIET XDG_STATE_HOME XDG_DATA_HOME
   isolate_cleanup() {
     local s
     for s in "$TMUX_TMPDIR"/tmux-*/*; do

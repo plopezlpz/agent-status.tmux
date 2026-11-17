@@ -18,7 +18,7 @@ provider lifecycle event
 | `@agent-kind` | the provider: `pi`, `omp`, `opencode`, `kilo`, `kimi`, `mastracode`, `claude`, `codex`, `gemini`, `qwen` or `antigravity` |
 | `@agent-instance` | the provider-qualified session id (`kind:id`) |
 | `@agent-seq` | the last accepted sequence number from an in-process adapter |
-| `@agent-auto-description` | the first prompt (or the session's own title), at most 50 characters |
+| `@agent-auto-description` | the first prompt (or the session's own title), at most 50 characters; with `@agent-auto-title on`, pi's title for that prompt once it comes, at most 80 |
 | `@agent-description` | a title the user set (by a UI or `describe.sh set`) |
 | `@agent-transcript` | the session's `.jsonl` (Claude, Codex, Qwen, pi); `describe.sh` reads Claude's and pi's for title suggestions; a new session without one unsets it |
 | `@agent-asks` | internal: open Claude, Codex and Qwen permission prompts and dialogs, space-separated |
@@ -69,13 +69,25 @@ treated as stale, so a killed hook cannot wedge a pane. Tmux pane options
 disappear with panes; only the transition audit log lives on disk.
 
 Titles: `@agent-auto-description` is the first prompt; `@agent-description`
-is a title the user set, which UIs show instead. A UI may set it directly
+is a title the user set, which UIs show instead. With `@agent-auto-title on`,
+the hook that sets the first prompt also starts `describe.sh auto` in the
+background (prompt on stdin, not argv), which asks pi for a title (T3 Code's
+rules: 3 to 8 words) and sets it in place of the prompt's start if that start
+and the pane's session are still the ones it was started for. Titles are kept
+by prompt and folder under `$XDG_STATE_HOME/agent-status/titles` for 30 days,
+so a prompt titled before (OpenCode rebinds a pane on each tab switch) is
+titled at once, the same; a failure is logged. In a Rex pane (outside tmux)
+with `AGENT_AUTO_TITLE=on` in the agent's environment, Rex keeps the agent's
+state itself, and `rex-title.sh` (from `set-state.sh` for hook payloads, from
+the pi extension) gives each session's first prompt the same title as the
+pane's Rex label: only over Rex's default label or the one it set last, which
+`$XDG_STATE_HOME/agent-status/rex/<block>` records with the session it titled. A UI may set it directly
 (paddock does); scripts can use `describe.sh set PANE [TEXT]` (no TEXT: back
 to automatic). Both are cleared with the other options when the agent exits.
 The plugin sets `@agent-suggest-command` to `describe.sh suggest`: run with a
 pane id appended, it waits for pi and prints a title without setting it, or
 fails with the reason on stderr; a signal stops pi. pi runs for at most
-`AGENT_DESCRIBE_TIMEOUT` seconds (default 120; enforced with coreutils
+`AGENT_DESCRIBE_TIMEOUT` seconds (default 120, 60 for an automatic title; enforced with coreutils
 `timeout` or perl when either is installed); paddock gives up after 30. If pi
 is not on the `PATH` that `describe.sh` runs with, the directory in
 `AGENT_PI_FALLBACK_PATH` is tried too (default: fnm's default alias,

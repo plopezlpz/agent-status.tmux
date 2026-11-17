@@ -49,7 +49,21 @@ agent_auto_text() {
   while [[ $AUTO == *"  "* ]]; do AUTO=${AUTO//  / }; done
   utf8_cut 50 "$AUTO"
   [ "$CUT" = "$AUTO" ] || { utf8_cut 49 "$AUTO"; AUTO="${CUT}…"; }
+  # shellcheck disable=SC2034 # AUTO_TEXT: read by the callers
+  AUTO_TEXT=$AUTO  # as tmux stores it
   tmux_literal "$AUTO"; AUTO=$LITERAL
+}
+
+# agent_auto_title PANE PROMPT ON SEED [INSTANCE]: with ON (@agent-auto-title)
+# "on", start describe.sh asking pi for the title of the session PROMPT
+# starts, in the background (a hook does not wait for a model), detached from
+# the hook's output. PROMPT goes on its stdin, not argv (ps shows argv, and a
+# long one would not fit). SEED, the prompt's start just set, shows until the
+# title comes, which replaces it only if it is still there.
+agent_auto_title() {
+  [ "$3" = on ] && [ -n "$2" ] && [ -n "$4" ] || return 0
+  utf8_cut 2000 "$2"
+  nohup bash "${BASH_SOURCE[0]%/*}/describe.sh" auto "$1" "$4" "${5:-}" <<< "$CUT" >/dev/null 2>&1 &
 }
 
 # tmux_literal TEXT: LITERAL, TEXT as a tmux argument that stays text: tmux

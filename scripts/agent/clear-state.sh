@@ -6,6 +6,11 @@ set -eu
 
 # shellcheck source=lib.sh
 . "${BASH_SOURCE[0]%/*}/lib.sh"
+# In a Rex pane, not tmux: the session's end takes back the title it gave
+# the pane (rex-title.sh); Rex keeps the agent's state itself.
+if [ -z "${TMUX_PANE:-}" ] && [ -n "${REX_BLOCK:-}" ] && [ "${AGENT_AUTO_TITLE:-}" = on ] && [ "$#" -eq 0 ] && [ ! -t 0 ]; then
+  exec bash "${BASH_SOURCE[0]%/*}/rex-title.sh" hook
+fi
 agent_pane_guard
 
 # shellcheck disable=SC2034 # kind: read by agent_identity

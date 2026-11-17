@@ -4,6 +4,17 @@ Notable changes to agent-status.tmux, newest first. The format follows [Keep a C
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-17
+
+### Added
+
+- `@agent-auto-title on`: an agent's first prompt gets a short title, written by pi (`@agent-describe-model`) in the background as T3 Code titles its threads: 3–8 words naming the subject and outcome, not a clipped prompt. The prompt's start shows until it comes, and stays without pi or a title. Off by default: it sends each first prompt to the model. A prompt titled before is titled again at once from what was kept (30 days), so OpenCode's tab switches don't ask again.
+- Rex: with `AGENT_AUTO_TITLE=on` in the environment, Claude Code and pi sessions in a Rex pane get the same title as the pane's label (`rex-title.sh`), once per session, never over a label you gave, and taken back when the agent quits or the session is named. The model is `AGENT_DESCRIBE_MODEL` there. Rex keeps the agent's state itself, so that is all the plugin does there.
+
+### Changed
+
+- Suggested titles (`describe.sh suggest`) follow the same rules: 3–8 words, under 40 characters, naming the session's lasting goal, and keep the current title when it is still accurate.
+
 ## [0.8.0] - 2026-11-17
 
 ### Added
@@ -270,7 +281,8 @@ Descriptions under `~/.cache/agent-status` are not moved. Move them yourself, or
 - `prefix A` navigator popup: one card per Claude pane, grouped by session and folder, with editable descriptions.
 - `install-claude-hooks.sh` and `uninstall-claude-hooks.sh`.
 
-[Unreleased]: https://github.com/plopezlpz/agent-status.tmux/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/plopezlpz/agent-status.tmux/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/plopezlpz/agent-status.tmux/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/plopezlpz/agent-status.tmux/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/plopezlpz/agent-status.tmux/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/plopezlpz/agent-status.tmux/compare/v0.6.0...v0.6.1

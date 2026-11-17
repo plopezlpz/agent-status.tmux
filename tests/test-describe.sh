@@ -81,9 +81,12 @@ done
 case "$(head -1 "$TMP/pi-cwd")" in */agent-describe.*) ;; *) fail "pi ran from $(head -1 "$TMP/pi-cwd"), not its own directory" ;; esac
 [ "$(wc -l < "$TMP/pi-cwd")" -eq 1 ] || fail "pi's directory was not empty: $(tail -n +2 "$TMP/pi-cwd" | tr '\n' ' ')"
 
-# Suggestions ask for short, stable topics rather than clipped instructions.
-grep -F 'a specific topic label of one or two words' "$TMP/pi-args" >/dev/null || fail 'not requesting short topic labels'
-grep -F 'Use a noun phrase' "$TMP/pi-args" >/dev/null || fail 'not requesting noun phrases'
+# Suggestions ask for short, stable titles of the lasting goal rather than
+# clipped instructions or the latest step.
+grep -F '3 to 8 words, fewer than 40 characters' "$TMP/pi-args" >/dev/null || fail 'not requesting short titles'
+grep -F 'A compact noun phrase or a clear action phrase' "$TMP/pi-args" >/dev/null || fail 'not requesting noun phrases'
+grep -F 'Do not copy and truncate' "$TMP/pi-args" >/dev/null || fail 'clipped prompts not ruled out'
+grep -F 'latest explicit, lasting goal' "$TMP/pi-args" >/dev/null || fail 'the lasting goal missing'
 grep -F 'Keep the current title' "$TMP/pi-args" >/dev/null || fail 'topic stability missing'
 
 # 4c. Default to pi's current OpenAI provider; an explicit model stays literal.
@@ -134,5 +137,47 @@ for runner_path in "$PATH" ${real_timeout:+"$TMP/tbin:$PATH"}; do
 done
 leftover=$(find "${TMPDIR:-/tmp}" -maxdepth 1 -name 'agent-describe.*' -newer "$TMP/stub" 2>/dev/null | head -1)
 [ -z "$leftover" ] || fail "suggest left its temporary directory: $leftover"
+
+# 7. auto: pi's title for the first prompt (on stdin) replaces the prompt's
+# start, in T3 Code's terms, cleaned; unless that start, or the pane's
+# session, changed meanwhile, and never with no title or an echo of the
+# answer's name. A prompt titled before is titled again at once, the same.
+auto(){ tmux show-option -pqv -t "$p1" @agent-auto-description; }
+seed(){ tmux set-option -p -t "$p1" @agent-auto-description "$1"; }
+stub_pi "printf '%s\\n' \"\$@\" > '$TMP/pi-args'; cat > '$TMP/pi-input'; printf '%s\\n' '\"Coupon Cart Totals.\"'"
+seed 'the cart total is wrong…'
+"$DESCRIBE" auto "$p1" 'the cart total is wrong…' <<< 'the cart total is wrong when a coupon applies'
+[ "$(auto)" = 'Coupon Cart Totals' ] || fail "auto did not set pi's cleaned title: [$(auto)]"
+grep -F 'the cart total is wrong when a coupon applies' "$TMP/pi-input" >/dev/null || fail "auto did not send the prompt"
+grep -F '3 to 8 words, fewer than 40 characters' "$TMP/pi-args" >/dev/null || fail "auto did not ask for a short title"
+# Kept: pi isn't asked again (it would fail now).
+stub_pi 'cat >/dev/null; exit 1'
+seed 'the cart total is wrong…'
+"$DESCRIBE" auto "$p1" 'the cart total is wrong…' <<< 'the cart total is wrong when a coupon applies'
+[ "$(auto)" = 'Coupon Cart Totals' ] || fail "a prompt titled before was not titled from what was kept: [$(auto)]"
+stub_pi "cat >/dev/null; tmux set-option -p -t '$p1' @agent-auto-description 'next session'; echo 'Late Title'"
+seed 'old start'
+"$DESCRIBE" auto "$p1" 'old start' <<< 'old prompt'
+[ "$(auto)" = 'next session' ] || fail "auto overwrote a newer title: [$(auto)]"
+stub_pi "cat >/dev/null; tmux set-option -p -t '$p1' @agent-instance 'pi:other'; echo 'Other Session Title'"
+tmux set-option -p -t "$p1" @agent-instance 'pi:first'
+seed 'same start'
+"$DESCRIBE" auto "$p1" 'same start' 'pi:first' <<< 'a prompt for the first session'
+[ "$(auto)" = 'same start' ] || fail "auto titled another session: [$(auto)]"
+tmux set-option -p -u -t "$p1" @agent-instance
+for reply in '' 'Title' '""'; do
+  stub_pi "cat >/dev/null; printf '%s\\n' '$reply'"
+  seed 'the start'
+  "$DESCRIBE" auto "$p1" 'the start' <<< 'a prompt'
+  [ "$(auto)" = 'the start' ] || fail "auto set an unusable reply [$reply]: [$(auto)]"
+done
+grep -F 'no title: pi gave no title' "$XDG_DATA_HOME/tmux/agent-status/agent.log" >/dev/null || fail "a failed title was not logged"
+# title prints it, for rex-title.sh.
+stub_pi "cat > '$TMP/pi-input'; echo 'Rex Pane Title'"
+[ "$("$DESCRIBE" title /src/myapp <<< 'name the rex pane')" = 'Rex Pane Title' ] || fail "title did not print pi's title"
+grep -Fx 'Folder: myapp' "$TMP/pi-input" >/dev/null || fail "title did not name the folder"
+rm -f "$TMP/stub/pi"
+"$DESCRIBE" auto "$p1" 'the start' <<< 'a prompt' || fail "auto failed without pi"
+[ "$(auto)" = 'the start' ] || fail "auto changed the title without pi"
 
 echo "PASS: describe"
