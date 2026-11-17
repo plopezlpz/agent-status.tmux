@@ -4,6 +4,16 @@ Notable changes to agent-status.tmux, newest first. The format follows [Keep a C
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-17
+
+### Added
+
+- `@agent-command`: what ran in the pane when the agent registered (`pane_current_command` at a session's start), so a reader such as paddock can tell an agent that died without its exit hook once something else, such as an editor, runs there.
+
+### Fixed
+
+- A new session that names no transcript (OpenCode, Gemini, Kimi, …) drops the `@agent-transcript` an unclean exit left, so a pane's next agent isn't shown the last one's words. A compaction keeps it.
+
 ## [0.7.0] - 2026-10-31
 
 ### Added
@@ -260,7 +270,8 @@ Descriptions under `~/.cache/agent-status` are not moved. Move them yourself, or
 - `prefix A` navigator popup: one card per Claude pane, grouped by session and folder, with editable descriptions.
 - `install-claude-hooks.sh` and `uninstall-claude-hooks.sh`.
 
-[Unreleased]: https://github.com/plopezlpz/agent-status.tmux/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/plopezlpz/agent-status.tmux/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/plopezlpz/agent-status.tmux/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/plopezlpz/agent-status.tmux/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/plopezlpz/agent-status.tmux/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/plopezlpz/agent-status.tmux/compare/v0.5.0...v0.6.0

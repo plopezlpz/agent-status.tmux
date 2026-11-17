@@ -20,10 +20,11 @@ provider lifecycle event
 | `@agent-seq` | the last accepted sequence number from an in-process adapter |
 | `@agent-auto-description` | the first prompt (or the session's own title), at most 50 characters |
 | `@agent-description` | a title the user set (by a UI or `describe.sh set`) |
-| `@agent-transcript` | the session's `.jsonl` (Claude, Codex, Qwen, pi); `describe.sh` reads Claude's and pi's for title suggestions |
+| `@agent-transcript` | the session's `.jsonl` (Claude, Codex, Qwen, pi); `describe.sh` reads Claude's and pi's for title suggestions; a new session without one unsets it |
 | `@agent-asks` | internal: open Claude, Codex and Qwen permission prompts and dialogs, space-separated |
 | `@agent-settled` | internal: the `@agent-unseen` value to restore when an ask on a settled pane ends (a Codex subagent's, a Claude dialog between turns); focusing the pane sets it to 0 |
 | `@agent-subagents` | internal: Kimi subagents started in the current turn |
+| `@agent-command` | `pane_current_command` when the agent registered (a session reset, or the first report without one); something else there later means the agent is gone |
 | `@agent-notify-token` | internal: cancels a delayed notification |
 
 All of them are unset together when the agent exits. Window option:

@@ -40,7 +40,7 @@ path_field=$'#{s/[\001-\037]/ /:pane_current_path}'
 read_pane() {
   IFS="$sep" read -r cur_pane pane_dead prev_state prev_unseen prev_instance prev_seq prev_kind \
     prev_state_at prev_transcript prev_asks prev_settled described now notify_timeout team_delay pane_active viewers clients \
-    socket client log_file log_time notify_paddock notify_icons pane_path name <<< "$(tmux display -t "$TMUX_PANE" -p "#{pane_id}$sep#{pane_dead}$sep#{@agent-state}$sep#{@agent-unseen}$sep#{@agent-instance}$sep#{@agent-seq}$sep#{@agent-kind}$sep#{@agent-state-at}$sep#{@agent-transcript}$sep#{@agent-asks}$sep#{@agent-settled}$sep#{?@agent-auto-description,1,}$sep%s$sep#{@agent-notify-timeout}$sep#{@agent-notify-team-delay}$sep#{pane_active}$sep#{window_active_clients_list}$sep#{L/t:#{?client_control_mode,,#{client_name}=#{client_flags} }}$sep#{socket_path}$sep#{client_name}$sep$AGENT_LOG_FIELDS$sep#{@agent-notify-paddock}$sep#{@agent-notify-icons}$sep$path_field$sep#S / #W" 2>/dev/null || true)"
+    socket client log_file log_time notify_paddock notify_icons prev_command cur_command pane_path name <<< "$(tmux display -t "$TMUX_PANE" -p "#{pane_id}$sep#{pane_dead}$sep#{@agent-state}$sep#{@agent-unseen}$sep#{@agent-instance}$sep#{@agent-seq}$sep#{@agent-kind}$sep#{@agent-state-at}$sep#{@agent-transcript}$sep#{@agent-asks}$sep#{@agent-settled}$sep#{?@agent-auto-description,1,}$sep%s$sep#{@agent-notify-timeout}$sep#{@agent-notify-team-delay}$sep#{pane_active}$sep#{window_active_clients_list}$sep#{L/t:#{?client_control_mode,,#{client_name}=#{client_flags} }}$sep#{socket_path}$sep#{client_name}$sep$AGENT_LOG_FIELDS$sep#{@agent-notify-paddock}$sep#{@agent-notify-icons}$sep#{@agent-command}$sep#{pane_current_command}$sep$path_field$sep#S / #W" 2>/dev/null || true)"
   # display -t on a vanished pane silently describes another one.
   [ "$cur_pane" = "$TMUX_PANE" ] && [ "$pane_dead" != 1 ] || exit 0
 }
@@ -293,6 +293,17 @@ if [ -n "$kind" ] && [ "$kind" != "$prev_kind" ]; then
 fi
 if [ -n "$transcript" ] && [ "$transcript" != "$prev_transcript" ]; then
   args+=("${w[@]}" @agent-transcript "$transcript" \;)
+elif [ -z "$transcript" ] && [ "$reset" = reset ] && [ -z "$compact" ] && [ -n "$prev_transcript" ]; then
+  # A new session that names no transcript: the last one's is not its.
+  args+=("${w[@]}" -u @agent-transcript \;)
+fi
+# What runs in the pane as the agent registers (a reset, another kind of
+# agent, or the first report from an earlier release): once it is something
+# else, such as an editor started after the agent died without its exit
+# hook, the agent is gone.
+if [ -n "$cur_command" ] && [ "$cur_command" != "$prev_command" ] \
+  && { [ "$reset" = reset ] || [ -z "$prev_command" ] || [ "${kind:-$prev_kind}" != "$prev_kind" ]; }; then
+  args+=("${w[@]}" @agent-command "$cur_command" \;)
 fi
 if [ "$asks" != "$prev_asks" ]; then
   if [ -n "$asks" ]; then args+=("${w[@]}" @agent-asks "$asks" \;); else args+=("${w[@]}" -u @agent-asks \;); fi

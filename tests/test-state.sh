@@ -218,6 +218,28 @@ if [ -n "$JQ" ]; then
   printf '{"session_id":"claude-1","hook_event_name":"Stop","transcript_path":"%s"}\n' "$TMP/claude.jsonl" | \
     TMUX_PANE="$p1" AGENT_STATUS_KIND=claude "$SET" finished
   [ "$(get "$p1" @agent-transcript)" = "$TMP/claude.jsonl" ] || fail "Claude transcript path not recorded"
+  # What ran in the pane as the agent registered: kept until the next reset.
+  [ "$(get "$p1" @agent-command)" = "$(tmux display -p -t "$p1" '#{pane_current_command}')" ] || fail "the agent's command not recorded"
+  tmux set-option -p -t "$p1" @agent-command earlier
+  printf '%s\n' '{"session_id":"claude-1","hook_event_name":"PostToolUse"}' | TMUX_PANE="$p1" "$SET" working
+  [ "$(get "$p1" @agent-command)" = earlier ] || fail "an ordinary report replaced the agent's command"
+  # Another kind of agent reporting without a reset (an adapter without
+  # identity, after the last one died without its exit hook) registers too.
+  TMUX_PANE="$p1" "$SET" working "" "" "" gemini
+  [ "$(get "$p1" @agent-command)" = "$(tmux display -p -t "$p1" '#{pane_current_command}')" ] || fail "another kind of agent kept the old command"
+  tmux set-option -p -t "$p1" @agent-command earlier
+  # A new session that names no transcript drops the last one's (an exit
+  # without its hook left it); a compaction keeps it.
+  TMUX_PANE="$p1" "$SET" idle "" oc-1 1 opencode reset
+  [ -z "$(get "$p1" @agent-transcript)" ] || fail "a new session kept the last one's transcript"
+  [ "$(get "$p1" @agent-command)" = "$(tmux display -p -t "$p1" '#{pane_current_command}')" ] || fail "a reset kept the old command"
+  printf '{"session_id":"claude-1","hook_event_name":"SessionStart","source":"startup","transcript_path":"%s"}\n' "$TMP/claude.jsonl" | \
+    TMUX_PANE="$p1" AGENT_STATUS_KIND=claude "$SET" idle
+  printf '%s\n' '{"session_id":"claude-1","hook_event_name":"SessionStart","source":"compact"}' | \
+    TMUX_PANE="$p1" AGENT_STATUS_KIND=claude "$SET" idle
+  [ "$(get "$p1" @agent-transcript)" = "$TMP/claude.jsonl" ] || fail "a compaction dropped the transcript"
+  printf '{"session_id":"claude-1","hook_event_name":"Stop","transcript_path":"%s"}\n' "$TMP/claude.jsonl" | \
+    TMUX_PANE="$p1" AGENT_STATUS_KIND=claude "$SET" finished
 
   # A suggestion sends the latest real prompts (not tool results, meta, sidechain or
   # synthetic messages) and the latest assistant text to pi.
