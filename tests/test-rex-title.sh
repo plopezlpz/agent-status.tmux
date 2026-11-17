@@ -75,7 +75,7 @@ until_calls 4 || fail "a fourth session was not titled"
 # A session with a name (--name, /rename) isn't titled (see below), nor is a
 # headless run or a pane without AGENT_AUTO_TITLE=on.
 printf '%s\n' '{"session_id":"c-6","hook_event_name":"UserPromptSubmit","prompt":"headless"}' | CLAUDE_CODE_ENTRYPOINT=sdk-cli AGENT_STATUS_KIND=claude "$AGENT/set-state.sh" working
-printf '%s\n' '{"session_id":"c-7","hook_event_name":"UserPromptSubmit","prompt":"off"}' | AGENT_AUTO_TITLE= AGENT_STATUS_KIND=claude "$AGENT/set-state.sh" working
+printf '%s\n' '{"session_id":"c-7","hook_event_name":"UserPromptSubmit","prompt":"off"}' | AGENT_AUTO_TITLE='' AGENT_STATUS_KIND=claude "$AGENT/set-state.sh" working
 sleep 0.5
 [ "$(calls)" = 4 ] || fail "a headless or opted-out session was titled"
 
