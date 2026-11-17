@@ -14,16 +14,6 @@ set -eu
 SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
 # shellcheck source=lib.sh
 . "$SCRIPT_DIR/lib.sh"
-# In a Rex pane, not tmux: Rex keeps the agent's state itself, and only a
-# prompt's report (working, with a hook payload) may title the pane. Tool
-# reports come by the dozen and carry their output: a glance, not jq, skips
-# them.
-if [ -z "${TMUX_PANE:-}" ] && [ -n "${REX_BLOCK:-}" ] && [ "${AGENT_AUTO_TITLE:-}" = on ] \
-  && [ "${1:-}" = working ] && [ "$#" -eq 1 ] && [ ! -t 0 ]; then
-  payload=$(cat)
-  case "$payload" in *'"UserPromptSubmit"'*) exec bash "$SCRIPT_DIR/rex-title.sh" hook <<< "$payload" ;; esac
-  exit 0
-fi
 agent_pane_guard
 
 raw_state="${1:-}"

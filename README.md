@@ -374,19 +374,11 @@ meanwhile. A title you set (`@agent-description`) still comes first. Without
 pi, or when it gives no usable title, the prompt's start stays.
 
 In [Rex](https://www.superlogical.com/rex), which keeps an agent's state
-itself, the plugin only titles agents: set `AGENT_AUTO_TITLE=on` in your
-shell's environment (Rex panes run your login shell), and each Claude Code or
-pi session's first prompt gets the same title, as its Rex pane's label, which
-Rex and paddock show. A label you gave a pane stays; the title replaces only
-Rex's default label or the title it set for an earlier session, and goes
-when the agent quits or the session is given a name. Without tmux the model
-is `AGENT_DESCRIBE_MODEL` (else the tmux server's `@agent-describe-model`
-when one runs, else `openai/gpt-6-luna`): set it beside `AGENT_AUTO_TITLE`
-to use another, such as a local one. `rex` and `jq` must be on the agent's
-`PATH`.
+and title itself, the plugin does nothing: paddock shows the title the
+agent gives its terminal (Claude Code writes its own) or the label you gave
+the pane.
 
-A title sends text to a model. With `@agent-auto-title on` (or, in Rex,
-`AGENT_AUTO_TITLE=on`), pi sends each
+A title sends text to a model. With `@agent-auto-title on`, pi sends each
 agent's first prompt (its first 500 characters on hook-based agents; 2000
 on pi, OMP, OpenCode and Kilo) and the name of its folder. Otherwise nothing is sent
 until you ask a UI (paddock's title editor) for a suggestion; then pi sends
@@ -404,8 +396,8 @@ the following to the model in `@agent-describe-model` (by default
 pi runs without tools, extensions, skills, MCP servers or context files
 (`AGENTS.md`, `CLAUDE.md`), saves no session, and runs from an empty
 directory of its own. To keep this on your machine, set
-`@agent-describe-model` (and, for Rex, `AGENT_DESCRIBE_MODEL`) to a local model your pi can run; to never send
-anything, leave `@agent-auto-title` off (and `AGENT_AUTO_TITLE` unset) and don't ask for suggestions (without pi, on the tmux server's
+`@agent-describe-model` to a local model your pi can run; to never send
+anything, leave `@agent-auto-title` off and don't ask for suggestions (without pi, on the tmux server's
 `PATH` or in fnm's default alias, there are none).
 
 The plugin turns on tmux's `focus-events` every time it loads, overriding

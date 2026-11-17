@@ -76,12 +76,7 @@ rules: 3 to 8 words) and sets it in place of the prompt's start if that start
 and the pane's session are still the ones it was started for. Titles are kept
 by prompt and folder under `$XDG_STATE_HOME/agent-status/titles` for 30 days,
 so a prompt titled before (OpenCode rebinds a pane on each tab switch) is
-titled at once, the same; a failure is logged. In a Rex pane (outside tmux)
-with `AGENT_AUTO_TITLE=on` in the agent's environment, Rex keeps the agent's
-state itself, and `rex-title.sh` (from `set-state.sh` for hook payloads, from
-the pi extension) gives each session's first prompt the same title as the
-pane's Rex label: only over Rex's default label or the one it set last, which
-`$XDG_STATE_HOME/agent-status/rex/<block>` records with the session it titled. A UI may set it directly
+titled at once, the same; a failure is logged. A UI may set it directly
 (paddock does); scripts can use `describe.sh set PANE [TEXT]` (no TEXT: back
 to automatic). Both are cleared with the other options when the agent exits.
 The plugin sets `@agent-suggest-command` to `describe.sh suggest`: run with a

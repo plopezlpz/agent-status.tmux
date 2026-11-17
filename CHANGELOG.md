@@ -4,6 +4,12 @@ Notable changes to agent-status.tmux, newest first. The format follows [Keep a C
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-17
+
+### Removed
+
+- Rex pane titles (`AGENT_AUTO_TITLE`, `AGENT_DESCRIBE_MODEL`, `rex-title.sh`): Rex keeps an agent's title itself (the one the agent gives its terminal, or a label you gave the pane), and paddock shows it. Outside tmux the plugin does nothing again.
+
 ## [0.9.0] - 2026-11-17
 
 ### Added
@@ -281,7 +287,8 @@ Descriptions under `~/.cache/agent-status` are not moved. Move them yourself, or
 - `prefix A` navigator popup: one card per Claude pane, grouped by session and folder, with editable descriptions.
 - `install-claude-hooks.sh` and `uninstall-claude-hooks.sh`.
 
-[Unreleased]: https://github.com/plopezlpz/agent-status.tmux/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/plopezlpz/agent-status.tmux/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/plopezlpz/agent-status.tmux/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/plopezlpz/agent-status.tmux/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/plopezlpz/agent-status.tmux/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/plopezlpz/agent-status.tmux/compare/v0.6.1...v0.7.0

@@ -10,8 +10,6 @@
 #                                 start of the first prompt on stdin, with
 #                                 pi's title for it (the hooks run it, with
 #                                 @agent-auto-title on)
-#   describe.sh title FOLDER      print pi's title for the first prompt on
-#                                 stdin (rex-title.sh)
 #   describe.sh context FILE      what pi reads from a transcript
 set -eu
 
@@ -110,11 +108,10 @@ $RULES"
 # reason in ASK_ERR when there is none (pi failed or timed out, or answered
 # nothing usable). pi runs as a background job (ASK_PID) so that a signal
 # reaching this script can stop it: ask_abort.
-# describe_model: MODEL, pi's --model: AGENT_DESCRIBE_MODEL (outside tmux,
-# as in a Rex pane, the only setting), else @agent-describe-model, else the
+# describe_model: MODEL, pi's --model: @agent-describe-model, else the
 # default.
 describe_model() {
-  MODEL=${AGENT_DESCRIBE_MODEL:-$(tmux show-option -gqv @agent-describe-model 2>/dev/null || true)}
+  MODEL=$(tmux show-option -gqv @agent-describe-model 2>/dev/null || true)
   MODEL=${MODEL:-openai/gpt-6-luna}
 }
 
@@ -282,10 +279,8 @@ auto_title() {
 
 case "${1:-}" in
   auto) auto_title "${2:-}" "${3:-}" "${4:-}" ;;
-  title)
-    if first_title "${2:-}"; then printf '%s\n' "$TITLE"; else title_failed "folder=${2##*/}"; echo "$ASK_ERR" >&2; exit 1; fi ;;
   set) set_title "${2:-}" "${3:-}" ;;
   suggest) suggest_title "${2:-}" ;;
   context) transcript_context "${2:-}" ;;
-  *) echo "usage: describe.sh set PANE [TEXT] | suggest PANE | auto PANE SEED [INSTANCE] | title FOLDER | context FILE" >&2; exit 2 ;;
+  *) echo "usage: describe.sh set PANE [TEXT] | suggest PANE | auto PANE SEED [INSTANCE] | context FILE" >&2; exit 2 ;;
 esac

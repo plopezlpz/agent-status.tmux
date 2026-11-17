@@ -172,10 +172,6 @@ for reply in '' 'Title' '""'; do
   [ "$(auto)" = 'the start' ] || fail "auto set an unusable reply [$reply]: [$(auto)]"
 done
 grep -F 'no title: pi gave no title' "$XDG_DATA_HOME/tmux/agent-status/agent.log" >/dev/null || fail "a failed title was not logged"
-# title prints it, for rex-title.sh.
-stub_pi "cat > '$TMP/pi-input'; echo 'Rex Pane Title'"
-[ "$("$DESCRIBE" title /src/myapp <<< 'name the rex pane')" = 'Rex Pane Title' ] || fail "title did not print pi's title"
-grep -Fx 'Folder: myapp' "$TMP/pi-input" >/dev/null || fail "title did not name the folder"
 rm -f "$TMP/stub/pi"
 "$DESCRIBE" auto "$p1" 'the start' <<< 'a prompt' || fail "auto failed without pi"
 [ "$(auto)" = 'the start' ] || fail "auto changed the title without pi"
